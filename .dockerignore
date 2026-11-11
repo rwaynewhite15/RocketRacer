@@ -1,0 +1,11 @@
+.git
+.github
+node_modules
+npm-debug.log
+test
+tools
+README.md
+deploy.sh
+Dockerfile
+.dockerignore
+.gcloudignore

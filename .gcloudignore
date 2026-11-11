@@ -1,0 +1,8 @@
+# Files `gcloud run deploy --source .` should not upload to Cloud Build.
+.git
+.gitignore
+.github
+node_modules
+npm-debug.log
+test
+tools
