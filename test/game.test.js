@@ -37,13 +37,13 @@ after(async () => {
 });
 
 /** Open the game, collect page errors, and install a few helpers on `window.T`. */
-async function openGame(viewport) {
+async function openGame(viewport, baseUrl) {
   const ctx = await browser.newContext({ viewport: viewport || { width: 1280, height: 720 } });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.stack || e.message));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-  await page.goto(base + '/');
+  await page.goto((baseUrl || base) + '/');
   await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
   await page.evaluate(() => {
     const g = RR.game, S = 1 / 120;
@@ -162,6 +162,53 @@ test('do-over: goes back about 3 s, un-flies a gate, and the race clock keeps ru
     assert.ok(r.B.reflown >= r.B.passed, 'and counts again when re-flown');
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
+});
+
+test('leaderboard: rows show the race place, and your own row appears below the top ten', { skip }, async () => {
+  // Its own server, so scores posted by the other tests' races cannot shift the ranks.
+  const own = http.createServer(createApp(memoryStore()));
+  await new Promise((resolve) => own.listen(0, '127.0.0.1', resolve));
+  const url = 'http://127.0.0.1:' + own.address().port;
+  // eleven pilots faster than the autopilot can fly, so "we" come twelfth: off the bottom of the board
+  const post = (b) => fetch(url + '/api/scores', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+  for (let i = 0; i < 11; i++) {
+    const res = await post({ track: 'lunar', pid: 'seed-' + String(i).padStart(8, '0'), name: 'SEED' + i, time: 45 + i, lap: 14, diff: 1, place: (i % 6) + 1 });
+    assert.strictEqual(res.status, 200);
+  }
+  const { page, ctx, errors } = await openGame(null, url);
+  try {
+    await page.waitForFunction(() => RR.net.online && RR.net.boards.lunar);
+    const r = await page.evaluate(async () => {
+      const g = RR.game, n = RR.net, out = {};
+      out.before = n.me.lunar; // we have not raced yet
+      // finish a real race on autopilot: slower than every seed, in whatever place it earns
+      T.fresh(0);
+      let k = 0; while (!g.playerDone && k++ < 120 * 400) g.step(1 / 120);
+      out.place = g.player.place;
+      for (let i = 0; i < 100 && !n.result; i++) await new Promise((res) => setTimeout(res, 50));
+      out.result = n.result;
+      out.me = n.me.lunar && { rank: n.me.lunar.rank, place: n.me.lunar.place, name: n.me.lunar.name };
+      out.top = n.boards.lunar.slice(0, 2).map((e) => [e.name, e.place]);
+      out.inTop = n.boards.lunar.some((e) => e.name === g.name);
+      out.name = g.name;
+      g.toTitle(); g.showBoard(); // and draw it
+      out.state = g.state;
+      return out;
+    });
+    await page.waitForTimeout(400);
+    assert.strictEqual(r.before, null);
+    assert.deepStrictEqual(r.top, [['SEED0', 1], ['SEED1', 2]]);
+    assert.strictEqual(r.result.rank, 12);
+    assert.deepStrictEqual(r.me, { rank: 12, place: r.place, name: r.name });
+    assert.ok(r.place >= 1 && r.place <= 6);
+    assert.strictEqual(r.inTop, false);
+    assert.strictEqual(r.state, 'board');
+    // reopening the game later still knows our row (it comes from the server, not this tab)
+    await page.reload();
+    await page.waitForFunction(() => RR.net.me.lunar !== undefined);
+    assert.strictEqual(await page.evaluate(() => RR.net.me.lunar.rank), 12);
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); own.close(); }
 });
 
 test('do-over: undoes a wreck', { skip }, async () => {

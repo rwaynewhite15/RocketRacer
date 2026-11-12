@@ -1003,7 +1003,7 @@
     if (s.bestLap && (!rec.lap || s.bestLap < rec.lap)) rec.lap = s.bestLap;
     g.best[id] = rec;
     save();
-    RR.net.submit(id, { name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx });
+    RR.net.submit(id, { name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx, place: s.place });
   }
 
   function passCp(s, g, cp) {

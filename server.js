@@ -4,10 +4,12 @@
  * Rocket Racer server — built for Google Cloud Run.
  *
  *   GET  /                    the game (static files from ./public)
- *   GET  /api/health          { ok, store }
- *   GET  /api/scores?track=   top 10 race times for a course
+ *   GET  /api/health          { ok, store, env, version }
+ *   GET  /api/scores?track=   top 10 race times for a course (+ your own row,
+ *                             when the X-Pilot-Id header carries your id)
  *   POST /api/scores          submit a finished race
- *   GET  /healthz             liveness probe
+ *
+ * (No /healthz: Cloud Run's front end keeps paths ending in "z" for itself.)
  *
  * No framework: Node's http module plus the Firestore client.
  */
@@ -32,6 +34,8 @@ const TRACKS = {
   gauntlet: { laps: 3, minLap: 25, minRace: 78 },
 };
 const MAX_RACE = 3600;
+const RACERS = 6; // ships on the grid, so the worst finishing place
+const PID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const STORE_TIMEOUT_MS = 8000;
 
 const MIME = {
@@ -137,7 +141,7 @@ function validateScore(body) {
   if (!body || typeof body !== 'object') return 'Expected a JSON object';
   const t = TRACKS[body.track];
   if (!Object.prototype.hasOwnProperty.call(TRACKS, body.track)) return 'Unknown track';
-  if (typeof body.pid !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(body.pid)) return 'Bad pid';
+  if (typeof body.pid !== 'string' || !PID_RE.test(body.pid)) return 'Bad pid';
   if (typeof body.time !== 'number' || !Number.isFinite(body.time)) return 'Bad time';
   if (body.time < t.minRace || body.time > MAX_RACE) return 'Race time out of range';
   if (typeof body.lap !== 'number' || !Number.isFinite(body.lap)) return 'Bad lap';
@@ -145,6 +149,8 @@ function validateScore(body) {
   if (body.lap < t.minLap || body.lap > body.time) return 'Lap time out of range';
   if (body.lap * t.laps > body.time + 0.05) return 'Lap and race times disagree';
   if (![0, 1, 2].includes(body.diff)) return 'Bad difficulty';
+  // finishing place in that race; optional so a page loaded before this existed can still post
+  if (body.place != null && !(Number.isInteger(body.place) && body.place >= 1 && body.place <= RACERS)) return 'Bad place';
   return null;
 }
 
@@ -194,12 +200,22 @@ function createApp(store) {
   }
 
   async function api(req, res, url) {
-    if (url.pathname === '/api/health') return json(res, 200, { ok: true, store: store.kind });
+    if (url.pathname === '/api/health') {
+      // `env` and `version` say which deployment answered: handy for staging and for "is my change live?"
+      return json(res, 200, {
+        ok: true, store: store.kind, env: process.env.APP_ENV || 'production', version: process.env.COMMIT_SHA || 'dev',
+      });
+    }
 
     if (url.pathname === '/api/scores' && req.method === 'GET') {
       const track = url.searchParams.get('track');
       if (!Object.prototype.hasOwnProperty.call(TRACKS, track)) return json(res, 400, { error: 'Unknown track' });
-      return json(res, 200, { track, scores: await top(track) });
+      // The caller's own row and world rank, if they say who they are. The id
+      // travels in a header rather than the URL so it stays out of request logs.
+      const pid = req.headers['x-pilot-id'];
+      const me = typeof pid === 'string' && PID_RE.test(pid)
+        ? await withTimeout(store.find(track, pid), STORE_TIMEOUT_MS) : null;
+      return json(res, 200, { track, scores: await top(track), me });
     }
 
     if (url.pathname === '/api/scores' && req.method === 'POST') {
@@ -216,6 +232,7 @@ function createApp(store) {
         time: Math.floor(body.time * 100 + 1e-6) / 100,
         lap: Math.floor(body.lap * 100 + 1e-6) / 100,
         diff: body.diff,
+        place: body.place == null ? null : body.place,
         at: Date.now(),
       };
       const out = await withTimeout(store.submit(body.track, body.pid, entry), STORE_TIMEOUT_MS);
@@ -230,7 +247,6 @@ function createApp(store) {
     let url;
     try { url = new URL(req.url, 'http://localhost'); } catch (e) { return send(res, 400, 'text/plain; charset=utf-8', 'Bad request'); }
 
-    if (url.pathname === '/healthz') return send(res, 200, 'text/plain; charset=utf-8', 'ok');
     if (url.pathname.startsWith('/api/')) {
       api(req, res, url).catch((e) => {
         // Most likely Firestore is unreachable or not set up; the game

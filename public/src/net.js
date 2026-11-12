@@ -10,7 +10,9 @@
   const RR = window.RR;
   const N = (RR.net = {
     online: false, // true once /api/health has answered
-    boards: {}, // track id -> [{ name, time, lap, diff }]
+    boards: {}, // track id -> [{ name, time, lap, diff, place }]
+    me: {}, // track id -> this player's own row plus world `rank`, or null if they have no time yet
+    env: 'production', version: '', // which deployment we are talking to (see /api/health)
     failed: {}, // track id -> true when the last fetch of that board failed
     result: null, // outcome of the last submission: { track, rank, improved } | { error }
     busy: false,
@@ -36,18 +38,26 @@
     if (!window.fetch || window.location.protocol === 'file:') return;
     api('health').then(function (d) {
       N.online = !!(d && d.ok);
+      if (d && typeof d.env === 'string') N.env = d.env;
+      if (d && typeof d.version === 'string') N.version = d.version;
       if (N.online) RR.TRACKS.forEach(function (t) { N.load(t.id); });
     }).catch(function () { N.online = false; });
   };
 
   N.load = function (track) {
     if (!N.online) return;
-    api('scores?track=' + encodeURIComponent(track)).then(function (d) {
-      if (d && Array.isArray(d.scores)) { N.boards[track] = d.scores; N.failed[track] = false; }
+    // the id header asks the server to include our own row and world rank
+    const pid = RR.game && RR.game.pid;
+    api('scores?track=' + encodeURIComponent(track), pid ? { headers: { 'X-Pilot-Id': pid } } : {}).then(function (d) {
+      if (d && Array.isArray(d.scores)) {
+        N.boards[track] = d.scores;
+        N.me[track] = d.me || null;
+        N.failed[track] = false;
+      }
     }).catch(function () { N.failed[track] = true; /* keep whatever we had */ });
   };
 
-  /** entry: { name, pid, time, lap, diff } */
+  /** entry: { name, pid, time, lap, diff, place } — `place` is the finishing position in that race */
   N.submit = function (track, entry) {
     N.result = null;
     if (!N.online) return;
@@ -55,11 +65,14 @@
     api('scores', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ track: track, name: entry.name, pid: entry.pid, time: entry.time, lap: entry.lap, diff: entry.diff }),
+      body: JSON.stringify({
+        track: track, name: entry.name, pid: entry.pid, time: entry.time, lap: entry.lap, diff: entry.diff, place: entry.place,
+      }),
     }).then(function (d) {
       N.busy = false;
       N.result = { track: track, rank: d.rank, improved: d.improved };
       if (Array.isArray(d.scores)) N.boards[track] = d.scores;
+      if (d.best) { N.me[track] = d.best; N.me[track].rank = d.rank; }
     }).catch(function () {
       N.busy = false;
       N.result = { track: track, error: true };

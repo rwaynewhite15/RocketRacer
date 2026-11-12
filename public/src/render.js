@@ -513,6 +513,17 @@
       y += (logoA.height * 2 - 2) * s + 5;
     }
     text(ctx, 'GALACTIC DONUT GRAND PRIX', W / 2, y, PAL.pink, 1, 'center', PAL.ink);
+
+    // which deployment this is: a loud badge anywhere but production, and a quiet build id
+    if (net.online && net.env && net.env !== 'production') {
+      const label = net.env.toUpperCase().replace(/[^A-Z0-9 -]/g, '').slice(0, 12) + ' BUILD';
+      const lw = RR.textW(label) + 10;
+      panel(ctx, 4 + ins.l, 4 + ins.t, lw, 13, PAL.alarm);
+      text(ctx, label, 9 + ins.l, 7 + ins.t, Math.floor(T * 2) & 1 ? PAL.alarm : PAL.yellow);
+    }
+    if (net.online && /^[0-9a-f]{7,40}$/.test(net.version)) {
+      text(ctx, net.version.slice(0, 7), W - 4 - ins.r, 4 + ins.t, PAL.slate, 1, 'right');
+    }
     y += compact ? 13 : 18;
 
     /* menu card */
@@ -587,34 +598,63 @@
     }
   }
 
-  /** World top 10 for the selected course. */
+  /**
+   * World top 10 for the selected course. Each row shows where that pilot
+   * finished in the race that set the time; below the list comes your own row
+   * and world rank when you are not in the top 10.
+   */
   function drawBoard(g, ctx, W, H) {
-    const def = RR.TRACKS[g.trackIdx], list = RR.net.boards[def.id], rec = g.best[def.id];
+    const def = RR.TRACKS[g.trackIdx], net = RR.net, list = net.boards[def.id], mine = net.me[def.id], rec = g.best[def.id];
     ctx.fillStyle = 'rgba(7,7,26,0.72)';
     ctx.fillRect(0, 0, W, H);
-    const pw = Math.min(W - 8, 240), ph = 180;
+    const pw = Math.min(W - 8, 240), ph = 206;
     const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
+    const cPlace = x + pw - 92, cDiff = x + pw - 62, cTime = x + pw - 10;
     panel(ctx, x, y, pw, ph, PAL.pink);
     text(ctx, 'WORLD TOP 10', W / 2, y + 7, PAL.pink, 2, 'center', PAL.plum);
     text(ctx, def.name, W / 2, y + 25, PAL.sky, 1, 'center');
-    let ry = y + 38;
+
+    const row = function (ry, rank, e, col) {
+      text(ctx, String(rank), x + 22, ry, col, 1, 'right');
+      text(ctx, e.name, x + 30, ry, col);
+      // finishing place in that race; older rows were saved without one
+      if (e.place >= 1 && e.place <= 6) text(ctx, ORD[e.place - 1], cPlace, ry, col === PAL.yellow ? col : PLACE_COL[e.place - 1]);
+      else text(ctx, '-', cPlace + 6, ry, PAL.steel);
+      text(ctx, DIFF_TAG[e.diff] || '', cDiff, ry, DIFF_COL[e.diff] || PAL.steel);
+      text(ctx, fmt(e.time), cTime, ry, col, 1, 'right');
+    };
+    const isMine = function (e) {
+      if (mine) return e.name === mine.name && e.time === mine.time;
+      return e.name === g.name && rec && Math.abs(rec.race - e.time) < 0.011; // before our own row has loaded
+    };
+
+    let ry = y + 48;
     if (!list) {
-      text(ctx, RR.net.failed[def.id] ? 'LEADERBOARD UNAVAILABLE' : 'LOADING...', W / 2, ry + 40, PAL.silver, 1, 'center');
-    }
-    else if (!list.length) {
+      text(ctx, net.failed[def.id] ? 'LEADERBOARD UNAVAILABLE' : 'LOADING...', W / 2, ry + 40, PAL.silver, 1, 'center');
+    } else if (!list.length) {
       text(ctx, 'NO TIMES YET', W / 2, ry + 34, PAL.silver, 1, 'center');
       text(ctx, 'BE THE FIRST!', W / 2, ry + 46, PAL.yellow, 1, 'center');
     } else {
+      text(ctx, '#', x + 22, y + 37, PAL.steel, 1, 'right');
+      text(ctx, 'PILOT', x + 30, y + 37, PAL.steel);
+      text(ctx, 'RACE', cPlace - 3, y + 37, PAL.steel);
+      text(ctx, 'TIME', cTime, y + 37, PAL.steel, 1, 'right');
+      let shown = false;
       for (let i = 0; i < list.length && i < 10; i++) {
-        const e = list[i];
-        const me = e.name === g.name && rec && Math.abs(rec.race - e.time) < 0.011;
-        if (me) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry - 2, pw - 10, 11); }
-        const col = me ? PAL.yellow : i === 0 ? PAL.gold : PAL.white;
-        text(ctx, String(i + 1), x + 22, ry, col, 1, 'right');
-        text(ctx, e.name, x + 30, ry, col);
-        text(ctx, DIFF_TAG[e.diff] || '', x + pw - 62, ry, DIFF_COL[e.diff] || PAL.steel);
-        text(ctx, fmt(e.time), x + pw - 10, ry, col, 1, 'right');
+        const e = list[i], me = isMine(e);
+        if (me) { shown = true; ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry - 2, pw - 10, 11); }
+        row(ry, i + 1, e, me ? PAL.yellow : i === 0 ? PAL.gold : PAL.white);
         ry += 11;
+      }
+      // your own standing, when it is not already highlighted above
+      const my = y + 161;
+      if (mine && !shown) {
+        RR.line(ctx, x + 8, my - 5, x + pw - 9, my - 5, PAL.steel, 3);
+        ctx.fillStyle = 'rgba(255,205,117,0.16)';
+        ctx.fillRect(x + 5, my - 2, pw - 10, 11);
+        row(my, mine.rank > 999 ? '999+' : mine.rank, mine, PAL.yellow);
+      } else if (mine === null) {
+        text(ctx, 'FINISH A RACE HERE TO JOIN THE BOARD', W / 2, my, PAL.steel, 1, 'center');
       }
     }
     text(ctx, 'R ROOKIE  P PILOT  A ACE', W / 2, y + ph - 34, PAL.steel, 1, 'center');

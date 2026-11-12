@@ -89,41 +89,68 @@ exists).
 
 The service scales to zero when nobody is playing and is capped at three instances.
 
-## CI/CD
+## CI/CD and staging
+
+There are two copies of the game in the same Google Cloud project:
+
+| | Service | Leaderboard | Updated by |
+|---|---|---|---|
+| **Production** | `rocketracer` | Firestore collection `rocketracer` | every merge to `main`, after staging passes |
+| **Staging** | `rocketracer-staging` | separate collection `rocketracer-staging` | every merge to `main`, or any branch on request |
+
+Staging says **STAGING BUILD** on its title screen, and both show the commit they are running
+in the top-right corner (also at `/api/health`), so you can always tell what is deployed.
 
 `.github/workflows/ci-cd.yml` runs on GitHub Actions:
 
-- **Pull requests**: install, syntax check, run all tests, build the container and check that it
-  boots. No cloud access.
-- **Push to `main`**: the same tests, then a deploy: build the image, push it to Artifact
-  Registry, deploy it to Cloud Run as a revision that gets **no traffic**, smoke-test that
-  revision (including a Firestore read), and only then send it traffic. If any check fails, the
-  previous revision keeps serving.
+- **Pull requests**: syntax check, all tests, build the container and check that it boots.
+  No cloud access.
+- **Push to `main`**: the same tests, then **staging**, then **production**. The image is built
+  once; production gets the exact image staging just proved.
+- **Try a branch first**: Actions tab > CI/CD > Run workflow > pick your branch (or
+  `gh workflow run ci-cd.yml --ref my-branch`). That tests it and puts it on staging only.
+
+Every rollout, on either service, goes through `tools/ci-deploy.sh`: deploy a revision that gets
+**no traffic**, smoke-test it on a private URL (right commit, right environment, a Firestore read,
+the page loads), and only then switch traffic. If a check fails, the previous revision keeps
+serving and the pipeline stops, so a bad build never reaches production.
 
 It logs in to Google with Workload Identity Federation, so there are no keys or secrets to
-store or rotate. Google trusts GitHub only for this repository's `main` branch, and the deploy
-account can only push to one image repo and deploy this one service.
+store or rotate. Google accepts the production deploy account only from this repository's `main`
+branch; the staging one from any branch of this repository. Each can only roll out its own
+service.
 
-One-time setup, after the first `./deploy.sh`:
+### One-time setup
+
+After the first `./deploy.sh`:
 
 ```bash
 PROJECT=your-project-id ./tools/setup-cicd.sh
 ```
 
-It prints four values (`GCP_PROJECT_ID`, `GCP_REGION`, `WIF_PROVIDER`, `DEPLOYER_SA`). Add them as
-repository **variables** under Settings > Secrets and variables > Actions. Then merge to `main`.
+It creates the staging service (a few minutes: it builds from your checkout), the image repo and
+the two deploy accounts, then prints six values. Add them as repository **variables** under
+Settings > Secrets and variables > Actions: `GCP_PROJECT_ID`, `GCP_REGION`, `WIF_PROVIDER`,
+`DEPLOYER_SA`, `STAGING_WIF_PROVIDER`, `STAGING_DEPLOYER_SA`. Then merge to `main`.
 
-Worth switching on in GitHub: Settings > Branches > require a pull request and the **Test**
-check before merging to `main`, so nothing reaches Cloud Run without passing it.
+Worth switching on in GitHub:
 
-To roll back, send traffic to an earlier revision:
+- Settings > Branches: require a pull request and the **Test** check before merging to `main`.
+- Settings > Environments > production: add yourself as a required reviewer, and each release
+  waits for your click after staging is updated, so you can try it there first. (On private
+  repositories this needs a paid GitHub plan; without it, production follows staging
+  automatically.)
+
+### Rolling back
+
+Send traffic to an earlier revision:
 
 ```bash
 gcloud run revisions list --service rocketracer --region us-central1
 gcloud run services update-traffic rocketracer --region us-central1 --to-revisions REVISION=100
 ```
 
-(After a rollback, the next deploy needs `--to-latest` to resume; the pipeline does that itself.)
+The next pipeline run (or `./deploy.sh`) moves traffic back to the newest revision by itself.
 
 ## Backend
 
@@ -132,19 +159,30 @@ gcloud run services update-traffic rocketracer --region us-central1 --to-revisio
 | Endpoint | |
 |---|---|
 | `GET /` | the game, from `public/` |
-| `GET /api/health` | `{ ok, store }` |
-| `GET /api/scores?track=lunar` | top 10 race times for a course |
-| `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff }` |
-| `GET /healthz` | liveness probe |
+| `GET /api/health` | `{ ok, store, env, version }`: which environment and commit answered |
+| `GET /api/scores?track=lunar` | top 10 race times for a course. With an `X-Pilot-Id` header it also returns `me`: that player's own row and world rank |
+| `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff, place }` |
 
 Leaderboard rows live in Firestore at `rocketracer/{track}/scores/{pid}`. Each player has an
 anonymous id generated in their browser and keeps one row per course, replaced only by a
-faster time. `STORE=firestore` or `STORE=memory` picks the storage explicitly; by default
-Firestore is used on Cloud Run and memory elsewhere.
+faster time. A row records the time, best lap, rival level and `place`: where the pilot finished
+in that race (1 to 6). The top-10 screen shows it, and shows your own row and rank underneath
+when you are not in the top 10.
+
+Configuration, all optional environment variables:
+
+| Variable | Default | |
+|---|---|---|
+| `STORE` | `firestore` on Cloud Run, `memory` elsewhere | where scores are kept |
+| `LEADERBOARD_COLLECTION` | `rocketracer` | Firestore collection; staging uses its own |
+| `APP_ENV` | `production` | anything else puts a badge on the title screen |
+| `COMMIT_SHA` | `dev` | set by the pipeline; reported by `/api/health` |
 
 Submissions are validated (known course, plausible times, sanitised name) and rate-limited,
 but times are reported by the browser, so treat the board as friendly competition rather
 than tamper-proof.
+
+(There is no `/healthz`: Cloud Run answers paths ending in `z` itself, before the app sees them.)
 
 ## Project layout
 
@@ -165,7 +203,8 @@ lib/store.js          Firestore and in-memory leaderboard storage
 test/api.test.js      API tests
 test/game.test.js     browser tests of the game (Playwright)
 .github/workflows/    CI/CD pipeline
-Dockerfile, deploy.sh Cloud Run packaging and first deployment
-tools/setup-cicd.sh   one-time Google Cloud setup for the pipeline
+Dockerfile, deploy.sh Cloud Run packaging and first deployment (STAGING=1 for the staging copy)
+tools/setup-cicd.sh   one-time setup: staging service and keyless deploy access
+tools/ci-deploy.sh    one safe rollout: no-traffic revision, smoke test, switch traffic
 tools/make-icons.js   regenerates the app icons from the game art
 ```
