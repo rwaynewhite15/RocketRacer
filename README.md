@@ -50,12 +50,13 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
 
 | | Keyboard | Phone / tablet |
 |---|---|---|
-| Fly | Arrow keys or WASD (turn, thrust, brake/reverse) | Left thumb: push the stick the way you want to go |
-| Fire weapon | Space (or X / J) | FIRE button |
+| Fly | Arrow keys or WASD (turn, thrust, brake/reverse) | Steering stick: push it the way you want to go |
+| Fire weapon | Space (or X / J): fires the way the rocket points | Fire stick: push it to aim and fire that way, or hold it in the middle to fire straight ahead. Blaster and missiles follow the aim; mines drop behind, EMP spreads all round |
 | Brake | Down / S | BRAKE button |
 | Do-over | E or Shift | DO-OVER button (appears while you hold one) |
 | Zoom | Z cycles normal / wide / close; + and - or the mouse wheel step through every level | ZOOM button |
 | Pause | P or Esc | II button |
+| Move the controls | | Pause > MOVE CONTROLS: drag the sticks and buttons where you like (kept separately for sideways and upright; RESET restores them) |
 | Menu | Arrows, Enter | Tap |
 | Hangar | H on the menu; arrows pick a ship or stat and spend points, Enter closes | HANGAR button, then the arrows and - / + buttons |
 | Other | M mute, C CRT filter, F fullscreen, N pilot name, T world top 10 | FULLSCREEN, PILOT, TOP 10 buttons |
@@ -115,7 +116,7 @@ There are two copies of the game in the same Google Cloud project:
 | | Service | Leaderboard | Updated by |
 |---|---|---|---|
 | **Production** | `rocketracer` | Firestore collection `rocketracer` | every merge to `main`, after staging passes |
-| **Staging** | `rocketracer-staging` | separate collection `rocketracer-staging` | every merge to `main`, or any branch on request |
+| **Staging** | `rocketracer-staging` | separate collection `rocketracer-staging` | every push to `dev` or `main`, or any branch on request |
 
 Staging says **STAGING BUILD** on its title screen, and both show the commit they are running
 in the top-right corner (also at `/api/health`), so you can always tell what is deployed.
@@ -124,10 +125,19 @@ in the top-right corner (also at `/api/health`), so you can always tell what is 
 
 - **Pull requests**: syntax check, all tests, build the container and check that it boots.
   No cloud access.
+- **Push to `dev`**: the same tests, then **staging** only. `dev` is where changes wait to be
+  tried out before they are released.
 - **Push to `main`**: the same tests, then **staging**, then **production**. The image is built
   once; production gets the exact image staging just proved.
-- **Try a branch first**: Actions tab > CI/CD > Run workflow > pick your branch (or
+- **Try any other branch**: Actions tab > CI/CD > Run workflow > pick your branch (or
   `gh workflow run ci-cd.yml --ref my-branch`). That tests it and puts it on staging only.
+
+The usual flow:
+
+1. Work on a feature branch, and open a pull request into **`dev`**.
+2. Merge it: staging updates itself. Try it there.
+3. When `dev` plays right, open a pull request from **`dev` into `main`** and merge it: that
+   releases to production.
 
 Every rollout, on either service, goes through `tools/ci-deploy.sh`: deploy a revision that gets
 **no traffic**, smoke-test it on a private URL (right commit, right environment, a Firestore read,
@@ -224,7 +234,7 @@ public/               the game (static)
   src/core.js         math, noise, palette, pixel helpers, bitmap font
   src/art.js          procedural sprites: ships, planets, asteroids, donuts
   src/audio.js        chip-synth sound effects and music
-  src/input.js        keyboard, touch stick, gamepad
+  src/input.js        keyboard, touch sticks, gamepad
   src/net.js          leaderboard client
   src/tracks.js       course and arena definitions and builder
   src/game.js         physics, weapons, AI, laps, combat modes, hangar, game states

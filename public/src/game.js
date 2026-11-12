@@ -117,6 +117,9 @@
     cam: { x: 0, y: 0 }, shake: 0, flash: 0, msg: null, ui: [],
     best: {}, crt: true, newRecord: false,
     autoFull: true, wantFull: false, // full screen on phones (see G.fullscreen)
+    // touch controls the player has moved: { land|port: { steer|fire|brake|rewind: {x, y} } },
+    // as fractions of the screen so they survive other screen sizes (see RR.touchLayout)
+    controls: {},
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
     inset: { l: 0, t: 0, r: 0, b: 0 }, // notch / rounded-corner margins, in game pixels
     // The world layer can zoom; the HUD layer (W x H) keeps its pixel size.
@@ -133,6 +136,7 @@
       G.best = s.best || {};
       G.crt = s.crt !== false;
       G.autoFull = s.autoFull !== false;
+      G.controls = cleanControls(s.controls);
       RR.audio.muted = !!s.muted;
       if (s.diff >= 0 && s.diff < DIFFS.length) G.diffIdx = s.diff;
       if (s.track >= 0 && s.track < RR.TRACKS.length) G.trackIdx = s.track;
@@ -149,7 +153,7 @@
   function save() {
     try {
       window.localStorage.setItem(STORE, JSON.stringify({
-        best: G.best, crt: G.crt, muted: RR.audio.muted, autoFull: G.autoFull, diff: G.diffIdx, track: G.trackIdx,
+        best: G.best, crt: G.crt, muted: RR.audio.muted, autoFull: G.autoFull, controls: G.controls, diff: G.diffIdx, track: G.trackIdx,
         name: G.name, pid: G.pid, zoom: G.zoomOffset,
         mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog,
       }));
@@ -416,6 +420,66 @@
   }
   G.canFullscreen = fsEnabled;
   G.isFullscreen = isFull;
+
+
+  /* ------------------------------------------------- moving the controls */
+
+  const CONTROL_NAMES = ['steer', 'fire', 'brake', 'rewind'];
+
+  /** Keep only well-formed saved positions (fractions of the screen). */
+  function cleanControls(raw) {
+    const out = {};
+    if (!raw || typeof raw !== 'object') return out;
+    ['land', 'port'].forEach(function (o) {
+      const src = raw[o];
+      if (!src || typeof src !== 'object') return;
+      CONTROL_NAMES.forEach(function (n) {
+        const p = src[n];
+        if (p && isFinite(p.x) && isFinite(p.y)) (out[o] = out[o] || {})[n] = { x: clamp(+p.x, 0, 1), y: clamp(+p.y, 0, 1) };
+      });
+    });
+    return out;
+  }
+
+  /** Layouts are kept separately for a phone held sideways and upright. */
+  G.orientation = function () { return this.W >= this.H ? 'land' : 'port'; };
+
+  /** Pause > MOVE CONTROLS: drag the sticks and buttons where you want them. */
+  G.editControls = function () {
+    if (this.state !== 'paused') return;
+    this.state = 'layout';
+    RR.audio.sfx('select');
+  };
+  G.closeControls = function () {
+    if (this.state !== 'layout') return;
+    this.state = 'paused';
+    save();
+    RR.audio.sfx('confirm');
+  };
+  /** Back to the standard spots, for the way the phone is held now. */
+  G.resetControls = function () {
+    delete this.controls[this.orientation()];
+    save();
+    RR.audio.sfx('select');
+  };
+
+  /** While moving controls: each finger that lands on a control drags it. */
+  function dragControls(g) {
+    const L = RR.touchLayout(g.W, g.H, g.inset), I = RR.input, o = g.orientation();
+    for (const id in I.pointers) {
+      const p = I.pointers[id];
+      if (p.drag === undefined) {
+        p.drag = null;
+        for (const n of CONTROL_NAMES) {
+          const c = L.centre[n], reach = n === 'steer' || n === 'fire' ? L[n].grab : 30;
+          if (Math.hypot(p.sx - c.x, p.sy - c.y) <= reach) { p.drag = n; p.ox = c.x - p.sx; p.oy = c.y - p.sy; break; }
+        }
+      }
+      if (!p.drag) continue;
+      const spots = g.controls[o] || (g.controls[o] = {});
+      spots[p.drag] = { x: clamp((p.x + p.ox) / g.W, 0, 1), y: clamp((p.y + p.oy) / g.H, 0, 1) };
+    }
+  }
 
   /** True on an iPhone browsing in Safari: the only way to full screen there is Add to Home Screen. */
   G.homeScreenTip = function () {
@@ -788,8 +852,10 @@
 
   /* ------------------------------------------------------------- weapons */
 
-  function pickTarget(s, g) {
-    const ca = Math.cos(s.angle), sa = Math.sin(s.angle);
+  /** The rival a missile should chase: close, and near the line it is launched along. */
+  function pickTarget(s, g, ang) {
+    const a = ang === undefined ? s.angle : ang;
+    const ca = Math.cos(a), sa = Math.sin(a);
     let best = null, score = 1e9;
     for (const o of g.ships) {
       if (o === s || o.dead > 0) continue;
@@ -809,7 +875,9 @@
     const w = s.weapon || (g.combat ? 'blaster' : null); // in combat every ship has a cannon
     if (!fire || !w || s.cool > 0 || s.dead > 0 || s.stun > 0 || s.emp > 0) return;
     if (w !== 'blaster' && !edge) return;
-    const ca = Math.cos(s.angle), sa = Math.sin(s.angle);
+    // blasts and missiles go where the fire stick aims (straight ahead without one)
+    const aim = s.input.aim != null ? s.input.aim : s.angle;
+    const ca = Math.cos(aim), sa = Math.sin(aim);
 
     if (w === 'blaster') {
       g.shots.push({
@@ -822,13 +890,15 @@
     } else if (w === 'missile') {
       g.shots.push({
         type: 'missile', owner: s, x: s.x + ca * 12, y: s.y + sa * 12, vx: 0, vy: 0,
-        angle: s.angle, speed: Math.max(220, s.vx * ca + s.vy * sa + 110),
-        life: C.MISSILE_LIFE, target: pickTarget(s, g), smk: 0,
+        angle: aim, speed: Math.max(220, s.vx * ca + s.vy * sa + 110),
+        life: C.MISSILE_LIFE, target: pickTarget(s, g, aim), smk: 0,
       });
       s.cool = 0.45;
       snd(g, 'missile', s.x, s.y);
     } else if (w === 'mine') {
-      g.mines.push({ owner: s, x: s.x - ca * 16, y: s.y - sa * 16, vx: s.vx * 0.25, vy: s.vy * 0.25, t: 0, ph: Math.random() });
+      // mines always drop behind the ship, whatever the aim
+      const bx = Math.cos(s.angle), by = Math.sin(s.angle);
+      g.mines.push({ owner: s, x: s.x - bx * 16, y: s.y - by * 16, vx: s.vx * 0.25, vy: s.vy * 0.25, t: 0, ph: Math.random() });
       s.cool = 0.35;
       snd(g, 'mine', s.x, s.y);
     } else if (w === 'emp') {
@@ -1532,7 +1602,7 @@
 
   function think(s, g, dt) {
     const ai = s.ai, inp = s.input, tr = g.track, cps = tr.cps, N = cps.length;
-    inp.turn = 0; inp.thrust = 0; inp.brake = 0; inp.fire = false;
+    inp.turn = 0; inp.thrust = 0; inp.brake = 0; inp.fire = false; inp.aim = null;
     if (g.phase !== 'race' || s.dead > 0) return;
     if (g.combat) { thinkCombat(s, g, dt); return; }
 
@@ -1638,6 +1708,7 @@
       else {
         const inp = RR.input.read(s);
         s.input.turn = inp.turn; s.input.thrust = inp.thrust; s.input.brake = inp.brake; s.input.fire = inp.fire;
+        s.input.aim = inp.aim;
       }
       if (racing) tryFire(s, g);
       updateShip(s, g, dt, racing);
@@ -1669,7 +1740,7 @@
   G.step = function (dt) {
     const g = this;
     g.t += dt;
-    if (g.state === 'paused') return;
+    if (g.state === 'paused' || g.state === 'layout') return;
     if (g.flash > 0) g.flash -= dt * 2;
     if (g.msg) { g.msg.t += dt; if (g.msg.t >= g.msg.dur) g.msg = null; }
     if (g.phase === 'countdown') {
@@ -1726,6 +1797,8 @@
     } else if (g.state === 'play') {
       if (hit.pause) g.pause();
       else if (hit.rewind) g.tryRewind();
+    } else if (g.state === 'layout') {
+      if (hit.pause || hit.ok) g.closeControls();
     } else if (g.state === 'paused') {
       if (hit.pause || hit.ok) g.resume();
       else if (hit.restart) g.begin();
@@ -1740,6 +1813,7 @@
   G.frame = function (dt) {
     const g = this, I = RR.input;
     I.updateTouch(g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null);
+    if (g.state === 'layout') dragControls(g);
     if (!I.typing) { I.pollPad(); handleUI(g); }
     if (g.toast) { g.toast.t += dt; if (g.toast.t >= g.toast.dur) g.toast = null; }
 

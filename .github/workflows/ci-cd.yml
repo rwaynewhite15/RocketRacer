@@ -1,10 +1,14 @@
 name: CI/CD
 
 # Pull request      -> Test                                  (no cloud access)
-# Push to main      -> Test -> Staging -> Production
+# Push to dev       -> Test -> Staging                       (try changes out)
+# Push to main      -> Test -> Staging -> Production         (release)
 # "Run workflow"    -> on main: the same full release
 #                      on any other branch: Test -> Staging only, to try a
-#                      branch on the staging site before merging it
+#                      branch on the staging site without merging it
+#
+# The usual flow: feature branch -> pull request into dev (staging updates
+# itself) -> once it plays right, pull request from dev into main (release).
 #
 # Staging and production are two Cloud Run services in one project. The image
 # is built once, proven on staging, and that exact image is what production
@@ -20,7 +24,7 @@ name: CI/CD
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, dev]
   workflow_dispatch:
 
 permissions:
