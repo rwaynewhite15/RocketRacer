@@ -129,9 +129,11 @@ PROJECT=your-project-id ./tools/setup-cicd.sh
 ```
 
 It creates the staging service (a few minutes: it builds from your checkout), the image repo and
-the two deploy accounts, then prints six values. Add them as repository **variables** under
-Settings > Secrets and variables > Actions: `GCP_PROJECT_ID`, `GCP_REGION`, `WIF_PROVIDER`,
-`DEPLOYER_SA`, `STAGING_WIF_PROVIDER`, `STAGING_DEPLOYER_SA`. Then merge to `main`.
+the two deploy accounts, then prints six values. Add them under Settings > Secrets and variables
+> Actions, on the **Variables** tab (the Secrets tab works too): `GCP_PROJECT_ID`, `GCP_REGION`,
+`WIF_PROVIDER`, `DEPLOYER_SA`, `STAGING_WIF_PROVIDER`, `STAGING_DEPLOYER_SA`. Then re-run the
+workflow or merge to `main`. Each deploy job checks these first and names any that are missing
+or malformed.
 
 Worth switching on in GitHub:
 
@@ -140,6 +142,17 @@ Worth switching on in GitHub:
   waits for your click after staging is updated, so you can try it there first. (On private
   repositories this needs a paid GitHub plan; without it, production follows staging
   automatically.)
+
+### When a run fails
+
+- **"Deploy settings" errors**: the six values above are missing or mistyped. The message names
+  which; re-run `tools/setup-cicd.sh` to print them again.
+- **"This workflow run required approval but was not approved before it expired"**: GitHub does
+  not run Actions on pull requests opened by the Copilot agent (or from forks) until someone
+  with write access clicks **Approve and run workflows** on the pull request. Nothing is broken;
+  approve and re-run it, or ignore it if the pull request is closed.
+- **Permission denied from Google** after login works: re-run `tools/setup-cicd.sh`; it re-applies
+  every grant and is safe to repeat.
 
 ### Rolling back
 

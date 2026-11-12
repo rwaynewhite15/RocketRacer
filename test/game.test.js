@@ -122,16 +122,22 @@ test('do-over: goes back about 3 s, un-flies a gate, and the race clock keeps ru
     const r = await page.evaluate(() => {
       const g = RR.game, S = 1 / 120, out = {};
 
-      // A: where the ship lands, and what it gets back
+      // A: where the ship lands, and what it gets back. Rewind 1.2 s after
+      // flying through the second gate, so the 3 s window always contains a
+      // gate (a fixed race time did not: the AI's random lines vary per run).
       T.fresh(0);
       const p = g.player, log = [];
-      T.run(14, () => log.push({ t: g.raceTime, x: p.x, y: p.y, cp: p.cpCount }));
+      const rec = () => log.push({ t: g.raceTime, x: p.x, y: p.y, cp: p.cpCount });
+      let n = 0;
+      while (p.cpCount < 2 && n++ < 120 * 60) { g.step(S); rec(); }
+      T.run(1.2, rec);
       p.rewind = 1;
       const before = { t: g.raceTime, cp: p.cpCount };
+      out.historySecs = (p.hist.length - 1) * 0.05;
       const want = log.find((e) => e.t >= before.t - 3.0);
       g.tryRewind();
       out.started = { rw: !!p.rw, charge: p.rewind };
-      let n = 0;
+      n = 0;
       while (p.rw && n++ < 120 * 3) g.step(S);
       out.A = {
         dist: Math.hypot(p.x - want.x, p.y - want.y), cp: p.cpCount, wantCp: want.cp, beforeCp: before.cp,
@@ -141,7 +147,7 @@ test('do-over: goes back about 3 s, un-flies a gate, and the race clock keeps ru
       // B: a gate flown through inside the window counts again once re-flown
       T.fresh(0);
       const q = g.player, k0 = q.cpCount;
-      while (q.cpCount === k0) g.step(S);
+      n = 0; while (q.cpCount === k0 && n++ < 120 * 60) g.step(S);
       const passed = q.cpCount;
       T.run(1.4);
       q.rewind = 1; g.tryRewind();
@@ -151,6 +157,7 @@ test('do-over: goes back about 3 s, un-flies a gate, and the race clock keeps ru
       out.B.reflown = q.cpCount;
       return out;
     });
+    assert.ok(r.historySecs > 2.9, 'a full 3 s of history was recorded: ' + r.historySecs);
     assert.deepStrictEqual(r.started, { rw: true, charge: 0 });
     assert.ok(r.A.dist < 40, 'lands on the recorded path, ' + Math.round(r.A.dist) + ' px off');
     assert.strictEqual(r.A.cp, r.A.wantCp, 'gate progress is what it was 3 s ago');
