@@ -565,3 +565,101 @@ test('sound: touch players can switch it off and on, and the choice is remembere
   } finally { await strict.close(); }
 });
 
+/* ----------------------------------------------------------- full screen */
+
+/** A human-speed tap through the browser's touch input: finger down, ~150 ms, finger up. */
+async function humanTap(page, cdp, x, y) {
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+  await page.waitForTimeout(150);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await page.waitForTimeout(300);
+}
+
+test('full screen: a phone goes full screen on its first tap and at each race start, asking as the finger lifts; the button turns it off for good', { skip }, async () => {
+  const strict = await chromium.launch({ args: ['--autoplay-policy=user-gesture-required'] });
+  try {
+    const { ctx, page, errors } = await openPhone(strict);
+    const cdp = await ctx.newCDPSession(page);
+    const box = await page.locator('#hud').boundingBox();
+    const k = box.width / await page.evaluate(() => RR.game.W);
+    const spot = (u) => [box.x + (u.x + u.w / 2) * k, box.y + (u.y + u.h / 2) * k];
+    const find = (src) => page.evaluate((f) => RR.game.ui.find(eval(f)) || null, src);
+    const tapLabel = async (label) => {
+      const u = await find('(b) => b.label === ' + JSON.stringify(label));
+      assert.ok(u, 'a "' + label + '" button is on screen');
+      await humanTap(page, cdp, ...spot(u));
+    };
+    const tapRace = async () => humanTap(page, cdp, ...spot(await find('(b) => b.h === 25 && b.w >= 100'))); // TAP TO RACE
+    const tapEmpty = () => humanTap(page, cdp, box.x + box.width / 2, box.y + box.height * 0.12);
+    const full = () => page.evaluate(() => !!document.fullscreenElement);
+    const saved = () => page.evaluate(() => JSON.parse(localStorage.getItem('rocketracer.v1')).autoFull);
+
+    // note which event each full-screen request is made from
+    await page.evaluate(() => {
+      window.__fsFrom = [];
+      const el = document.documentElement, ask = el.requestFullscreen.bind(el);
+      el.requestFullscreen = (o) => { window.__fsFrom.push(window.event ? window.event.type : 'no event'); return ask(o); };
+    });
+
+    assert.strictEqual(await full(), false, 'not before any tap');
+    await tapEmpty();
+    assert.strictEqual(await full(), true, 'the first tap goes full screen');
+
+    await page.evaluate(() => document.exitFullscreen()); // the player swipes back out of full screen
+    await tapEmpty();
+    assert.strictEqual(await full(), false, 'an ordinary tap leaves that alone');
+    await tapRace();
+    assert.deepStrictEqual([await full(), await page.evaluate(() => RR.game.state)], [true, 'play'], 'starting a race goes full screen again');
+
+    await page.evaluate(() => RR.game.toTitle());
+    await page.waitForTimeout(150);
+    await tapLabel('EXIT FULL');
+    assert.deepStrictEqual([await full(), await saved()], [false, false], 'the button leaves full screen and remembers');
+    await tapRace();
+    assert.strictEqual(await full(), false, 'and races then stay windowed');
+
+    await page.evaluate(() => RR.game.toTitle());
+    await page.waitForTimeout(150);
+    await tapLabel('FULLSCREEN');
+    assert.deepStrictEqual([await full(), await saved()], [true, true], 'and back on again');
+
+    const from = await page.evaluate(() => window.__fsFrom);
+    assert.ok(from.length >= 3, 'requests were made: ' + from);
+    assert.ok(from.every((t) => t === 'pointerup' || t === 'touchend' || t === 'click'), 'only ever asked as a finger lifts: ' + from);
+    assert.deepStrictEqual(errors, []);
+  } finally { await strict.close(); }
+});
+
+test('full screen: desktops are left alone, and iPhones (which cannot) get the Add to Home Screen tip instead', { skip }, async () => {
+  // desktop: clicking around never goes full screen by itself
+  const { page, ctx, errors } = await openGame();
+  try {
+    await page.mouse.click(640, 80);
+    await page.waitForTimeout(300);
+    assert.strictEqual(await page.evaluate(() => !!document.fullscreenElement), false);
+    assert.strictEqual(await page.evaluate(() => RR.game.homeScreenTip()), false);
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+
+  // iPhone Safari: no Fullscreen API for pages
+  const iphone = { viewport: { width: 390, height: 760 }, hasTouch: true, isMobile: true, deviceScaleFactor: 3,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1' };
+  const noFullscreen = () => {
+    Object.defineProperty(Document.prototype, 'fullscreenEnabled', { get: () => false, configurable: true });
+    Object.defineProperty(Document.prototype, 'webkitFullscreenEnabled', { get: () => false, configurable: true });
+  };
+  for (const installed of [false, true]) {
+    const c = await browser.newContext(iphone);
+    await c.addInitScript(noFullscreen);
+    if (installed) await c.addInitScript(() => Object.defineProperty(navigator, 'standalone', { get: () => true, configurable: true }));
+    const p = await c.newPage();
+    try {
+      await p.goto(base + '/');
+      await p.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+      await p.waitForTimeout(300);
+      const r = await p.evaluate(() => ({ tip: RR.game.homeScreenTip(), button: RR.game.ui.some((b) => b.label === 'FULLSCREEN' || b.label === 'EXIT FULL') }));
+      assert.deepStrictEqual(r, { tip: !installed, button: false }, installed ? 'opened from the home screen: no tip' : 'in Safari: the tip, and no button that cannot work');
+    } finally { await c.close(); }
+  }
+});
+

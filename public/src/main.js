@@ -62,6 +62,7 @@
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', function () { window.setTimeout(resize, 120); });
   document.addEventListener('fullscreenchange', resize);
+  document.addEventListener('webkitfullscreenchange', resize); // iPad Safari
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) G.pause();
   });

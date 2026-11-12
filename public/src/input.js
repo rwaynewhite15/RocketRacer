@@ -51,9 +51,12 @@
     I.down = {};
     I.pointers = {};
   });
-  // iOS only unlocks audio from the end of a gesture, so listen there too.
+  // The end of a gesture (finger lift, click) is when phones allow sound and full screen.
   ['pointerup', 'touchend', 'click'].forEach(function (ev) {
-    window.addEventListener(ev, function () { RR.audio.init(); }, { passive: true });
+    window.addEventListener(ev, function () {
+      RR.audio.init();
+      if (RR.game && RR.game.onGestureEnd) RR.game.onGestureEnd();
+    }, { passive: true });
   });
 
   // Phones and tablets start in touch mode so the very first screen says "tap".

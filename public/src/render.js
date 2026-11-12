@@ -662,7 +662,7 @@
       items.push(['PILOT ' + g.name + (touch ? '' : ' (N)'), function () { g.editName(); }, PAL.cyan]);
       if (!fight) items.push(['TOP 10' + (touch ? '' : ' (T)'), function () { g.showBoard(); }, PAL.pink]);
     }
-    if (touch && canFullscreen()) items.push(['FULLSCREEN', function () { g.fullscreen(); }, PAL.silver]);
+    if (touch && canFullscreen()) items.push([g.isFullscreen() ? 'EXIT FULL' : 'FULLSCREEN', function () { g.fullscreen(); }, PAL.silver]);
     const lines = [[]];
     let lineW = 0;
     items.forEach(function (it) {
@@ -728,7 +728,11 @@
     const fy = H - 22 - ins.b;
     if (y + 8 > fy) return; // no room for the help lines on very short screens
     if (touch) {
-      if (tall && y + 30 < fy) text(ctx, 'TIP: TURN YOUR PHONE SIDEWAYS', W / 2, fy - 16, PAL.yellow, 1, 'center', PAL.ink);
+      let ty = fy - 16;
+      if (tall && y + 30 < ty) { text(ctx, 'TIP: TURN YOUR PHONE SIDEWAYS', W / 2, ty, PAL.yellow, 1, 'center', PAL.ink); ty -= 12; }
+      if (g.homeScreenTip() && y + 30 < ty) { // iPhones can't go full screen from a web page
+        text(ctx, 'FULL SCREEN: SHARE > ADD TO HOME SCREEN', W / 2, ty, PAL.cyan, 1, 'center', PAL.ink);
+      }
       text(ctx, fight ? 'WIN EVENTS TO EARN STAT POINTS' : 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, fight ? 'AND UNLOCK BETTER SHIPS' : 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
     } else if (W >= 440) {
