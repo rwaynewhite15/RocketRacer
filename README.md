@@ -54,8 +54,12 @@ Needs Node.js 20 or newer.
 ```bash
 npm install
 npm run dev        # http://localhost:8080, leaderboard kept in memory
-npm test           # API tests
+npm test           # API tests, plus browser tests of the game if Playwright is installed
 ```
+
+The browser tests drive the real game in headless Chromium (AI races on every course, zoom,
+do-over). They need `npm install --no-save playwright && npx playwright install chromium`
+and are skipped without it.
 
 The game itself is static. Opening `public/index.html` straight from disk also works; it
 just plays without the online leaderboard.
@@ -84,6 +88,42 @@ Options, as environment variables: `REGION` (default `us-central1`), `SERVICE`
 exists).
 
 The service scales to zero when nobody is playing and is capped at three instances.
+
+## CI/CD
+
+`.github/workflows/ci-cd.yml` runs on GitHub Actions:
+
+- **Pull requests**: install, syntax check, run all tests, build the container and check that it
+  boots. No cloud access.
+- **Push to `main`**: the same tests, then a deploy: build the image, push it to Artifact
+  Registry, deploy it to Cloud Run as a revision that gets **no traffic**, smoke-test that
+  revision (including a Firestore read), and only then send it traffic. If any check fails, the
+  previous revision keeps serving.
+
+It logs in to Google with Workload Identity Federation, so there are no keys or secrets to
+store or rotate. Google trusts GitHub only for this repository's `main` branch, and the deploy
+account can only push to one image repo and deploy this one service.
+
+One-time setup, after the first `./deploy.sh`:
+
+```bash
+PROJECT=your-project-id ./tools/setup-cicd.sh
+```
+
+It prints four values (`GCP_PROJECT_ID`, `GCP_REGION`, `WIF_PROVIDER`, `DEPLOYER_SA`). Add them as
+repository **variables** under Settings > Secrets and variables > Actions. Then merge to `main`.
+
+Worth switching on in GitHub: Settings > Branches > require a pull request and the **Test**
+check before merging to `main`, so nothing reaches Cloud Run without passing it.
+
+To roll back, send traffic to an earlier revision:
+
+```bash
+gcloud run revisions list --service rocketracer --region us-central1
+gcloud run services update-traffic rocketracer --region us-central1 --to-revisions REVISION=100
+```
+
+(After a rollback, the next deploy needs `--to-latest` to resume; the pipeline does that itself.)
 
 ## Backend
 
@@ -123,6 +163,9 @@ public/               the game (static)
 server.js             static files + leaderboard API
 lib/store.js          Firestore and in-memory leaderboard storage
 test/api.test.js      API tests
-Dockerfile, deploy.sh Cloud Run packaging and deployment
+test/game.test.js     browser tests of the game (Playwright)
+.github/workflows/    CI/CD pipeline
+Dockerfile, deploy.sh Cloud Run packaging and first deployment
+tools/setup-cicd.sh   one-time Google Cloud setup for the pipeline
 tools/make-icons.js   regenerates the app icons from the game art
 ```

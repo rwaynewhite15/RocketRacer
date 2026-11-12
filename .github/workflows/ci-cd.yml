@@ -1,0 +1,127 @@
+name: CI/CD
+
+# Pull requests: run the tests (no cloud access at all).
+# Push to main: run the tests, then ship to Cloud Run:
+#   build image -> deploy a revision that gets NO traffic -> smoke-test it ->
+#   only then switch traffic over. A failed smoke test leaves the old
+#   revision serving.
+#
+# One-time Google Cloud setup: tools/setup-cicd.sh. It prints the four
+# repository variables used below (Settings > Secrets and variables > Actions >
+# Variables). There are no secrets or stored keys.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch: # re-run a deploy by hand from the Actions tab
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Syntax check
+        run: |
+          for f in server.js lib/*.js public/src/*.js tools/*.js; do node --check "$f"; done
+
+      # Playwright is only needed by the tests, so it is not a dependency of the app.
+      - name: Install a browser for the game tests
+        run: |
+          npm install --no-save --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium
+
+      - name: API and game tests
+        run: npm test
+
+      - name: Build the container and check that it boots
+        run: |
+          docker build -t rocketracer:ci .
+          docker run -d --name rr -p 8080:8080 -e STORE=memory rocketracer:ci
+          for i in $(seq 1 20); do curl -fsS localhost:8080/healthz && break; sleep 1; done
+          curl -fsS localhost:8080/api/health | jq -e '.ok == true'
+          curl -fsS localhost:8080/ | grep -q 'Rocket Racer'
+          docker logs rr
+          docker rm -f rr
+
+  deploy:
+    name: Deploy to Cloud Run
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # lets the job prove its identity to Google
+    concurrency:
+      group: deploy-production # one deploy at a time, never cancelled half-way
+      cancel-in-progress: false
+    env:
+      PROJECT: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      SERVICE: ${{ vars.CLOUD_RUN_SERVICE || 'rocketracer' }}
+      AR_REPO: ${{ vars.AR_REPO || 'rocketracer' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Build and push the image
+        run: |
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT/$AR_REPO/$SERVICE:$GITHUB_SHA"
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      # Settings that are already on the service (service account, env vars,
+      # memory, scaling) carry over; only the image changes.
+      - name: Deploy a revision that gets no traffic yet
+        run: |
+          gcloud run deploy "$SERVICE" --project "$PROJECT" --region "$REGION" \
+            --image "$IMAGE" --no-traffic --tag candidate --quiet
+
+      - name: Smoke-test the new revision
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format=json \
+            | jq -r '.status.traffic[] | select(.tag == "candidate") | .url')
+          if [ -z "$URL" ] || [ "$URL" = "null" ]; then echo "No URL for the candidate revision"; exit 1; fi
+          echo "Candidate revision: $URL"
+          probe() { curl -fsS --retry 5 --retry-delay 3 --retry-all-errors --max-time 20 "$@"; }
+          probe "$URL/healthz"
+          probe "$URL/api/health" | jq -e '.ok == true'
+          # reads from Firestore, so this also proves the revision's permissions work
+          probe "$URL/api/scores?track=lunar" | jq -e '.scores | type == "array"'
+          probe "$URL/" | grep -q 'Rocket Racer'
+
+      - name: Send traffic to the new revision
+        run: |
+          gcloud run services update-traffic "$SERVICE" --project "$PROJECT" --region "$REGION" --to-latest --quiet
+          LIVE=$(gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format='value(status.url)')
+          {
+            echo "### Deployed"
+            echo "Commit \`$GITHUB_SHA\` is live at $LIVE"
+          } >> "$GITHUB_STEP_SUMMARY"
