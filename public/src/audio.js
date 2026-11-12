@@ -11,7 +11,7 @@
   const A = (RR.audio = { muted: false });
 
   let ctx = null, master, musicBus, sfxBus, noiseBuf, pulse25, pulse12;
-  let engOsc, engGain;
+  let eng = null;
 
   function pulseWave(duty) {
     const N = 32, real = new Float32Array(N), imag = new Float32Array(N);
@@ -42,15 +42,41 @@
     pulse25 = pulseWave(0.25);
     pulse12 = pulseWave(0.125);
 
-    // engine drone
-    engOsc = ctx.createOscillator();
-    engOsc.type = 'sawtooth';
-    engOsc.frequency.value = 50;
-    const lp = ctx.createBiquadFilter();
-    lp.type = 'lowpass'; lp.frequency.value = 260;
-    engGain = ctx.createGain(); engGain.gain.value = 0;
-    engOsc.connect(lp); lp.connect(engGain); engGain.connect(sfxBus);
-    engOsc.start();
+    // Rocket engine: no pitched oscillator (a pitch that climbs with speed is
+    // what makes an engine sound like a car revving). Instead, two layers of
+    // filtered noise: a deep rumble and a breathy roar whose brightness opens
+    // up with throttle, plus a little random flutter so the flame crackles.
+    // Brown-ish noise (heavy low end) for the rumble, white noise for the roar
+    // and hiss; both normalised to the same loudness (RMS 0.5).
+    const makeNoise = function (brownian) {
+      const buf = ctx.createBuffer(1, ctx.sampleRate * 3, ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      let b = 0, sum = 0;
+      for (let i = 0; i < d.length; i++) {
+        const w = Math.random() * 2 - 1;
+        d[i] = brownian ? (b = (b + 0.02 * w) / 1.02) : w;
+        sum += d[i] * d[i];
+      }
+      const k = 0.5 / Math.sqrt(sum / d.length);
+      for (let i = 0; i < d.length; i++) d[i] = Math.max(-1, Math.min(1, d[i] * k));
+      return buf;
+    };
+    const lowBuf = makeNoise(true), fullBuf = makeNoise(false);
+    const layer = function (buf, type, freq, q) {
+      const src = ctx.createBufferSource();
+      src.buffer = buf; src.loop = true;
+      const f = ctx.createBiquadFilter();
+      f.type = type; f.frequency.value = freq; f.Q.value = q;
+      const g = ctx.createGain(); g.gain.value = 0;
+      src.connect(f); f.connect(g); g.connect(sfxBus);
+      src.start(0, Math.random() * 3);
+      return { f: f, g: g };
+    };
+    eng = {
+      rumble: layer(lowBuf, 'lowpass', 200, 1.2),
+      roar: layer(fullBuf, 'bandpass', 500, 0.7),
+      hiss: layer(fullBuf, 'highpass', 3000, 0.5),
+    };
 
     setInterval(tick, 25);
   };
@@ -146,10 +172,16 @@
 
   /** Engine drone: `on` gates it, `thrust` 0..~1.6, `speed` in px/s. */
   A.engine = function (on, thrust, speed) {
-    if (!ctx) return;
+    if (!ctx || !eng) return;
     const t = ctx.currentTime;
-    engGain.gain.setTargetAtTime(on ? 0.035 + 0.09 * Math.min(1.6, thrust) : 0, t, 0.06);
-    engOsc.frequency.setTargetAtTime(44 + speed * 0.17 + thrust * 22, t, 0.08);
+    const th = on ? Math.min(1.6, thrust) / 1.6 : 0; // 0..1 throttle
+    const sp = on ? Math.min(1, speed / 400) : 0;    // 0..1 speed, only adds a little air
+    const flutter = (1 + (Math.random() - 0.5) * 0.35 * th) * 0.7; // flame crackle x overall engine level
+    // idle: a soft low pilot-light rumble; full burn: a loud, bright roar
+    eng.rumble.g.gain.setTargetAtTime(on ? (0.2 + 0.5 * th) * flutter : 0, t, 0.05);
+    eng.roar.g.gain.setTargetAtTime((0.3 * th + 0.04 * sp) * flutter, t, 0.04);
+    eng.roar.f.frequency.setTargetAtTime(260 + 500 * th, t, 0.08);
+    eng.hiss.g.gain.setTargetAtTime(0.015 * th * flutter + 0.004 * sp, t, 0.04);
   };
 
   /* --------------------------------------------------------------- music */

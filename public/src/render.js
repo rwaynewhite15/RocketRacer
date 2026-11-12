@@ -295,14 +295,26 @@
     if (!g.playerDone) {
       const cp = tr.cps[p.nextCp], sx = cp.x - cx, sy = cp.y - cy;
       if (!vis(sx, sy, -10)) {
-        const ang = Math.atan2(sy - H / 2, sx - W / 2), c = Math.cos(ang), s = Math.sin(ang);
-        const k = Math.min((W / 2 - 24) / Math.abs(c || 1e-6), (H / 2 - 24) / Math.abs(s || 1e-6));
-        const pulse = Math.sin(g.t * 9) * 4;
-        const ax = W / 2 + c * (k + pulse), ay = H / 2 + s * (k + pulse);
+        // launch from just beside the ship, glide out towards the gate, then
+        // hold at the screen edge for a while before starting over
+        const SCALE = 2, R = 20, M = R + 4; // arrow drawn 2x; halo radius; edge margin
+        const TRAVEL = 1.5, HOLD = 1.8;     // seconds
+        const px = p.x - cx, py = p.y - cy;
+        const ang = Math.atan2(sy - py, sx - px), c = Math.cos(ang), s = Math.sin(ang);
+        const kx = c > 1e-6 ? (W - M - px) / c : c < -1e-6 ? (px - M) / -c : Infinity;
+        const ky = s > 1e-6 ? (H - M - py) / s : s < -1e-6 ? (py - M) / -s : Infinity;
+        const r0 = 36, r1 = Math.max(r0, Math.min(kx, ky));
+        const u = Math.min(1, (g.t % (TRAVEL + HOLD)) / TRAVEL);
+        const d = r0 + (r1 - r0) * u * u * (3 - 2 * u); // ease in and out: a gentle glide
+        const ax = px + c * d, ay = py + s * d;
         // dark halo so it reads over bright nebula and planets, then a white blink
-        RR.disc(ctx, ax, ay, 12, 'rgba(7,7,26,0.55)');
-        RR.ring(ctx, ax, ay, 12, PAL.yellow, 8, g.t * 10);
-        RR.drawRot(ctx, (g.t * 5) % 1 < 0.25 ? Art.arrowFlash : Art.arrow, ax, ay, ang);
+        RR.disc(ctx, ax, ay, R, 'rgba(7,7,26,0.55)');
+        RR.ring(ctx, ax, ay, R, PAL.yellow, 10, g.t * 10);
+        const img = (g.t * 5) % 1 < 0.25 ? Art.arrowFlash : Art.arrow;
+        ctx.setTransform(SCALE, 0, 0, SCALE, Math.round(ax), Math.round(ay));
+        ctx.rotate(ang);
+        ctx.drawImage(img, -img.width / 2, -img.height / 2);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
       }
     }
 
