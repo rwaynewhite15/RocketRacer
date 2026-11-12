@@ -55,7 +55,7 @@
   function button(g, ctx, label, x, y, w, h, act, color) {
     panel(ctx, x, y, w, h, color || PAL.steel);
     text(ctx, label, x + w / 2, y + Math.floor((h - 7) / 2), color || PAL.white, 1, 'center', PAL.ink);
-    g.ui.push({ x: x, y: y, w: w, h: h, act: act });
+    g.ui.push({ x: x, y: y, w: w, h: h, act: act, label: label }); // label: lets tests find a button
   }
 
   const NO_INSET = { l: 0, t: 0, r: 0, b: 0 };
@@ -635,8 +635,17 @@
       panel(ctx, 4 + ins.l, 4 + ins.t, lw, 13, PAL.alarm);
       text(ctx, label, 9 + ins.l, 7 + ins.t, Math.floor(T * 2) & 1 ? PAL.alarm : PAL.yellow);
     }
+    // touch screens have no M key: a speaker switch in the corner, kept out of the menu card
+    // so the card still fits a phone held sideways
+    if (touch) {
+      const off = RR.audio.muted, bw = 22, bh = 16, bx = W - 4 - ins.r - bw, by = 4 + ins.t;
+      panel(ctx, bx, by, bw, bh, off ? PAL.steel : PAL.lime);
+      ctx.drawImage(Art.icons[off ? 'speakerOff' : 'speaker'], bx + 6, by + 4);
+      // a finger-sized hit area around the small button
+      g.ui.push({ x: bx - 8, y: by - 4, w: bw + 12, h: bh + 12, act: function () { g.toggleSound(); }, label: off ? 'SOUND OFF' : 'SOUND ON' });
+    }
     if (net.online && /^[0-9a-f]{7,40}$/.test(net.version)) {
-      text(ctx, net.version.slice(0, 7), W - 4 - ins.r, 4 + ins.t, PAL.slate, 1, 'right');
+      text(ctx, net.version.slice(0, 7), W - 4 - ins.r - (touch ? 26 : 0), 4 + ins.t, PAL.slate, 1, 'right');
     }
     y += compact ? 13 : 18;
 
@@ -865,6 +874,8 @@
     button(g, ctx, touch ? 'RESUME' : 'RESUME  (P)', bx, y + 42, bw, 20, function () { g.resume(); }, PAL.lime);
     button(g, ctx, touch ? 'RESTART' : 'RESTART  (R)', bx, y + 66, bw, 20, function () { g.begin(); }, PAL.yellow);
     button(g, ctx, touch ? 'QUIT TO MENU' : 'QUIT  (Q)', bx, y + 90, bw, 20, function () { g.toTitle(); }, PAL.orange);
+    const snd = (RR.audio.muted ? 'SOUND OFF' : 'SOUND ON') + (touch ? '' : '  (M)');
+    button(g, ctx, snd, bx, y + 114, bw, 20, function () { g.toggleSound(); }, RR.audio.muted ? PAL.steel : PAL.lime);
   }
 
   function drawResults(g, ctx, W, H) {

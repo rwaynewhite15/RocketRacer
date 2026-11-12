@@ -375,6 +375,13 @@
   G.closeBoard = function () {
     if (this.state === 'board') { this.state = 'title'; RR.audio.sfx('select'); }
   };
+  /** Sound on/off (M key, or the SOUND button on touch screens). Remembered between visits. */
+  G.toggleSound = function () {
+    RR.audio.setMuted(!RR.audio.muted);
+    save();
+    if (!RR.audio.muted) RR.audio.sfx('select'); // so turning it on is audible straight away
+  };
+
   G.fullscreen = function () {
     const d = document, el = d.documentElement;
     try {
@@ -1637,7 +1644,7 @@
 
   function handleUI(g) {
     const I = RR.input, hit = I.hit;
-    if (hit.mute) { RR.audio.setMuted(!RR.audio.muted); save(); }
+    if (hit.mute) g.toggleSound();
     if (hit.crt) { g.crt = !g.crt; applyCrt(); save(); }
     if (hit.zoomIn) g.zoomBy(1);
     if (hit.zoomOut) g.zoomBy(-1);

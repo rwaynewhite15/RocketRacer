@@ -457,3 +457,111 @@ test('rivals fight both combat modes to a finish in every arena', { skip }, asyn
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
 });
+
+/* ---------------------------------------------------------------- sound */
+
+/** A phone-like page: touch screen, and a browser that refuses sound until a gesture. */
+async function openPhone(strict) {
+  const ctx = await strict.newContext({ viewport: { width: 390, height: 760 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+  // Chromium has no Audio Session API (Safari's switch between "background sound" and "media playback"): stand one in
+  await ctx.addInitScript(() => { Object.defineProperty(navigator, 'audioSession', { value: { type: 'auto' }, configurable: true }); });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.stack || e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.goto(base + '/');
+  await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+  const box = await page.locator('#hud').boundingBox();
+  // a spot on the title screen with no button under it (the logo)
+  const tapEmpty = () => page.touchscreen.tap(box.x + box.width / 2, box.y + box.height * 0.12);
+  return { ctx, page, errors, tapEmpty };
+}
+
+test('sound: the first tap on a phone starts it, as media playback so the iPhone silent switch does not mute it', { skip }, async () => {
+  const strict = await chromium.launch({ args: ['--autoplay-policy=user-gesture-required'] });
+  try {
+    const { page, errors, tapEmpty } = await openPhone(strict);
+    const before = await page.evaluate(() => RR.audio.state());
+    assert.ok(before === 'none' || before === 'suspended', 'silent until a gesture: ' + before);
+    await tapEmpty();
+    await page.waitForFunction(() => RR.audio.state() === 'running', null, { timeout: 5000 });
+    const r = await page.evaluate(() => {
+      const n = RR.audio.played;
+      RR.audio.sfx('select');
+      return { session: navigator.audioSession.type, played: RR.audio.played - n };
+    });
+    assert.strictEqual(r.session, 'playback');
+    assert.strictEqual(r.played, 1, 'a sound effect actually starts');
+    assert.deepStrictEqual(errors, []);
+  } finally { await strict.close(); }
+});
+
+test('sound: if iOS leaves the audio stuck ("interrupted"), a tap resumes it, and a fresh context replaces one that stays stuck', { skip }, async () => {
+  const strict = await chromium.launch({ args: ['--autoplay-policy=user-gesture-required'] });
+  try {
+    const { page, errors, tapEmpty } = await openPhone(strict);
+    await tapEmpty();
+    await page.waitForFunction(() => RR.audio.state() === 'running', null, { timeout: 5000 });
+    await page.waitForTimeout(600);
+    // play a sound on the old context, then make that context behave like a stuck iPhone one:
+    // it reports "interrupted" and its resume() does nothing
+    await page.evaluate(() => {
+      RR.audio.sfx('select');
+      const c = RR.audio._ctx();
+      window.__stuck = { c, resumes: 0 };
+      Object.defineProperty(c, 'state', { get: () => 'interrupted', configurable: true });
+      c.resume = () => { window.__stuck.resumes++; return Promise.resolve(); };
+    });
+    assert.strictEqual(await page.evaluate(() => RR.audio.state()), 'interrupted');
+
+    await tapEmpty(); // first tap: try to resume the context we have
+    const first = await page.evaluate(() => ({ resumes: __stuck.resumes, same: RR.audio._ctx() === __stuck.c, rebuilds: RR.audio.rebuilds }));
+    assert.ok(first.resumes >= 1, 'the tap asked the context to resume');
+    assert.deepStrictEqual([first.same, first.rebuilds], [true, 0], 'not replaced straight away');
+
+    await page.waitForTimeout(1700);
+    await tapEmpty(); // still stuck well after a tap: start fresh
+    await page.waitForFunction(() => RR.audio._ctx() !== __stuck.c && RR.audio.state() === 'running', null, { timeout: 5000 });
+    const after = await page.evaluate(() => {
+      const n = RR.audio.played;
+      RR.audio.sfx('select'); // the same effect played on the old context: must not be held back by its clock
+      return { rebuilds: RR.audio.rebuilds, played: RR.audio.played - n, old: __stuck.c.state };
+    });
+    assert.strictEqual(after.rebuilds, 1);
+    assert.strictEqual(after.played, 1, 'sound effects play on the fresh context');
+    assert.deepStrictEqual(errors, []);
+  } finally { await strict.close(); }
+});
+
+test('sound: touch players can switch it off and on, and the choice is remembered', { skip }, async () => {
+  const strict = await chromium.launch({ args: ['--autoplay-policy=user-gesture-required'] });
+  try {
+    const { page, errors } = await openPhone(strict);
+    const box = await page.locator('#hud').boundingBox();
+    const tapButton = async (label) => {
+      const u = await page.evaluate((l) => RR.game.ui.find((b) => b.label === l) || null, label);
+      assert.ok(u, 'a "' + label + '" button is on screen');
+      const W = await page.evaluate(() => RR.game.W);
+      const k = box.width / W;
+      await page.touchscreen.tap(box.x + (u.x + u.w / 2) * k, box.y + (u.y + u.h / 2) * k);
+      await page.waitForTimeout(150);
+    };
+    const muted = () => page.evaluate(() => ({ live: RR.audio.muted, saved: JSON.parse(localStorage.getItem('rocketracer.v1')).muted }));
+
+    await tapButton('SOUND ON');
+    assert.deepStrictEqual(await muted(), { live: true, saved: true });
+    await tapButton('SOUND OFF');
+    assert.deepStrictEqual(await muted(), { live: false, saved: false });
+    await tapButton('SOUND ON');
+    await page.reload();
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    await page.waitForTimeout(200);
+    assert.strictEqual(await page.evaluate(() => RR.audio.muted), true, 'still off after a reload');
+    // and it is in the pause menu too
+    await page.evaluate(() => { RR.game.begin(); RR.game.pause(); });
+    await page.waitForTimeout(200);
+    assert.ok(await page.evaluate(() => RR.game.ui.some((b) => b.label === 'SOUND OFF')), 'pause menu has the switch');
+    assert.deepStrictEqual(errors, []);
+  } finally { await strict.close(); }
+});
+
