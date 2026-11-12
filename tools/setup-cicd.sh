@@ -69,11 +69,11 @@ if ! exists gcloud artifacts repositories describe "${AR_REPO}" --location "${RE
     --description "Rocket Racer images" --project "${PROJECT}"
 fi
 
-# setup_deployer <account id> <service> <image-repo role> <identity pool> <who GitHub must be>
+# setup_deployer <label> <account id> <service> <image-repo role> <identity pool> <who GitHub must be>
 # Creates one deploy account, gives it the minimum it needs for one service,
 # and lets matching GitHub Actions runs act as it. Echoes nothing but progress.
 setup_deployer() {
-  local id="$1" service="$2" ar_role="$3" pool="$4" condition="$5"
+  local label="$1" id="$2" service="$3" ar_role="$4" pool="$5" condition="$6"
   local email="${id}@${PROJECT}.iam.gserviceaccount.com" member provider="rocketracer-repo" runtime
   member="serviceAccount:${email}"
 
@@ -93,7 +93,8 @@ setup_deployer() {
   # Each deployer gets its own identity pool, so a token accepted for staging
   # (any branch) can never be used as the production deployer (main only).
   if ! exists gcloud iam workload-identity-pools describe "${pool}" --location=global --project "${PROJECT}"; then
-    gcloud iam workload-identity-pools create "${pool}" --location=global --display-name "GitHub Actions: ${service}" --project "${PROJECT}"
+    # (Google caps a pool's display name at 32 characters, so name it by role, not service)
+    gcloud iam workload-identity-pools create "${pool}" --location=global --display-name "GitHub Actions ${label}" --project "${PROJECT}"
   fi
   if ! exists gcloud iam workload-identity-pools providers describe "${provider}" --workload-identity-pool "${pool}" \
     --location=global --project "${PROJECT}"; then
@@ -114,9 +115,9 @@ PROD_POOL="github"
 STG_POOL="github-staging"
 
 # Production only rolls out images the staging stage already built and tested, so it only needs to read them.
-setup_deployer "${PROD_DEPLOYER}" "${SERVICE}" roles/artifactregistry.reader "${PROD_POOL}" \
+setup_deployer production "${PROD_DEPLOYER}" "${SERVICE}" roles/artifactregistry.reader "${PROD_POOL}" \
   "assertion.repository == '${GITHUB_REPO}' && assertion.ref == 'refs/heads/${BRANCH}'"
-setup_deployer "${STG_DEPLOYER}" "${STAGING_SERVICE}" roles/artifactregistry.writer "${STG_POOL}" \
+setup_deployer staging "${STG_DEPLOYER}" "${STAGING_SERVICE}" roles/artifactregistry.writer "${STG_POOL}" \
   "assertion.repository == '${GITHUB_REPO}'"
 
 provider_name() { echo "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/$1/providers/rocketracer-repo"; }
