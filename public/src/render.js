@@ -55,7 +55,7 @@
   function button(g, ctx, label, x, y, w, h, act, color) {
     panel(ctx, x, y, w, h, color || PAL.steel);
     text(ctx, label, x + w / 2, y + Math.floor((h - 7) / 2), color || PAL.white, 1, 'center', PAL.ink);
-    g.ui.push({ x: x, y: y, w: w, h: h, act: act });
+    g.ui.push({ x: x, y: y, w: w, h: h, act: act, label: label }); // label: lets tests find a button
   }
 
   const NO_INSET = { l: 0, t: 0, r: 0, b: 0 };
@@ -635,8 +635,17 @@
       panel(ctx, 4 + ins.l, 4 + ins.t, lw, 13, PAL.alarm);
       text(ctx, label, 9 + ins.l, 7 + ins.t, Math.floor(T * 2) & 1 ? PAL.alarm : PAL.yellow);
     }
+    // touch screens have no M key: a speaker switch in the corner, kept out of the menu card
+    // so the card still fits a phone held sideways
+    if (touch) {
+      const off = RR.audio.muted, bw = 22, bh = 16, bx = W - 4 - ins.r - bw, by = 4 + ins.t;
+      panel(ctx, bx, by, bw, bh, off ? PAL.steel : PAL.lime);
+      ctx.drawImage(Art.icons[off ? 'speakerOff' : 'speaker'], bx + 6, by + 4);
+      // a finger-sized hit area around the small button
+      g.ui.push({ x: bx - 8, y: by - 4, w: bw + 12, h: bh + 12, act: function () { g.toggleSound(); }, label: off ? 'SOUND OFF' : 'SOUND ON' });
+    }
     if (net.online && /^[0-9a-f]{7,40}$/.test(net.version)) {
-      text(ctx, net.version.slice(0, 7), W - 4 - ins.r, 4 + ins.t, PAL.slate, 1, 'right');
+      text(ctx, net.version.slice(0, 7), W - 4 - ins.r - (touch ? 26 : 0), 4 + ins.t, PAL.slate, 1, 'right');
     }
     y += compact ? 13 : 18;
 
@@ -653,7 +662,7 @@
       items.push(['PILOT ' + g.name + (touch ? '' : ' (N)'), function () { g.editName(); }, PAL.cyan]);
       if (!fight) items.push(['TOP 10' + (touch ? '' : ' (T)'), function () { g.showBoard(); }, PAL.pink]);
     }
-    if (touch && canFullscreen()) items.push(['FULLSCREEN', function () { g.fullscreen(); }, PAL.silver]);
+    if (touch && canFullscreen()) items.push([g.isFullscreen() ? 'EXIT FULL' : 'FULLSCREEN', function () { g.fullscreen(); }, PAL.silver]);
     const lines = [[]];
     let lineW = 0;
     items.forEach(function (it) {
@@ -719,7 +728,11 @@
     const fy = H - 22 - ins.b;
     if (y + 8 > fy) return; // no room for the help lines on very short screens
     if (touch) {
-      if (tall && y + 30 < fy) text(ctx, 'TIP: TURN YOUR PHONE SIDEWAYS', W / 2, fy - 16, PAL.yellow, 1, 'center', PAL.ink);
+      let ty = fy - 16;
+      if (tall && y + 30 < ty) { text(ctx, 'TIP: TURN YOUR PHONE SIDEWAYS', W / 2, ty, PAL.yellow, 1, 'center', PAL.ink); ty -= 12; }
+      if (g.homeScreenTip() && y + 30 < ty) { // iPhones can't go full screen from a web page
+        text(ctx, 'FULL SCREEN: SHARE > ADD TO HOME SCREEN', W / 2, ty, PAL.cyan, 1, 'center', PAL.ink);
+      }
       text(ctx, fight ? 'WIN EVENTS TO EARN STAT POINTS' : 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, fight ? 'AND UNLOCK BETTER SHIPS' : 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
     } else if (W >= 440) {
@@ -865,6 +878,8 @@
     button(g, ctx, touch ? 'RESUME' : 'RESUME  (P)', bx, y + 42, bw, 20, function () { g.resume(); }, PAL.lime);
     button(g, ctx, touch ? 'RESTART' : 'RESTART  (R)', bx, y + 66, bw, 20, function () { g.begin(); }, PAL.yellow);
     button(g, ctx, touch ? 'QUIT TO MENU' : 'QUIT  (Q)', bx, y + 90, bw, 20, function () { g.toTitle(); }, PAL.orange);
+    const snd = (RR.audio.muted ? 'SOUND OFF' : 'SOUND ON') + (touch ? '' : '  (M)');
+    button(g, ctx, snd, bx, y + 114, bw, 20, function () { g.toggleSound(); }, RR.audio.muted ? PAL.steel : PAL.lime);
   }
 
   function drawResults(g, ctx, W, H) {

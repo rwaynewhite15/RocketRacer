@@ -116,6 +116,7 @@
     parts: [], rings: [], texts: [],
     cam: { x: 0, y: 0 }, shake: 0, flash: 0, msg: null, ui: [],
     best: {}, crt: true, newRecord: false,
+    autoFull: true, wantFull: false, // full screen on phones (see G.fullscreen)
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
     inset: { l: 0, t: 0, r: 0, b: 0 }, // notch / rounded-corner margins, in game pixels
     // The world layer can zoom; the HUD layer (W x H) keeps its pixel size.
@@ -131,6 +132,7 @@
       const s = JSON.parse(window.localStorage.getItem(STORE) || '{}');
       G.best = s.best || {};
       G.crt = s.crt !== false;
+      G.autoFull = s.autoFull !== false;
       RR.audio.muted = !!s.muted;
       if (s.diff >= 0 && s.diff < DIFFS.length) G.diffIdx = s.diff;
       if (s.track >= 0 && s.track < RR.TRACKS.length) G.trackIdx = s.track;
@@ -147,7 +149,7 @@
   function save() {
     try {
       window.localStorage.setItem(STORE, JSON.stringify({
-        best: G.best, crt: G.crt, muted: RR.audio.muted, diff: G.diffIdx, track: G.trackIdx,
+        best: G.best, crt: G.crt, muted: RR.audio.muted, autoFull: G.autoFull, diff: G.diffIdx, track: G.trackIdx,
         name: G.name, pid: G.pid, zoom: G.zoomOffset,
         mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog,
       }));
@@ -308,6 +310,7 @@
 
   G.init = function () {
     load();
+    G.wantFull = RR.input.touchMode && G.autoFull; // phones: the first tap goes full screen
     save();
     applyCrt();
     Art.init();
@@ -356,6 +359,7 @@
   };
 
   G.begin = function () {
+    if (RR.input.touchMode && this.autoFull) this.wantFull = true;
     RR.audio.sfx('confirm');
     RR.audio.music({ on: true, tempo: 1, lead: true, restart: true });
     this.startRace(false);
@@ -375,17 +379,68 @@
   G.closeBoard = function () {
     if (this.state === 'board') { this.state = 'title'; RR.audio.sfx('select'); }
   };
-  G.fullscreen = function () {
-    const d = document, el = d.documentElement;
+  /** Sound on/off (M key, or the SOUND button on touch screens). Remembered between visits. */
+  G.toggleSound = function () {
+    RR.audio.setMuted(!RR.audio.muted);
+    save();
+    if (!RR.audio.muted) RR.audio.sfx('select'); // so turning it on is audible straight away
+  };
+
+  /*
+   * Full screen on phones. Browsers only allow it from inside a tap, and the
+   * moment every browser accepts is the finger lifting. A tap is acted on as
+   * the finger lands, so code here only *asks* (wantFull) and input.js grants
+   * it on the next finger-lift (G.onGestureEnd).
+   *
+   * Phones go full screen on the first tap and at the start of each race,
+   * unless the player turned it off with the button (remembered). iPhones
+   * can't: Safari only lets videos go full screen there, so they get an
+   * "Add to Home Screen" tip instead, which opens the game without Safari's bars.
+   */
+  function fsEnabled() { const d = document; return !!(d.fullscreenEnabled || d.webkitFullscreenEnabled); }
+  function isFull() { const d = document; return !!(d.fullscreenElement || d.webkitFullscreenElement); }
+  function enterFull() {
+    if (isFull() || !fsEnabled()) return;
+    const el = document.documentElement;
     try {
-      let r;
-      if (d.fullscreenElement || d.webkitFullscreenElement) r = (d.exitFullscreen || d.webkitExitFullscreen).call(d);
-      else {
-        const req = el.requestFullscreen || el.webkitRequestFullscreen;
-        if (req) r = req.call(el);
-      }
-      if (r && r.catch) r.catch(function () { /* refused, e.g. inside a frame */ });
-    } catch (e) { /* fullscreen not available here */ }
+      const r = el.requestFullscreen ? el.requestFullscreen({ navigationUI: 'hide' }) : el.webkitRequestFullscreen();
+      if (r && r.catch) r.catch(function () { /* refused: the next finger-lift can try again */ });
+    } catch (e) { /* not available here */ }
+  }
+  function exitFull() {
+    const d = document;
+    try {
+      const r = (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+      if (r && r.catch) r.catch(function () {});
+    } catch (e) { /* ignore */ }
+  }
+  G.canFullscreen = fsEnabled;
+  G.isFullscreen = isFull;
+
+  /** True on an iPhone browsing in Safari: the only way to full screen there is Add to Home Screen. */
+  G.homeScreenTip = function () {
+    if (!RR.input.touchMode || fsEnabled() || !/iPhone|iPod/.test(navigator.userAgent || '')) return false;
+    const mm = function (q) { try { return window.matchMedia(q).matches; } catch (e) { return false; } };
+    const installed = navigator.standalone === true || mm('(display-mode: standalone)') || mm('(display-mode: fullscreen)');
+    return !installed;
+  };
+
+  /** Called by input.js on every finger-lift: the moment browsers allow full screen. */
+  G.onGestureEnd = function () {
+    if (!this.wantFull) return;
+    this.wantFull = false;
+    enterFull();
+  };
+
+  /** The FULLSCREEN / EXIT FULL button and the F key. The choice is remembered. */
+  G.fullscreen = function () {
+    if (isFull()) { this.autoFull = false; this.wantFull = false; exitFull(); }
+    else {
+      this.autoFull = true;
+      this.wantFull = true; // a tap: granted as the finger lifts
+      if (!RR.input.touchMode) enterFull(); // a key press (F) can go straight away
+    }
+    save();
   };
 
   /* Pilot name: a real HTML text field, so phones bring up their keyboard. */
@@ -1637,7 +1692,7 @@
 
   function handleUI(g) {
     const I = RR.input, hit = I.hit;
-    if (hit.mute) { RR.audio.setMuted(!RR.audio.muted); save(); }
+    if (hit.mute) g.toggleSound();
     if (hit.crt) { g.crt = !g.crt; applyCrt(); save(); }
     if (hit.zoomIn) g.zoomBy(1);
     if (hit.zoomOut) g.zoomBy(-1);

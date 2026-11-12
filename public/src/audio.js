@@ -11,7 +11,7 @@
   const A = (RR.audio = { muted: false });
 
   let ctx = null, master, musicBus, sfxBus, noiseBuf, pulse25, pulse12;
-  let eng = null;
+  let eng = null, ticker = 0, notRunningSince = 0;
 
   function pulseWave(duty) {
     const N = 32, real = new Float32Array(N), imag = new Float32Array(N);
@@ -19,12 +19,83 @@
     return ctx.createPeriodicWave(real, imag);
   }
 
-  /** Must be called from a user gesture (key / tap) before any sound plays. */
+  /*
+   * Phones are strict about sound:
+   *  - it may only start from inside a tap or key press, so every gesture
+   *    calls A.init();
+   *  - iPhones treat Web Audio as background sound by default, which the
+   *    ring/silent switch mutes, so we ask to be treated as media playback
+   *    (like a video) where Safari supports that;
+   *  - iOS can leave the audio "interrupted" (after a call, the lock screen,
+   *    another app's sound). A tap usually resumes it; if it stays stuck,
+   *    the next tap starts a fresh audio context.
+   */
+
+  function asMediaPlayback() {
+    try {
+      const session = navigator.audioSession;
+      if (session && session.type !== 'playback') session.type = 'playback';
+    } catch (e) { /* not supported: nothing to do */ }
+  }
+
+  /** One silent sample, played from inside a gesture: fully wakes audio on iOS. */
+  function blip() {
+    try {
+      const src = ctx.createBufferSource();
+      src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch (e) { /* ignore */ }
+  }
+
+  function resumeNow() {
+    try {
+      const p = ctx.resume();
+      if (p && p.catch) p.catch(function () { /* refused outside a gesture: the next tap retries */ });
+    } catch (e) { /* ignore */ }
+  }
+
+  /** Throw the stuck context away; the next build() makes a fresh one. */
+  function discard() {
+    const old = ctx;
+    ctx = null; eng = null;
+    for (const k in lastPlayed) delete lastPlayed[k]; // times belonged to the old context's clock
+    music.next = 0;
+    try { const p = old.close(); if (p && p.catch) p.catch(function () {}); } catch (e) { /* ignore */ }
+  }
+
+  /** Call from every user gesture (key, tap) and it keeps the sound going. */
   A.init = function () {
-    if (ctx) {
-      if (ctx.state === 'suspended') ctx.resume();
-      return;
+    asMediaPlayback();
+    if (ctx && ctx.state !== 'running') {
+      const now = performance.now();
+      if (!notRunningSince) notRunningSince = now;
+      // one gesture fires several events within milliseconds, so judge "stuck" by time, not by count
+      else if (now - notRunningSince > 1500) { discard(); notRunningSince = 0; A.rebuilds++; }
     }
+    if (!ctx) build();
+    if (!ctx) return;
+    if (ctx.state === 'running') { notRunningSince = 0; return; }
+    resumeNow();
+    blip();
+  };
+  A.rebuilds = 0;
+
+  /** Current audio state: 'none' before the first gesture, then 'suspended' | 'running' | 'interrupted' | 'closed'. */
+  A.state = function () { return ctx ? ctx.state : 'none'; };
+  A._ctx = function () { return ctx; }; // for the tests only
+
+  // Stop all sound while the page is hidden (otherwise media playback could carry on in the
+  // background), and try to wake it again on return; a tap finishes the job if iOS refuses.
+  document.addEventListener('visibilitychange', function () {
+    if (!ctx) return;
+    try {
+      if (document.hidden) { const p = ctx.suspend(); if (p && p.catch) p.catch(function () {}); }
+      else if (ctx.state !== 'running') resumeNow();
+    } catch (e) { /* ignore */ }
+  });
+
+  function build() {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     try { ctx = new AC(); } catch (e) { ctx = null; return; }
@@ -78,8 +149,8 @@
       hiss: layer(fullBuf, 'highpass', 3000, 0.5),
     };
 
-    setInterval(tick, 25);
-  };
+    if (!ticker) ticker = setInterval(tick, 25); // one scheduler for the page, whichever context is current
+  }
 
   A.setMuted = function (m) {
     A.muted = !!m;
@@ -159,7 +230,8 @@
     deny: function (v) { tone('square', 196, 130, 0.14, 0.15 * v); },
   };
 
-  const lastPlayed = {};
+  const lastPlayed = {}; // name -> context time it last played, to de-dupe bursts
+  A.played = 0; // sound effects actually started (used by the tests)
   A.sfx = function (name, vol) {
     if (!ctx || A.muted || ctx.state !== 'running') return;
     const f = SFX[name];
@@ -168,6 +240,7 @@
     if (lastPlayed[name] && now - lastPlayed[name] < 0.035) return; // de-dupe bursts
     lastPlayed[name] = now;
     f(vol === undefined ? 1 : vol);
+    A.played++;
   };
 
   /** Engine drone: `on` gates it, `thrust` 0..~1.6, `speed` in px/s. */
