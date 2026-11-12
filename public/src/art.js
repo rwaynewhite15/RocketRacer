@@ -128,6 +128,32 @@
         '.kkkk.....kkkk.',
       ],
     },
+    { // swept-wing interceptor
+      ports: [[0, 11]],
+      rows: [
+        '.......k.......',
+        '......kik......',
+        '.....kiaAk.....',
+        '.....kwvek.....',
+        '....kwcsbek....',
+        '.k..kwcsbek..k.',
+        '.k..kwsbbek..k.',
+        'kik.kwwvvek.kAk',
+        'kakkiwwvveAkkAk',
+        'kakiawwvveaAkAk',
+        'kaiaawwvveaaAAk',
+        'kaaaawwvveaaAAk',
+        'kaaaAkwvekaAAAk',
+        'kaaAkkwvekkAAAk',
+        'kaAk.kwvek.kAAk',
+        'kAk.kkwvekk.kAk',
+        'kkk.kiwveAk.kkk',
+        '....kaeeeAk....',
+        '....kdeeedk....',
+        '....kkdddkk....',
+        '.....kkkkk.....',
+      ],
+    },
   ];
 
   Art.TEAMS = [
