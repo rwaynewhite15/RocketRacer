@@ -686,16 +686,21 @@
       '.....',
     ]);
     Art.arrow = sprite([
-      '....kk.....',
-      '....kyk....',
-      'kkkkkyyk...',
-      'kYYYYyyyk..',
-      'kyyyyyyyyk.',
-      'kyyyyyyyk..',
-      'kkkkkyyk...',
-      '....kyk....',
-      '....kk.....',
+      '.......kk.......',
+      '.......kYk......',
+      '.......kYyk.....',
+      'kkkkkkkkYyyk....',
+      'kYYYYYYYYyyyk...',
+      'kYyyyyyyyyyyyk..',
+      'kyyyyyyyyyyyyyk.',
+      'kyyyyyyyyyyyyk..',
+      'koooooooooyyk...',
+      'kkkkkkkkoyyk....',
+      '.......koyk.....',
+      '.......kok......',
+      '.......kk.......',
     ]);
+    Art.arrowFlash = Art.tint(Art.arrow, PAL.white);
     Art.chevron = sprite([
       'kkk....',
       'kwwk...',

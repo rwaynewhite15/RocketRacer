@@ -296,9 +296,13 @@
       const cp = tr.cps[p.nextCp], sx = cp.x - cx, sy = cp.y - cy;
       if (!vis(sx, sy, -10)) {
         const ang = Math.atan2(sy - H / 2, sx - W / 2), c = Math.cos(ang), s = Math.sin(ang);
-        const k = Math.min((W / 2 - 20) / Math.abs(c || 1e-6), (H / 2 - 20) / Math.abs(s || 1e-6));
-        const pulse = Math.sin(g.t * 9) * 2;
-        RR.drawRot(ctx, Art.arrow, W / 2 + c * (k + pulse), H / 2 + s * (k + pulse), ang);
+        const k = Math.min((W / 2 - 24) / Math.abs(c || 1e-6), (H / 2 - 24) / Math.abs(s || 1e-6));
+        const pulse = Math.sin(g.t * 9) * 4;
+        const ax = W / 2 + c * (k + pulse), ay = H / 2 + s * (k + pulse);
+        // dark halo so it reads over bright nebula and planets, then a white blink
+        RR.disc(ctx, ax, ay, 12, 'rgba(7,7,26,0.55)');
+        RR.ring(ctx, ax, ay, 12, PAL.yellow, 8, g.t * 10);
+        RR.drawRot(ctx, (g.t * 5) % 1 < 0.25 ? Art.arrowFlash : Art.arrow, ax, ay, ang);
       }
     }
 
