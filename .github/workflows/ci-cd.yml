@@ -30,8 +30,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  PROJECT: ${{ vars.GCP_PROJECT_ID }}
-  REGION: ${{ vars.GCP_REGION }}
+  PROJECT: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION || secrets.GCP_REGION }}
 
 jobs:
   test:
@@ -97,8 +97,8 @@ jobs:
 
       - uses: google-github-actions/auth@v3
         with:
-          workload_identity_provider: ${{ vars.STAGING_WIF_PROVIDER }}
-          service_account: ${{ vars.STAGING_DEPLOYER_SA }}
+          workload_identity_provider: ${{ vars.STAGING_WIF_PROVIDER || secrets.STAGING_WIF_PROVIDER }}
+          service_account: ${{ vars.STAGING_DEPLOYER_SA || secrets.STAGING_DEPLOYER_SA }}
 
       - uses: google-github-actions/setup-gcloud@v3
 
@@ -140,8 +140,8 @@ jobs:
 
       - uses: google-github-actions/auth@v3
         with:
-          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
-          service_account: ${{ vars.DEPLOYER_SA }}
+          workload_identity_provider: ${{ vars.WIF_PROVIDER || secrets.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA || secrets.DEPLOYER_SA }}
 
       - uses: google-github-actions/setup-gcloud@v3
 

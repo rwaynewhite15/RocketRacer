@@ -129,9 +129,10 @@ PROJECT=your-project-id ./tools/setup-cicd.sh
 ```
 
 It creates the staging service (a few minutes: it builds from your checkout), the image repo and
-the two deploy accounts, then prints six values. Add them as repository **variables** under
-Settings > Secrets and variables > Actions: `GCP_PROJECT_ID`, `GCP_REGION`, `WIF_PROVIDER`,
-`DEPLOYER_SA`, `STAGING_WIF_PROVIDER`, `STAGING_DEPLOYER_SA`. Then merge to `main`.
+the two deploy accounts, then prints six values. Add them under Settings > Secrets and variables >
+Actions as repository **variables** (recommended) or **secrets**: `GCP_PROJECT_ID`, `GCP_REGION`,
+`WIF_PROVIDER`, `DEPLOYER_SA`, `STAGING_WIF_PROVIDER`, `STAGING_DEPLOYER_SA`. Then merge to
+`main`.
 
 Worth switching on in GitHub:
 
