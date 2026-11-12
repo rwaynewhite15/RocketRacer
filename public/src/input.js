@@ -1,13 +1,19 @@
 /* ==========================================================================
  * ROCKET RACER — input.js
  * Keyboard, touch and gamepad, folded into one small API:
- *   RR.input.read(ship)    -> { turn, thrust, brake, fire } for the player
+ *   RR.input.read(ship)    -> { turn, thrust, brake, fire, aim } for the player
  *   RR.input.hit[action]   -> true for the frame an action key went down
  *   RR.input.taps          -> pointer presses this frame, in game pixels
  *
- * Touch play uses a floating thumb-stick: put a thumb down anywhere on the
- * left half and push the way you want to fly — the rocket turns to that
- * heading and burns. The right thumb gets FIRE and BRAKE buttons.
+ * Touch play uses two fixed thumb-sticks, which the player can move to suit
+ * their hands (Pause > Move controls):
+ *   steering stick  push the way you want to fly; the rocket turns to that
+ *                   heading and burns
+ *   fire stick      push it any way to aim and fire that way, whatever way
+ *                   the rocket faces; hold it still in the middle to fire
+ *                   straight ahead
+ * plus a BRAKE button. A stick does not move with the thumb: touching on or
+ * near it grabs it, and its knob goes as far as its rim.
  * ======================================================================== */
 (function () {
   'use strict';
@@ -16,7 +22,7 @@
   const I = (RR.input = {
     down: {}, hit: {}, taps: [],
     pointers: {}, // id -> { x, y, sx, sy, role } in game pixels (sx, sy = where it began)
-    touch: { stick: null, brake: false, fire: false },
+    touch: { stick: null, aimStick: null, aim: null, brake: false, fire: false },
     touchMode: false,
     typing: false, // true while an HTML text field has the keyboard
   });
@@ -110,41 +116,45 @@
     return x >= r.x - pad && x < r.x + r.w + pad && y >= r.y - pad && y < r.y + r.h + pad;
   }
 
+  function near(x, y, c) { return Math.hypot(x - c.x, y - c.y) <= c.grab; }
+
+  /** Where a thumb is on a fixed stick: knob offset (kept inside the rim), push 0..1, direction. */
+  function stickState(p, c) {
+    let dx = p.x - c.x, dy = p.y - c.y;
+    const m = Math.hypot(dx, dy);
+    if (m > c.r) { dx *= c.r / m; dy *= c.r / m; }
+    return { x: c.x, y: c.y, dx: dx, dy: dy, mag: Math.min(1, m / c.r), ang: Math.atan2(dy, dx) };
+  }
+
+  const AIM_DEADZONE = 0.3; // fire stick pushed less than this: fire straight ahead
+
   /**
    * Work out the touch controls for this frame. `L` is RR.touchLayout() while
    * racing, or null when touch controls are not on screen. A finger keeps the
-   * role (stick / fire / brake) of wherever it first landed.
+   * role (steer / fire / brake) of wherever it first landed.
    */
   I.updateTouch = function (L) {
     const t = I.touch;
     t.fire = t.brake = false;
-    t.stick = null;
+    t.stick = t.aimStick = t.aim = null;
     if (!L) {
       for (const id in I.pointers) I.pointers[id].role = 'menu';
       return;
     }
-    let sp = null;
     for (const id in I.pointers) {
       const p = I.pointers[id];
       if (!p.role) {
-        p.role = inside(p.sx, p.sy, L.fire, 8) ? 'fire'
-          : inside(p.sx, p.sy, L.brake, 6) ? 'brake'
-          : inside(p.sx, p.sy, L.stick, 0) ? 'stick' : 'none';
+        p.role = inside(p.sx, p.sy, L.brake, 6) ? 'brake'
+          : near(p.sx, p.sy, L.fire) ? 'fire'
+          : near(p.sx, p.sy, L.steer) ? 'steer' : 'none';
       }
-      if (p.role === 'fire') t.fire = true;
-      else if (p.role === 'brake') t.brake = true;
-      else if (p.role === 'stick' && !sp) sp = p;
-    }
-    if (sp) {
-      let dx = sp.x - sp.sx, dy = sp.y - sp.sy;
-      const m = Math.hypot(dx, dy), R = L.stickR;
-      if (m > R) {
-        // the base trails the thumb, so you never run out of travel
-        const k = (m - R) / m;
-        sp.sx += dx * k; sp.sy += dy * k;
-        dx = sp.x - sp.sx; dy = sp.y - sp.sy;
+      if (p.role === 'brake') t.brake = true;
+      else if (p.role === 'steer' && !t.stick) t.stick = stickState(p, L.steer);
+      else if (p.role === 'fire' && !t.aimStick) {
+        t.fire = true;
+        t.aimStick = stickState(p, L.fire);
+        if (t.aimStick.mag > AIM_DEADZONE) t.aim = t.aimStick.ang;
       }
-      t.stick = { x: sp.sx, y: sp.sy, dx: dx, dy: dy, mag: Math.min(1, m / R), ang: Math.atan2(dy, dx) };
     }
   };
 
@@ -195,7 +205,8 @@
       if (btn(p, 1) || btn(p, 6) || btn(p, 13)) brake = 1;
       if (btn(p, 2) || btn(p, 5)) fire = true;
     }
-    return { turn: RR.clamp(turn, -1, 1), thrust: thrust, brake: brake, fire: fire };
+    // aim: the direction the fire stick points, or null to fire straight ahead
+    return { turn: RR.clamp(turn, -1, 1), thrust: thrust, brake: brake, fire: fire, aim: t.aim };
   };
 
   /** Short haptic tick on phones that support it. */

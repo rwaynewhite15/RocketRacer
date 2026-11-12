@@ -61,21 +61,43 @@
   const NO_INSET = { l: 0, t: 0, r: 0, b: 0 };
 
   /**
-   * Touch controls, in game pixels: the left half is a floating thumb-stick,
-   * FIRE and BRAKE sit under the right thumb. `ins` keeps them clear of
-   * notches and rounded corners.
+   * Touch controls, in game pixels: a steering stick, a fire stick, BRAKE, and
+   * the DO-OVER button (shown only while one is held). Each has a standard spot;
+   * the player can move them (Pause > Move controls). Moved spots are kept as
+   * fractions of the screen, separately for sideways and upright, and are always
+   * pulled back inside the screen and clear of notches.
    */
   RR.touchLayout = function (W, H, ins) {
     ins = ins || NO_INSET;
-    const fs = 60, bs = 42, m = 10;
-    const fx = W - ins.r - m - fs, fy = H - ins.b - m - fs;
+    const R = 34, grab = R + 24; // a thumb landing within `grab` of a stick's centre takes it
+    const def = {
+      steer: { x: ins.l + 66, y: H - ins.b - 66 },
+      fire: { x: W - ins.r - 66, y: H - ins.b - 66 },
+    };
+    if (W - ins.l - ins.r < 360) { // narrow (upright phone): stack BRAKE and DO-OVER above the fire stick
+      def.brake = { x: def.fire.x, y: def.fire.y - 80 };
+      def.rewind = { x: def.fire.x, y: def.brake.y - 54 };
+    } else {
+      def.brake = { x: def.fire.x - 82, y: H - ins.b - 31 };
+      def.rewind = { x: def.fire.x, y: def.fire.y - 74 };
+    }
+    const g = RR.game, saved = (g && g.controls && g.controls[W >= H ? 'land' : 'port']) || {};
+    const half = { steer: R + 2, fire: R + 2, brake: 21, rewind: 22 }, centre = {};
+    for (const n in def) {
+      const sp = saved[n], h = half[n];
+      centre[n] = {
+        x: Math.round(clamp(sp ? sp.x * W : def[n].x, ins.l + h + 2, W - ins.r - h - 2)),
+        y: Math.round(clamp(sp ? sp.y * H : def[n].y, ins.t + h + 2, H - ins.b - h - 2)),
+      };
+    }
+    const box = function (c, w, h) { return { x: c.x - w / 2, y: c.y - h / 2, w: w, h: h }; };
     return {
-      stick: { x: 0, y: Math.round(H * 0.2), w: Math.round(W * 0.5), h: H },
-      stickR: 34,
-      home: { x: ins.l + 58, y: H - ins.b - 58 },
-      fire: { x: fx, y: fy, w: fs, h: fs },
-      brake: { x: fx - bs - 8, y: H - ins.b - m - bs, w: bs, h: bs },
-      rewind: { x: fx + fs - 44, y: fy - 54, w: 44, h: 44 }, // shown only while a do-over is held
+      stickR: R,
+      steer: { x: centre.steer.x, y: centre.steer.y, r: R, grab: grab },
+      fire: { x: centre.fire.x, y: centre.fire.y, r: R, grab: grab },
+      brake: box(centre.brake, 42, 42),
+      rewind: box(centre.rewind, 44, 44),
+      centre: centre,
     };
   };
 
@@ -277,6 +299,13 @@
         glow(ctx, sx - Math.cos(s.angle) * 14, sy - Math.sin(s.angle) * 14, boost ? 17 : 11, boost ? '#41a6f6' : '#ef7d57');
       }
       RR.drawRot(ctx, s.hitFlash > 0 ? s.white : s.sprite, sx, sy, s.angle + Math.PI / 2);
+      // where the fire stick is aiming (for the weapons that go where they're aimed)
+      const aimW = s.weapon || (g.combat ? 'blaster' : null);
+      if (s === p && !g.demo && g.state === 'play' && s.input.aim != null && (aimW === 'blaster' || aimW === 'missile')) {
+        const ax = Math.cos(s.input.aim), ay = Math.sin(s.input.aim);
+        RR.line(ctx, sx + ax * 16, sy + ay * 16, sx + ax * 54, sy + ay * 54, PAL.yellow, 3);
+        RR.ring(ctx, sx + ax * 60, sy + ay * 60, 4, PAL.yellow);
+      }
       if (s.shield > 0 && (s.shield > 1.5 || Math.floor(g.t * 12) & 1)) {
         RR.ring(ctx, sx, sy, 16, PAL.cyan, 8, g.t * 10);
         RR.ring(ctx, sx, sy, 14, PAL.sky, 8, -g.t * 10);
@@ -519,8 +548,8 @@
       // how-to-fly reminder while the lights count down
       const hy2 = Math.round(H * 0.62);
       if (touch) {
-        text(ctx, 'PUSH THE STICK THE WAY', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
-        text(ctx, 'YOU WANT TO FLY', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
+        text(ctx, 'STEERING STICK: FLY THAT WAY', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
+        text(ctx, 'FIRE STICK: SHOOT THAT WAY', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
       } else {
         text(ctx, 'ARROWS / WASD TO FLY - SPACE TO FIRE', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
       }
@@ -545,38 +574,45 @@
     }
   }
 
-  function drawTouch(g, ctx, W, H) {
-    const L = RR.touchLayout(W, H, g.inset), t = RR.input.touch, p = g.player, st = t.stick;
-
-    /* thumb-stick: parked bottom-left until a thumb lands, then it goes where the thumb is */
-    const bx = st ? st.x : L.home.x, by = st ? st.y : L.home.y;
-    const kx = bx + (st ? st.dx : 0), ky = by + (st ? st.dy : 0);
-    ctx.globalAlpha = st ? 0.3 : 0.16;
-    RR.disc(ctx, bx, by, L.stickR, PAL.navy);
-    ctx.globalAlpha = st ? 0.9 : 0.45;
-    RR.ring(ctx, bx, by, L.stickR, st ? PAL.cyan : PAL.silver, st ? 0 : 12, g.t * 1.5);
-    RR.disc(ctx, kx, ky, 12, st ? PAL.sky : PAL.steel);
+  /** One fixed thumb-stick: base ring, and a knob pushed out to where the thumb is. */
+  function drawStick(ctx, c, st, col, idleCol) {
+    const on = !!st;
+    ctx.globalAlpha = on ? 0.32 : 0.18;
+    RR.disc(ctx, c.x, c.y, c.r, PAL.navy);
+    ctx.globalAlpha = on ? 0.95 : 0.6;
+    RR.ring(ctx, c.x, c.y, c.r, on ? PAL.white : idleCol);
+    const kx = c.x + (st ? st.dx : 0), ky = c.y + (st ? st.dy : 0);
+    RR.disc(ctx, kx, ky, 12, on ? col : PAL.slate);
     ctx.globalAlpha = 1;
-    RR.ring(ctx, kx, ky, 12, st ? PAL.white : PAL.silver);
-    if (!st) text(ctx, 'STEER', bx, by + L.stickR + 5, PAL.silver, 1, 'center', PAL.ink);
+    RR.ring(ctx, kx, ky, 12, on ? PAL.white : idleCol);
+    return { x: kx, y: ky };
+  }
+
+  /** A label under a stick, or over it when the stick sits at the bottom edge. */
+  function stickLabel(ctx, c, str, col, H, ins) {
+    const below = c.y + c.r + 5;
+    text(ctx, str, c.x, below + 7 <= H - ins.b - 1 ? below : c.y - c.r - 12, col, 1, 'center', PAL.ink);
+  }
+
+  function drawTouch(g, ctx, W, H) {
+    const L = RR.touchLayout(W, H, g.inset), t = RR.input.touch, p = g.player, ins = g.inset;
+
+    /* steering stick: fixed in place, the knob shows which way you're pushing */
+    drawStick(ctx, L.steer, t.stick, PAL.sky, PAL.silver);
+    if (!t.stick) stickLabel(ctx, L.steer, 'STEER', PAL.silver, H, ins);
+
+    /* fire stick: push to aim and fire that way, hold the middle to fire ahead */
+    const w = p.weapon || (g.combat ? 'blaster' : null);
+    const wc = p.weapon ? RR.ITEMS[p.weapon].color : g.combat ? PAL.cyan : PAL.steel;
+    const knob = drawStick(ctx, L.fire, t.aimStick, wc, w ? wc : PAL.steel);
+    if (w) ctx.drawImage(Art.icons[w], knob.x - 4, knob.y - 4);
+    const what = p.weapon ? RR.ITEMS[p.weapon].name + ' X' + p.ammo : g.combat ? 'CANNON' : 'NO WEAPON';
+    stickLabel(ctx, L.fire, t.aimStick ? 'AIM' : what, t.aimStick ? PAL.white : wc, H, ins);
 
     const key = function (r, on, col) {
       panel(ctx, r.x, r.y, r.w, r.h, on ? PAL.white : col);
       if (on) { ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2); }
     };
-    const f = L.fire, wc = p.weapon ? RR.ITEMS[p.weapon].color : g.combat ? PAL.cyan : PAL.steel;
-    key(f, t.fire, wc);
-    if (!p.weapon && g.combat) {
-      ctx.drawImage(Art.icons.blaster, f.x + 17, f.y + 7, 27, 27);
-      text(ctx, 'CANNON', f.x + f.w / 2, f.y + 40, wc, 1, 'center');
-    } else if (p.weapon) {
-      ctx.drawImage(Art.icons[p.weapon], f.x + 17, f.y + 7, 27, 27);
-      text(ctx, RR.ITEMS[p.weapon].name, f.x + f.w / 2, f.y + 38, wc, 1, 'center');
-      text(ctx, 'X' + p.ammo, f.x + f.w / 2, f.y + 48, PAL.white, 1, 'center');
-    } else {
-      text(ctx, 'FIRE', f.x + f.w / 2, f.y + 20, PAL.steel, 2, 'center');
-      text(ctx, 'NO WEAPON', f.x + f.w / 2, f.y + 40, PAL.steel, 1, 'center');
-    }
     key(L.brake, t.brake, PAL.steel);
     text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.silver, 1, 'center');
 
@@ -587,6 +623,33 @@
       text(ctx, 'DO-OVER', r.x + r.w / 2, r.y + 31, PAL.violet, 1, 'center');
       g.ui.push({ x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8, act: function () { g.tryRewind(); } });
     }
+  }
+
+  /** Pause > MOVE CONTROLS: every control shown with its name, ready to be dragged. */
+  function drawLayout(g, ctx, W, H) {
+    const L = RR.touchLayout(W, H, g.inset), ins = g.inset, top = 8 + ins.t;
+    ctx.fillStyle = 'rgba(7,7,26,0.78)';
+    ctx.fillRect(0, 0, W, H);
+    text(ctx, 'MOVE CONTROLS', W / 2, top, PAL.white, 2, 'center', PAL.plum);
+    text(ctx, 'DRAG EACH ONE WHERE YOUR THUMBS LIKE IT', W / 2, top + 20, PAL.silver, 1, 'center', PAL.ink);
+    text(ctx, (g.orientation() === 'land' ? 'SIDEWAYS' : 'UPRIGHT') + ' LAYOUT, SAVED SEPARATELY', W / 2, top + 30, PAL.steel, 1, 'center', PAL.ink);
+    const bw = 64;
+    button(g, ctx, 'DONE', Math.round(W / 2 - bw - 4), top + 43, bw, 18, function () { g.closeControls(); }, PAL.lime);
+    button(g, ctx, 'RESET', Math.round(W / 2 + 4), top + 43, bw, 18, function () { g.resetControls(); }, PAL.orange);
+
+    const held = {};
+    for (const id in RR.input.pointers) { const d = RR.input.pointers[id].drag; if (d) held[d] = true; }
+    const ring = function (c, n) { RR.ring(ctx, c.x, c.y, c.r, held[n] ? PAL.white : PAL.yellow, held[n] ? 0 : 12, g.t * 2); };
+    drawStick(ctx, L.steer, null, PAL.sky, PAL.silver); ring(L.steer, 'steer');
+    stickLabel(ctx, L.steer, 'STEER', PAL.yellow, H, ins);
+    drawStick(ctx, L.fire, null, PAL.cyan, PAL.silver); ring(L.fire, 'fire');
+    stickLabel(ctx, L.fire, 'AIM + FIRE', PAL.yellow, H, ins);
+    panel(ctx, L.brake.x, L.brake.y, L.brake.w, L.brake.h, held.brake ? PAL.white : PAL.yellow);
+    text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.yellow, 1, 'center');
+    const r = L.rewind;
+    panel(ctx, r.x, r.y, r.w, r.h, held.rewind ? PAL.white : PAL.yellow);
+    ctx.drawImage(Art.icons.rewind, r.x + 13, r.y + 6, 18, 18);
+    text(ctx, 'DO-OVER', r.x + r.w / 2, r.y + 31, PAL.yellow, 1, 'center');
   }
 
   /* ------------------------------------------------------------ overlays */
@@ -880,6 +943,7 @@
     button(g, ctx, touch ? 'QUIT TO MENU' : 'QUIT  (Q)', bx, y + 90, bw, 20, function () { g.toTitle(); }, PAL.orange);
     const snd = (RR.audio.muted ? 'SOUND OFF' : 'SOUND ON') + (touch ? '' : '  (M)');
     button(g, ctx, snd, bx, y + 114, bw, 20, function () { g.toggleSound(); }, RR.audio.muted ? PAL.steel : PAL.lime);
+    if (touch) button(g, ctx, 'MOVE CONTROLS', bx, y + 138, bw, 20, function () { g.editControls(); }, PAL.cyan);
   }
 
   function drawResults(g, ctx, W, H) {
@@ -966,6 +1030,7 @@
       drawHUD(g, ctx, W, H);
       if (RR.input.touchMode && g.state === 'play') drawTouch(g, ctx, W, H);
       if (g.state === 'paused') drawPause(g, ctx, W, H);
+      else if (g.state === 'layout') drawLayout(g, ctx, W, H);
       else if (g.state === 'results') drawResults(g, ctx, W, H);
     }
     if (g.toast && (g.toast.t < g.toast.dur - 0.3 || Math.floor(g.t * 16) & 1)) {

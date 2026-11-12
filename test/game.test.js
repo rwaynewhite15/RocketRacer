@@ -663,3 +663,150 @@ test('full screen: desktops are left alone, and iPhones (which cannot) get the A
   }
 });
 
+/* --------------------------------------------------------- touch sticks */
+
+/** A phone with a race under way, and helpers to put thumbs on the screen (game-pixel coordinates). */
+async function phoneRace() {
+  const { ctx, page, errors } = await openPhone(browser);
+  await page.evaluate(() => {
+    const g = RR.game;
+    g.autoFull = false; g.wantFull = false; // keep the page still for these tests
+    g.begin();
+    for (let i = 0; i < 120 * 4.3; i++) g.step(1 / 120); // past the countdown
+  });
+  const cdp = await ctx.newCDPSession(page);
+  const box = await page.locator('#hud').boundingBox();
+  const k = box.width / await page.evaluate(() => RR.game.W);
+  const pts = (list) => list.map((q, i) => ({ x: box.x + q[0] * k, y: box.y + q[1] * k, id: i + 1 }));
+  return {
+    ctx, page, errors,
+    layout: () => page.evaluate(() => RR.touchLayout(RR.game.W, RR.game.H, RR.game.inset)),
+    down: (...list) => cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: pts(list) }),
+    move: (...list) => cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: pts(list) }),
+    up: () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }),
+    tapLabel: async (label) => {
+      const u = await page.evaluate((l) => RR.game.ui.find((b) => b.label === l) || null, label);
+      assert.ok(u, 'a "' + label + '" button is on screen');
+      await page.touchscreen.tap(box.x + (u.x + u.w / 2) * k, box.y + (u.y + u.h / 2) * k);
+      await page.waitForTimeout(200);
+    },
+  };
+}
+const angleGap = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+
+test('touch: the steering stick stays where it is, steers the way it is pushed, and ignores thumbs elsewhere', { skip }, async () => {
+  const ph = await phoneRace();
+  try {
+    const L = await ph.layout(), c = L.steer;
+    await ph.down([c.x + 10, c.y - 5]);
+    await ph.page.waitForTimeout(60);
+    await ph.move([c.x + 150, c.y - 150]); // far past the rim, up and to the right
+    await ph.page.waitForTimeout(900);
+    const r = await ph.page.evaluate(() => ({ st: RR.input.touch.stick, ship: RR.game.player.angle }));
+    assert.deepStrictEqual([r.st.x, r.st.y], [c.x, c.y], 'the stick did not follow the thumb');
+    assert.ok(Math.abs(Math.hypot(r.st.dx, r.st.dy) - c.r) < 0.5, 'the knob stops at the rim');
+    assert.ok(r.st.mag === 1 && angleGap(r.st.ang, -Math.PI / 4) < 0.05, 'pushing up-right: ' + r.st.ang);
+    assert.ok(angleGap(r.ship, -Math.PI / 4) < 0.3, 'the rocket turned that way: ' + r.ship);
+    await ph.up();
+
+    await ph.down([L.steer.x + (L.fire.x - L.steer.x) / 2, 120]); // a thumb in open space
+    await ph.page.waitForTimeout(200);
+    assert.strictEqual(await ph.page.evaluate(() => RR.input.touch.stick), null, 'not a stick');
+    await ph.up();
+    assert.deepStrictEqual(ph.errors, []);
+  } finally { await ph.ctx.close(); }
+});
+
+test('touch: the fire stick aims blasts where it points, and fires straight ahead when held still', { skip }, async () => {
+  const ph = await phoneRace();
+  try {
+    const f = (await ph.layout()).fire;
+    // blaster in hand, rocket pointing up and still: shots should follow the stick, not the nose
+    const arm = () => ph.page.evaluate(() => { const p = RR.game.player; p.weapon = 'blaster'; p.ammo = 99; p.angle = -Math.PI / 2; p.angVel = 0; p.vx = p.vy = 0; });
+    const lastBolt = () => ph.page.evaluate(() => {
+      const g = RR.game, me = g.player, b = g.shots.filter((s) => s.owner === me && s.type === 'bolt').pop();
+      return b ? { dir: Math.atan2(b.vy - me.vy * 0.5, b.vx - me.vx * 0.5), ship: me.angle, aim: RR.input.touch.aim } : null;
+    });
+    await arm();
+    await ph.down([f.x, f.y]);
+    await ph.page.waitForTimeout(60);
+    await ph.move([f.x - 30, f.y + 30]); // down and to the left
+    await ph.page.waitForTimeout(400);
+    let b = await lastBolt();
+    assert.ok(b, 'it fired');
+    assert.ok(angleGap(b.aim, 3 * Math.PI / 4) < 0.05, 'aiming down-left: ' + b.aim);
+    assert.ok(angleGap(b.dir, 3 * Math.PI / 4) < 0.1, 'the blast went down-left: ' + b.dir);
+    assert.ok(angleGap(b.ship, -Math.PI / 2) < 0.2, 'while the rocket still points up');
+    await ph.up();
+    await ph.page.waitForTimeout(250);
+
+    await arm();
+    await ph.down([f.x + 2, f.y + 1]); // a thumb resting in the middle
+    await ph.page.waitForTimeout(400);
+    b = await lastBolt();
+    assert.strictEqual(b.aim, null);
+    assert.ok(angleGap(b.dir, b.ship) < 0.1, 'straight ahead: ' + b.dir + ' vs ' + b.ship);
+    await ph.up();
+
+    // missiles launch along the aim too; mines still drop behind the rocket
+    const r = await ph.page.evaluate(() => {
+      const g = RR.game, me = g.player, read = RR.input.read, out = {};
+      RR.input.read = () => ({ turn: 0, thrust: 0, brake: 0, fire: true, aim: 0 }); // stick pushed right
+      try {
+        me.angle = -Math.PI / 2; me.vx = me.vy = 0; me.cool = 0; me.prevFire = false; me.weapon = 'missile'; me.ammo = 1;
+        g.step(1 / 120);
+        out.missile = g.shots.filter((s) => s.owner === me && s.type === 'missile').pop().angle;
+        me.angle = -Math.PI / 2; me.vx = me.vy = 0; me.cool = 0; me.prevFire = false; me.weapon = 'mine'; me.ammo = 1;
+        g.step(1 / 120);
+        const m = g.mines.filter((x) => x.owner === me).pop();
+        out.mine = [m.x - me.x, m.y - me.y];
+      } finally { RR.input.read = read; }
+      return out;
+    });
+    assert.ok(angleGap(r.missile, 0) < 0.1, 'missile launched to the right: ' + r.missile);
+    assert.ok(Math.abs(r.mine[0]) < 3 && Math.abs(r.mine[1] - 16) < 3, 'mine dropped behind (below) the rocket: ' + r.mine);
+    assert.deepStrictEqual(ph.errors, []);
+  } finally { await ph.ctx.close(); }
+});
+
+test('touch: Pause > MOVE CONTROLS drags the controls to new spots, keeps them, and RESET puts them back', { skip }, async () => {
+  const ph = await phoneRace();
+  try {
+    const before = await ph.layout();
+    await ph.page.evaluate(() => RR.game.pause());
+    await ph.page.waitForTimeout(150);
+    await ph.tapLabel('MOVE CONTROLS');
+    assert.strictEqual(await ph.page.evaluate(() => RR.game.state), 'layout');
+
+    const c = before.steer;
+    await ph.down([c.x, c.y]);
+    await ph.page.waitForTimeout(60);
+    await ph.move([c.x + 30, c.y - 45]);
+    await ph.page.waitForTimeout(60);
+    await ph.move([c.x + 60, c.y - 90]);
+    await ph.page.waitForTimeout(150);
+    await ph.up();
+    const moved = await ph.layout();
+    assert.deepStrictEqual([moved.steer.x, moved.steer.y], [c.x + 60, c.y - 90], 'the steering stick moved with the drag');
+    assert.deepStrictEqual([moved.fire.x, moved.fire.y], [before.fire.x, before.fire.y], 'nothing else moved');
+
+    await ph.tapLabel('DONE');
+    const saved = await ph.page.evaluate(() => JSON.parse(localStorage.getItem('rocketracer.v1')).controls);
+    assert.strictEqual(await ph.page.evaluate(() => RR.game.state), 'paused');
+    assert.ok(saved.port && saved.port.steer, 'saved for an upright phone: ' + JSON.stringify(saved));
+
+    await ph.page.reload();
+    await ph.page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    const after = await ph.layout();
+    assert.deepStrictEqual([after.steer.x, after.steer.y], [moved.steer.x, moved.steer.y], 'still there after a reload');
+
+    await ph.page.evaluate(() => { const g = RR.game; g.autoFull = false; g.wantFull = false; g.begin(); g.pause(); });
+    await ph.page.waitForTimeout(150);
+    await ph.tapLabel('MOVE CONTROLS');
+    await ph.tapLabel('RESET');
+    const reset = await ph.layout();
+    assert.deepStrictEqual([reset.steer.x, reset.steer.y], [c.x, c.y], 'back to the standard spot');
+    assert.deepStrictEqual(ph.errors, []);
+  } finally { await ph.ctx.close(); }
+});
+
