@@ -137,11 +137,12 @@ test('do-over: goes back about 3 s, un-flies a gate, and the race clock keeps ru
       const want = log.find((e) => e.t >= before.t - 3.0);
       g.tryRewind();
       out.started = { rw: !!p.rw, charge: p.rewind };
+      const tgt = p.rw.tgt, tgtSpeed = Math.hypot(tgt.vx, tgt.vy); // what it was doing 3 s ago
       n = 0;
       while (p.rw && n++ < 120 * 3) g.step(S);
       out.A = {
         dist: Math.hypot(p.x - want.x, p.y - want.y), cp: p.cpCount, wantCp: want.cp, beforeCp: before.cp,
-        alive: p.dead === 0, invuln: p.invuln, clock: g.raceTime - before.t, speed: Math.hypot(p.vx, p.vy),
+        alive: p.dead === 0, invuln: p.invuln, clock: g.raceTime - before.t, speed: Math.hypot(p.vx, p.vy), tgtSpeed,
       };
 
       // B: a gate flown through inside the window counts again once re-flown
@@ -163,7 +164,8 @@ test('do-over: goes back about 3 s, un-flies a gate, and the race clock keeps ru
     assert.strictEqual(r.A.cp, r.A.wantCp, 'gate progress is what it was 3 s ago');
     assert.ok(r.A.beforeCp > r.A.cp, 'the test window really contained a gate');
     assert.ok(r.A.alive && r.A.invuln > 1.9, 'alive and protected');
-    assert.ok(r.A.speed > 50, 'keeps flying');
+    // it lands with the velocity it had back then (not always fast: the AI sometimes brakes hard for a gate)
+    assert.ok(Math.abs(r.A.speed - r.A.tgtSpeed) < 1, 'keeps the speed it had: ' + r.A.speed + ' vs ' + r.A.tgtSpeed);
     assert.ok(r.A.clock > 0.8 && r.A.clock < 1.1, 'the race clock kept running: ' + r.A.clock);
     assert.ok(r.B.after < r.B.passed, 'gate is un-flown');
     assert.ok(r.B.reflown >= r.B.passed, 'and counts again when re-flown');
