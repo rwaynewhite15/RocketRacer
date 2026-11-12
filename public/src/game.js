@@ -2,6 +2,7 @@
  * ROCKET RACER — game.js
  * Simulation: ship physics, gravity, collisions, checkpoints and laps,
  * pickups, weapons, rival AI, particles, camera and the game-state machine.
+ * Also the hangar (ships, stats, unlocks) and the two combat modes.
  * Rendering lives in render.js.
  * ======================================================================== */
 (function () {
@@ -23,6 +24,11 @@
     EMP_RANGE: 240, EMP_TIME: 2.4,
     // do-over: the ship is sampled HIST_DT apart and the last REWIND_SPAN seconds are kept
     REWIND_SPAN: 3, HIST_DT: 0.05, REWIND_DUR: 0.9, REWIND_MIN: 0.5, REWIND_INVULN: 2,
+    // combat modes
+    CANNON_COOL: 0.2, KILL_CREDIT: 5, // built-in blaster; seconds a hit still counts towards a kill
+    KILL_TARGET: 5, DOGFIGHT_TIME: 180,
+    ZONE_GRACE: 12, ZONE_SHRINK: 110, ZONE_DMG: 14, // battle royale: the zone closes to nothing
+    ROYALE_DMG: 0.6, // ...and with one life each, weapons hit softer so it is not over in seconds
   });
 
   const ITEMS = (RR.ITEMS = {
@@ -38,7 +44,37 @@
   const ROLL = {
     P: [['nitro', 38], ['shield', 26], ['repair', 22], ['rewind', 14]],
     W: [['blaster', 35], ['missile', 30], ['mine', 20], ['emp', 15]],
+    // combat modes: every ship already has a cannon, and there are no do-overs
+    CP: [['nitro', 30], ['shield', 35], ['repair', 35]],
+    CW: [['missile', 45], ['mine', 25], ['emp', 30]],
   };
+
+  const MODES = (RR.MODES = [
+    { id: 'race', name: 'GRAND PRIX', go: 'RACE' },
+    { id: 'dogfight', name: 'DOGFIGHT', go: 'FIGHT', rule: 'FIRST TO 5 KILLS - 3:00 LIMIT' },
+    { id: 'royale', name: 'BATTLE ROYALE', go: 'FIGHT', rule: 'ONE LIFE - THE ZONE CLOSES IN' },
+  ]);
+
+  /*
+   * The hangar. Every stat is a level; level 3 is the baseline (x1.0) and each
+   * level above or below moves it by `step`. A ship starts at `base` and stat
+   * points can raise each stat as far as its `cap` - better ships, unlocked by
+   * winning, have higher ceilings.
+   */
+  const STAT_MID = 3;
+  const STATS = (RR.STATS = [
+    { name: 'ACCEL', step: 0.04 },
+    { name: 'TOP SPEED', step: 0.02 },
+    { name: 'HANDLING', step: 0.035 },
+    { name: 'HULL', step: 0.12 },
+    { name: 'FIREPOWER', step: 0.08 },
+  ]);
+  const HULLS = (RR.HULLS = [
+    { id: 'sparrow', name: 'SPARROW', design: 0, wins: 0, blurb: 'AN HONEST ALL-ROUNDER', base: [3, 3, 3, 3, 3], cap: [6, 6, 6, 6, 6] },
+    { id: 'dart', name: 'DART', design: 1, wins: 2, blurb: 'QUICK, NIMBLE, FRAGILE', base: [4, 4, 4, 2, 3], cap: [8, 9, 8, 5, 6] },
+    { id: 'hammer', name: 'HAMMER', design: 2, wins: 5, blurb: 'THICK ARMOUR, BIG GUNS', base: [3, 3, 3, 5, 5], cap: [6, 7, 6, 10, 10] },
+    { id: 'phoenix', name: 'PHOENIX', design: 3, wins: 9, blurb: 'THE BEST OF EVERYTHING', base: [5, 5, 5, 5, 5], cap: [10, 10, 10, 10, 10] },
+  ]);
 
   const RACERS = [
     { name: 'YOU', team: 0, design: 0 },
@@ -50,11 +86,11 @@
   ];
 
   const DIFFS = (RR.DIFFS = [
-    { name: 'ROOKIE', speed: 0.83, spread: 0.05, aggro: 0.45, rubber: 0.07 },
-    { name: 'PILOT', speed: 0.92, spread: 0.05, aggro: 1.0, rubber: 0.05 },
-    { name: 'ACE', speed: 1.0, spread: 0.04, aggro: 1.6, rubber: 0.02 },
-  ]);
-  const DEMO_DIFF = { name: 'DEMO', speed: 0.95, spread: 0.06, aggro: 1.2, rubber: 0 };
+    { name: 'ROOKIE', speed: 0.83, spread: 0.05, aggro: 0.45, rubber: 0.07, dmg: 0.7 },
+    { name: 'PILOT', speed: 0.92, spread: 0.05, aggro: 1.0, rubber: 0.05, dmg: 0.85 },
+    { name: 'ACE', speed: 1.0, spread: 0.04, aggro: 1.6, rubber: 0.02, dmg: 1 },
+  ]); // `dmg` scales rival weapons in the combat modes only
+  const DEMO_DIFF = { name: 'DEMO', speed: 0.95, spread: 0.06, aggro: 1.2, rubber: 0, dmg: 1 };
 
   const FX = (RR.FX = {
     fire: ['#ffffff', '#fff1a8', '#ffcd75', '#ef7d57', '#b13e53', '#5d275d'],
@@ -72,6 +108,10 @@
     state: 'title', // title | play | paused | results
     phase: 'race', // countdown | race
     demo: true, trackIdx: 0, diffIdx: 1, menuRow: 0,
+    modeIdx: 0, arenaIdx: 0, mode: 'race', combat: false, royale: false,
+    zone: null, over: false, feed: [], spec: null, reward: null,
+    prog: { wins: 0, points: 0, ship: 0, up: {} }, // unlocks and upgrades
+    hangarRow: 0, hangarShip: 0,
     ships: [], order: [], rocks: [], pickups: [], shots: [], mines: [], waves: [],
     parts: [], rings: [], texts: [],
     cam: { x: 0, y: 0 }, shake: 0, flash: 0, msg: null, ui: [],
@@ -97,6 +137,9 @@
       if (Number.isInteger(s.zoom) && Math.abs(s.zoom) <= 2) G.zoomOffset = s.zoom;
       G.name = RR.net.cleanName(s.name);
       if (typeof s.pid === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(s.pid)) G.pid = s.pid;
+      if (s.mode >= 0 && s.mode < MODES.length) G.modeIdx = s.mode;
+      if (s.arena >= 0 && s.arena < RR.ARENAS.length) G.arenaIdx = s.arena;
+      loadProgress(s.prog);
     } catch (e) { /* storage unavailable: play without saved records */ }
     if (!G.name) G.name = RR.net.randomName();
     if (!G.pid) G.pid = RR.net.randomId();
@@ -106,6 +149,7 @@
       window.localStorage.setItem(STORE, JSON.stringify({
         best: G.best, crt: G.crt, muted: RR.audio.muted, diff: G.diffIdx, track: G.trackIdx,
         name: G.name, pid: G.pid, zoom: G.zoomOffset,
+        mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog,
       }));
     } catch (e) { /* ignore */ }
   }
@@ -113,6 +157,91 @@
 
   function applyCrt() {
     document.body.classList.toggle('nocrt', !G.crt);
+  }
+
+  /* ------------------------------------------------------------- hangar */
+
+  function count(v) { return Number.isInteger(v) && v > 0 ? v : 0; }
+
+  /** Saved progress is only trusted as far as the rules allow. */
+  function loadProgress(p) {
+    const pr = G.prog;
+    if (!p || typeof p !== 'object') return;
+    pr.wins = count(p.wins);
+    pr.points = count(p.points);
+    HULLS.forEach(function (h, i) {
+      const saved = p.up && p.up[h.id], up = upgrades(i);
+      let spent = 0;
+      for (let k = 0; k < STATS.length; k++) {
+        up[k] = Math.min(count(Array.isArray(saved) ? saved[k] : 0), h.cap[k] - h.base[k]);
+        spent += up[k];
+      }
+      if (spent > pr.points) up.fill(0);
+    });
+    pr.ship = p.ship >= 0 && p.ship < HULLS.length && pr.wins >= HULLS[p.ship].wins ? p.ship : 0;
+  }
+
+  /** Points spent on ship `i`, one count per stat. */
+  function upgrades(i) {
+    const id = HULLS[i].id;
+    return G.prog.up[id] || (G.prog.up[id] = STATS.map(function () { return 0; }));
+  }
+  G.shipUnlocked = function (i) { return this.prog.wins >= HULLS[i].wins; };
+  G.statLevel = function (i, k) { return HULLS[i].base[k] + upgrades(i)[k]; };
+  /** Every ship can spend every point you have earned, so a new ship never starts from nothing. */
+  G.pointsLeft = function (i) {
+    return this.prog.points - upgrades(i).reduce(function (a, b) { return a + b; }, 0);
+  };
+  /** Put a point into stat `k` of ship `i` (d = 1) or take one back (d = -1). */
+  G.spend = function (i, k, d) {
+    const up = upgrades(i), h = HULLS[i];
+    const ok = this.shipUnlocked(i) && (d > 0 ? this.pointsLeft(i) > 0 && h.base[k] + up[k] < h.cap[k] : up[k] > 0);
+    if (!ok) { RR.audio.sfx('deny'); return false; }
+    up[k] += d;
+    RR.audio.sfx(d > 0 ? 'power' : 'select');
+    save();
+    return true;
+  };
+  /** What the stat levels of ship `i` come to in the simulation. */
+  function loadout(i) {
+    const m = STATS.map(function (st, k) { return 1 + st.step * (G.statLevel(i, k) - STAT_MID); });
+    // top speed is thrust / drag, so more speed at the same acceleration means less drag
+    return { accK: m[0], dragK: m[0] / m[1], turnK: m[2], maxHp: Math.round(C.MAXHP * m[3]), dmg: m[4] };
+  }
+  RR.loadout = loadout;
+  const STOCK = { accK: 1, dragK: 1, turnK: 1, maxHp: C.MAXHP, dmg: 1 };
+
+  G.openHangar = function () {
+    if (this.state !== 'title') return;
+    this.state = 'hangar';
+    this.hangarRow = 0;
+    this.hangarShip = this.prog.ship;
+    RR.audio.sfx('select');
+  };
+  G.closeHangar = function () {
+    if (this.state !== 'hangar') return;
+    RR.audio.sfx('confirm');
+    this.startRace(true); // the attract mode flies the ship you picked
+  };
+  /** Look at the next ship; an unlocked one becomes the ship you fly. */
+  G.hangarBrowse = function (d) {
+    const n = HULLS.length;
+    this.hangarShip = (this.hangarShip + d + n) % n;
+    if (this.shipUnlocked(this.hangarShip)) { this.prog.ship = this.hangarShip; save(); }
+    RR.audio.sfx('select');
+  };
+
+  /** Stat points and wins for a finished event; new ships unlock on wins. */
+  function award(g, place) {
+    const pr = g.prog, had = HULLS.map(function (h, i) { return g.shipUnlocked(i); });
+    const pts = Math.max(0, 4 - place) + (place === 1 ? g.diffIdx : 0);
+    pr.points += pts;
+    if (place === 1) pr.wins++;
+    g.reward = {
+      pts: pts,
+      unlocked: HULLS.filter(function (h, i) { return !had[i] && g.shipUnlocked(i); }).map(function (h) { return h.name; }),
+    };
+    save();
   }
 
   /* ------------------------------------------------------------- set-up */
@@ -123,18 +252,21 @@
       aggro: diff.aggro, rubber: diff.rubber, margin: Math.random() * 14,
       ox: 0, oy: 0, cpFor: -1, pick: null, pickT: 0,
       stuck: 0, stuckN: 0, rev: 0, revTurn: 1, fireT: 1.5 + Math.random() * 2,
+      tgt: null, tgtT: 0, wobble: (1.02 - diff.speed) * 0.8, // combat: who to chase, how shaky the aim
     };
   }
 
-  function makeShip(i, racer, slot) {
+  function makeShip(i, racer, slot, lo) {
     return {
+      accK: lo.accK, dragK: lo.dragK, turnK: lo.turnK, maxHp: lo.maxHp, dmg: lo.dmg,
+      kills: 0, deaths: 0, gone: false, elim: 0, hitBy: null, hitT: 0, zoned: false,
       idx: i, name: racer.name, team: racer.team, design: racer.design,
       sprite: Art.ship(racer.design, racer.team), white: Art.shipWhite(racer.design),
       ghost: Art.tint(Art.ship(racer.design, racer.team), '#a98bff'),
       ports: Art.shipPorts(racer.design), colors: Art.TEAMS[racer.team],
       x: slot.x, y: slot.y, vx: 0, vy: 0, angle: slot.a, angVel: 0,
       spawn: { x: slot.x, y: slot.y, a: slot.a },
-      hp: C.MAXHP, shield: 0, nitro: 0, stun: 0, spinRate: 0, emp: 0, invuln: 0, dead: 0,
+      hp: lo.maxHp, shield: 0, nitro: 0, stun: 0, spinRate: 0, emp: 0, invuln: 0, dead: 0,
       weapon: null, ammo: 0, cool: 0, prevFire: false,
       nextCp: 0, cpCount: 0, lap: 0, lapStart: 0, lapTimes: [], bestLap: 0,
       finished: false, finishTime: 0, place: i + 1, progress: 0,
@@ -162,8 +294,8 @@
     return a;
   }
 
-  function roll(kind) {
-    const table = ROLL[kind];
+  function roll(kind, combat) {
+    const table = ROLL[(combat ? 'C' : '') + kind];
     let total = 0, i;
     for (i = 0; i < table.length; i++) total += table[i][1];
     let r = Math.random() * total;
@@ -187,20 +319,29 @@
   /** Reset the world. `demo` runs an all-AI race behind the title screen. */
   G.startRace = function (demo) {
     const g = this;
-    const tr = (g.track = RR.getTrack(g.trackIdx));
-    const diff = DIFFS[g.diffIdx];
+    g.mode = MODES[g.modeIdx].id;
+    g.combat = g.mode !== 'race';
+    g.royale = g.mode === 'royale' && !demo; // the attract mode just brawls on, with respawns
+    const tr = (g.track = g.combat ? RR.getArena(g.arenaIdx) : RR.getTrack(g.trackIdx));
+    const diff = demo ? DEMO_DIFF : DIFFS[g.diffIdx];
+    const hull = HULLS[g.prog.ship], turn = Math.floor(Math.random() * 6);
     g.demo = demo;
     g.laps = demo ? 1e9 : tr.laps;
     g.ships = RACERS.map(function (r, i) {
-      const s = makeShip(i, r, tr.grid[i === 0 ? 5 : i - 1]); // the player starts at the back
-      if (demo || i > 0) s.ai = makeAI(demo ? DEMO_DIFF : diff);
+      // racing, the player starts at the back; in an arena everyone gets a random spawn point
+      const slot = tr.grid[g.combat ? (i + turn) % 6 : i === 0 ? 5 : i - 1];
+      const s = i === 0 ? makeShip(i, { name: r.name, team: r.team, design: hull.design }, slot, loadout(g.prog.ship))
+        : makeShip(i, r, slot, STOCK);
+      if (demo || i > 0) s.ai = makeAI(diff);
+      if (g.combat && i > 0) s.dmg = diff.dmg;
+      if (g.royale) s.dmg *= C.ROYALE_DMG;
       return s;
     });
     g.player = g.ships[0];
     g.order = g.ships.slice();
     g.rocks = tr.rocks.map(makeRock);
     g.pickups = tr.pickups.map(function (p, i) {
-      return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind), on: true, timer: 0, ph: i * 1.7 };
+      return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind, g.combat), on: true, timer: 0, ph: i * 1.7 };
     });
     g.shots = []; g.mines = []; g.waves = []; g.parts = []; g.rings = []; g.texts = [];
     g.raceTime = 0;
@@ -209,6 +350,8 @@
     g.cam.x = g.player.x; g.cam.y = g.player.y;
     g.shake = 0; g.flash = 0; g.msg = null;
     g.playerDone = false; g.doneT = 0; g.newRecord = false;
+    g.zone = g.royale ? { r: tr.radius * 1.42, r0: tr.radius * 1.42 } : null; // starts around the whole arena
+    g.over = false; g.elimN = 0; g.feed = []; g.spec = null; g.reward = null;
     g.state = demo ? 'title' : 'play';
   };
 
@@ -224,7 +367,7 @@
   };
   /** World top-10 for the selected course (only when the backend is reachable). */
   G.showBoard = function () {
-    if (this.state !== 'title' || !RR.net.online) return;
+    if (this.state !== 'title' || !RR.net.online || this.modeIdx !== 0) return; // only races have times
     RR.net.load(RR.TRACKS[this.trackIdx].id);
     RR.audio.sfx('select');
     this.state = 'board';
@@ -278,9 +421,21 @@
     this.state = 'play';
     RR.audio.music({ on: true });
   };
+  G.setMode = function (d) {
+    this.modeIdx = (this.modeIdx + d + MODES.length) % MODES.length;
+    RR.audio.sfx('select');
+    this.startRace(true);
+    save();
+  };
+  /** Next course, or next arena in the combat modes. */
   G.setTrack = function (d) {
-    const n = RR.TRACKS.length;
-    this.trackIdx = (this.trackIdx + d + n) % n;
+    if (this.modeIdx !== 0) {
+      const m = RR.ARENAS.length;
+      this.arenaIdx = (this.arenaIdx + d + m) % m;
+    } else {
+      const n = RR.TRACKS.length;
+      this.trackIdx = (this.trackIdx + d + n) % n;
+    }
     RR.audio.sfx('select');
     this.startRace(true);
     save();
@@ -347,15 +502,16 @@
 
   /* ----------------------------------------------------- damage + death */
 
-  function hurt(s, g, dmg) {
+  function hurt(s, g, dmg, by) {
     if (s.dead > 0 || s.invuln > 0 || s.shield > 0) return;
+    if (by && by !== s) { s.hitBy = by; s.hitT = g.t; }
     s.hp -= dmg;
     s.hitFlash = 0.12;
     if (s.hp <= 0) destroy(s, g);
   }
 
   /** A weapon hit: impulse, optional spin-out, damage. Shields soak it up. */
-  function zap(s, g, dmg, stun, ix, iy) {
+  function zap(s, g, dmg, stun, ix, iy, by) {
     if (s.dead > 0 || s.invuln > 0) return;
     if (s.shield > 0) {
       s.shield = Math.max(0.05, s.shield - 1.5);
@@ -374,7 +530,7 @@
       s.angle += (Math.random() - 0.5) * 0.35;
     }
     if (s === g.player && !g.demo) { g.shake = Math.max(g.shake, 5); RR.input.buzz(40); }
-    hurt(s, g, dmg);
+    hurt(s, g, dmg, by);
   }
 
   function destroy(s, g) {
@@ -386,17 +542,55 @@
       banner(g, 'WRECKED!', PAL.alarm, 1.5, 3);
       RR.input.buzz(160);
     }
+    // whoever landed a hit in the last few seconds gets the kill, even if a planet finished the job
+    const by = s.hitBy && g.t - s.hitT < C.KILL_CREDIT ? s.hitBy : null;
+    s.hitBy = null;
+    if (g.combat && !g.over) score(g, s, by);
+  }
+
+  /** Combat modes: count the kill, and in a battle royale take the loser out for good. */
+  function score(g, victim, killer) {
+    victim.deaths++;
+    if (killer) killer.kills++;
+    g.feed.push({ a: killer ? killer.name : '', b: victim.name, zone: !killer && victim.zoned, t: 0 });
+    if (g.feed.length > 3) g.feed.shift();
+    if (killer === g.player && !g.demo && !g.playerDone) {
+      banner(g, 'WRECKED ' + victim.name + '!', PAL.yellow, 1.3, 3);
+      RR.audio.sfx('power');
+    }
+    if (!g.royale) return;
+    victim.gone = true;
+    victim.dead = 1e9;
+    victim.elim = ++g.elimN;
+    if (victim === g.player) {
+      g.spec = killer; // watch the rest of it from the winner's side
+      playerResult(g);
+    }
+  }
+
+  /** Where to come back in an arena: the spawn point furthest from trouble. */
+  function arenaSpawn(s, g) {
+    let best = g.track.grid[0], bd = -1;
+    for (const sp of g.track.grid) {
+      let d = 1e9;
+      for (const o of g.ships) if (o !== s && o.dead <= 0) d = Math.min(d, Math.hypot(o.x - sp.x, o.y - sp.y));
+      if (d > bd) { bd = d; best = sp; }
+    }
+    return best;
   }
 
   function respawn(s, g) {
     const cps = g.track.cps, N = cps.length;
-    if (s.cpCount > 0) {
+    if (g.combat) {
+      const sp = arenaSpawn(s, g);
+      s.x = sp.x; s.y = sp.y; s.angle = sp.a;
+    } else if (s.cpCount > 0) {
       const c = cps[(s.nextCp + N - 1) % N], n = cps[s.nextCp];
       s.x = c.x; s.y = c.y; s.angle = Math.atan2(n.y - c.y, n.x - c.x);
     } else {
       s.x = s.spawn.x; s.y = s.spawn.y; s.angle = s.spawn.a;
     }
-    s.vx = s.vy = 0; s.angVel = 0; s.dead = 0; s.hp = C.MAXHP; s.invuln = 2.5;
+    s.vx = s.vy = 0; s.angVel = 0; s.dead = 0; s.hp = s.maxHp; s.invuln = 2.5;
     s.hist.length = 0; s.histT = 0;
     if (s.ai) { s.ai.stuck = 0; s.ai.stuckN = 0; s.ai.rev = 0; }
     ringFx(g, s.x, s.y, 30, 6, 0.3, PAL.cyan);
@@ -557,8 +751,8 @@
   function tryFire(s, g) {
     const fire = s.input.fire, edge = fire && !s.prevFire;
     s.prevFire = fire;
-    if (!fire || !s.weapon || s.cool > 0 || s.dead > 0 || s.stun > 0 || s.emp > 0) return;
-    const w = s.weapon;
+    const w = s.weapon || (g.combat ? 'blaster' : null); // in combat every ship has a cannon
+    if (!fire || !w || s.cool > 0 || s.dead > 0 || s.stun > 0 || s.emp > 0) return;
     if (w !== 'blaster' && !edge) return;
     const ca = Math.cos(s.angle), sa = Math.sin(s.angle);
 
@@ -566,9 +760,9 @@
       g.shots.push({
         type: 'bolt', owner: s, x: s.x + ca * 12, y: s.y + sa * 12,
         vx: ca * C.BOLT_SPEED + s.vx * 0.5, vy: sa * C.BOLT_SPEED + s.vy * 0.5,
-        life: C.BOLT_LIFE, color: s.colors.i,
+        life: C.BOLT_LIFE, color: s.colors.i, dmg: C.BOLT_DMG * s.dmg,
       });
-      s.cool = 0.13;
+      s.cool = s.weapon ? 0.13 : C.CANNON_COOL;
       snd(g, 'laser', s.x, s.y, 0.8);
     } else if (w === 'missile') {
       g.shots.push({
@@ -588,7 +782,7 @@
       snd(g, 'emp', s.x, s.y);
       if (s === g.player && !g.demo) g.flash = 0.35;
     }
-    if (--s.ammo <= 0) { s.weapon = null; s.ammo = 0; }
+    if (s.weapon && --s.ammo <= 0) { s.weapon = null; s.ammo = 0; }
   }
 
   function damageRock(g, a, dmg) {
@@ -610,7 +804,7 @@
       const dx = s.x - x, dy = s.y - y, d = Math.hypot(dx, dy), reach = rad + C.SHIP_R;
       if (d < reach) {
         const k = 1 - 0.5 * (d / reach), m = d || 1;
-        zap(s, g, dmg * k, stun, (dx / m) * 170 * k, (dy / m) * 170 * k);
+        zap(s, g, dmg * k, stun, (dx / m) * 170 * k, (dy / m) * 170 * k, owner);
       }
     }
     for (const a of g.rocks) {
@@ -670,7 +864,7 @@
           const mn = g.mines[m];
           if (Math.hypot(b.x - mn.x, b.y - mn.y) < 9) {
             g.mines.splice(m, 1);
-            explode(g, mn.x, mn.y, 48, C.MINE_DMG, 1, mn.owner, true);
+            explode(g, mn.x, mn.y, 48, C.MINE_DMG * mn.owner.dmg, 1, mn.owner, true);
             dead = true;
             break;
           }
@@ -680,9 +874,9 @@
 
       shots.splice(i, 1);
       if (b.type === 'missile') {
-        explode(g, b.x, b.y, 44, C.MISSILE_DMG, 1.1, b.owner, false);
+        explode(g, b.x, b.y, 44, C.MISSILE_DMG * b.owner.dmg, 1.1, b.owner, false);
       } else if (b.life > 0) {
-        if (hitShip) { zap(hitShip, g, C.BOLT_DMG, 0, b.vx * 0.1, b.vy * 0.1); snd(g, 'hit', b.x, b.y); }
+        if (hitShip) { zap(hitShip, g, b.dmg, 0, b.vx * 0.1, b.vy * 0.1, b.owner); snd(g, 'hit', b.x, b.y); }
         else if (hitRock) damageRock(g, hitRock, 1);
         burst(g, b.x, b.y, 6, 110, FX.spark, 0.3);
       }
@@ -705,7 +899,7 @@
       }
       if (trip) {
         g.mines.splice(i, 1);
-        explode(g, m.x, m.y, 48, C.MINE_DMG, 1, m.owner, true);
+        explode(g, m.x, m.y, 48, C.MINE_DMG * m.owner.dmg, 1, m.owner, true);
       }
     }
   }
@@ -759,7 +953,7 @@
       s.shield = C.SHIELD_TIME;
       snd(g, 'shield', s.x, s.y, isP ? 1 : 0.5);
     } else if (p.type === 'repair') {
-      s.hp = Math.min(C.MAXHP, s.hp + 50);
+      s.hp = Math.min(s.maxHp, s.hp + 50);
       if (isP) RR.audio.sfx('power');
     } else if (p.type === 'rewind') {
       s.rewind = 1;
@@ -775,7 +969,7 @@
     for (const p of g.pickups) {
       if (!p.on) {
         p.timer -= dt;
-        if (p.timer <= 0) { p.on = true; p.type = roll(p.kind); ringFx(g, p.x, p.y, 16, 4, 0.2, PAL.white); }
+        if (p.timer <= 0) { p.on = true; p.type = roll(p.kind, g.combat); ringFx(g, p.x, p.y, 16, 4, 0.2, PAL.white); }
         continue;
       }
       for (const s of g.ships) {
@@ -856,6 +1050,7 @@
 
   function updateShip(s, g, dt, racing) {
     if (s.rw) { stepRewind(s, g, dt); return; }
+    if (s.gone) return; // knocked out of a battle royale
     if (s.dead > 0) {
       s.dead -= dt;
       if (s.dead <= 0) respawn(s, g);
@@ -879,12 +1074,12 @@
       grip = 0;
     } else {
       if (s.emp > 0) { thrust = 0; turn *= 0.35; }
-      s.angVel += (turn * C.TURN - s.angVel) * Math.min(1, 16 * dt);
+      s.angVel += (turn * C.TURN * s.turnK - s.angVel) * Math.min(1, 16 * dt);
       s.angle += s.angVel * dt;
     }
     const ca = Math.cos(s.angle), sa = Math.sin(s.angle);
     const boost = s.nitro > 0 ? C.NITRO_MULT : 1;
-    const acc = C.THRUST * (thrust * boost * s.speedMult - C.REVERSE * brake);
+    const acc = C.THRUST * s.accK * (thrust * boost * s.speedMult - C.REVERSE * brake);
     s.vx += ca * acc * dt; s.vy += sa * acc * dt;
     s.thrusting = thrust * boost;
 
@@ -899,8 +1094,9 @@
     }
 
     // drag along the nose, extra "grip" sideways so the ship carves instead of drifting forever
-    const vf = (s.vx * ca + s.vy * sa) * Math.exp(-C.DRAG * dt);
-    const vl = (-s.vx * sa + s.vy * ca) * Math.exp(-(C.DRAG + grip) * dt);
+    const drag = C.DRAG * s.dragK;
+    const vf = (s.vx * ca + s.vy * sa) * Math.exp(-drag * dt);
+    const vl = (-s.vx * sa + s.vy * ca) * Math.exp(-(drag + grip * s.turnK) * dt);
     s.vx = ca * vf - sa * vl; s.vy = sa * vf + ca * vl;
     s.x += s.vx * dt; s.y += s.vy * dt;
 
@@ -1002,7 +1198,7 @@
     if (!rec.race || s.finishTime < rec.race) { rec.race = s.finishTime; g.newRecord = true; }
     if (s.bestLap && (!rec.lap || s.bestLap < rec.lap)) rec.lap = s.bestLap;
     g.best[id] = rec;
-    save();
+    award(g, s.place); // (saves)
     RR.net.submit(id, { name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx, place: s.place });
   }
 
@@ -1063,6 +1259,77 @@
     for (let i = 0; i < g.order.length; i++) g.order[i].place = i + 1;
   }
 
+  /* -------------------------------------------------------- combat modes */
+
+  /** Dogfight: most kills, then fewest deaths. Battle royale: survivors first, then last one out. */
+  function rankCombat(g) {
+    if (g.over) return; // the final table stands
+    g.order.sort(g.royale ? function (a, b) {
+      if (!a.elim !== !b.elim) return a.elim ? 1 : -1;
+      return a.elim ? b.elim - a.elim : b.kills - a.kills || a.idx - b.idx;
+    } : function (a, b) {
+      return b.kills - a.kills || a.deaths - b.deaths || a.idx - b.idx;
+    });
+    for (let i = 0; i < g.order.length; i++) g.order[i].place = i + 1;
+  }
+
+  /** The player's part in a combat event is settled: either it ended, or they are out of a battle royale. */
+  function playerResult(g) {
+    const p = g.player;
+    if (g.demo || g.playerDone) return;
+    g.playerDone = true;
+    g.doneT = 0;
+    rankCombat(g);
+    const win = p.place === 1;
+    if (g.royale) banner(g, win ? 'LAST SHIP FLYING!' : 'ELIMINATED!', win ? PAL.yellow : PAL.alarm, 2.2, 4);
+    else banner(g, win ? 'VICTORY!' : 'MATCH OVER', win ? PAL.yellow : PAL.white, 2.2, 5);
+    RR.audio.sfx(p.place <= 3 ? 'finish' : 'lose');
+    RR.audio.music({ tempo: 0.9 });
+    if (!p.gone) p.ai = makeAI(DEMO_DIFF); // autopilot while the results are up
+    award(g, p.place);
+  }
+
+  function endMatch(g) {
+    rankCombat(g);
+    g.over = true;
+    g.endT = g.raceTime;
+    if (g.player.gone) g.spec = g.order[0];
+    playerResult(g);
+  }
+
+  function updateCombat(g, dt) {
+    for (let i = g.feed.length - 1; i >= 0; i--) {
+      g.feed[i].t += dt;
+      if (g.feed[i].t > 5) g.feed.splice(i, 1);
+    }
+    if (g.phase !== 'race' || g.demo || g.over) { rankCombat(g); return; }
+
+    if (g.royale) {
+      // the zone closes on the middle of the arena; outside it hulls burn, shield or no shield
+      const z = g.zone, c = g.track.center;
+      z.r = z.r0 * (1 - clamp((g.raceTime - C.ZONE_GRACE) / C.ZONE_SHRINK, 0, 1));
+      let alive = 0;
+      for (const s of g.ships) {
+        if (s.gone) continue;
+        if (s.dead <= 0) {
+          s.zoned = Math.hypot(s.x - c.x, s.y - c.y) > z.r;
+          if (s.zoned) {
+            s.hp -= C.ZONE_DMG * dt;
+            if (s.hp <= 0) destroy(s, g);
+          }
+        }
+        if (!s.gone) alive++;
+      }
+      if (alive <= 1) endMatch(g);
+      else if (g.player.gone && (!g.spec || g.spec.gone)) {
+        g.spec = g.ships.find(function (s) { return !s.gone; }) || null;
+      }
+    } else if (g.raceTime >= C.DOGFIGHT_TIME || g.ships.some(function (s) { return s.kills >= C.KILL_TARGET; })) {
+      endMatch(g);
+    }
+    rankCombat(g);
+  }
+
   /* ------------------------------------------------------------------ AI */
 
   function choosePickup(s, g, ux, uy, dist) {
@@ -1093,10 +1360,126 @@
     return true;
   }
 
+  /**
+   * Bend a desired heading (ux, uy) around the planets, asteroids and mines
+   * within `dist`. The result is left in `steer`; returns true if it changed.
+   */
+  function dodge(s, g, ux, uy, dist, margin) {
+    const speed = Math.hypot(s.vx, s.vy);
+    let bent = false;
+    // steer around planets that sit between us and the target
+    for (const p of g.track.planets) {
+      const pd = Math.hypot(p.x - s.x, p.y - s.y);
+      if (pd - p.r > dist) continue;
+      if (avoid(s, p.x, p.y, p.r + 30 + margin, ux, uy)) { ux = steer.x; uy = steer.y; bent = true; }
+    }
+    // ...then around the nearest asteroid or mine in the way
+    let block = null, blockR = 0, reach = Math.min(dist, 130 + speed * 0.3);
+    for (const a of g.rocks) {
+      if (a.dead) continue;
+      const ax = a.x - s.x, ay = a.y - s.y, along = ax * ux + ay * uy;
+      if (along < -6 || along > reach) continue;
+      if (Math.abs(ax * uy - ay * ux) < a.cr + 15) { block = a; blockR = a.cr + 17; reach = along; }
+    }
+    for (const m of g.mines) {
+      const ax = m.x - s.x, ay = m.y - s.y, along = ax * ux + ay * uy;
+      if (along < 0 || along > reach) continue;
+      if (Math.abs(ax * uy - ay * ux) < 24) { block = m; blockR = 28; reach = along; }
+    }
+    if (block && avoid(s, block.x, block.y, blockR, ux, uy)) { ux = steer.x; uy = steer.y; bent = true; }
+    steer.x = ux; steer.y = uy;
+    return bent;
+  }
+
+  /** Pull the trigger when somebody is where the weapon in hand can reach them. */
+  function aiFire(s, g, dt) {
+    const ai = s.ai, w = s.weapon || (g.combat ? 'blaster' : null);
+    ai.fireT -= dt;
+    if (!w || ai.fireT > 0 || s.stun > 0 || s.emp > 0) return;
+    const ca = Math.cos(s.angle), sa = Math.sin(s.angle);
+    let fire = false;
+    for (const o of g.ships) {
+      if (o === s || o.dead > 0 || o.invuln > 0) continue;
+      const ox = o.x - s.x, oy = o.y - s.y, od = Math.hypot(ox, oy) || 1, fwd = (ox * ca + oy * sa) / od;
+      if (w === 'blaster') fire = od < 380 && fwd > 0.985;
+      else if (w === 'missile') fire = od < 620 && od > 70 && fwd > 0.72;
+      else if (w === 'mine') fire = od < 190 && fwd < -0.5;
+      else if (w === 'emp') fire = od < C.EMP_RANGE * 0.7;
+      if (fire) break;
+    }
+    if (fire) {
+      s.input.fire = true;
+      ai.fireT = w === 'blaster' ? 0.15 / Math.min(1, ai.aggro) : (0.7 + Math.random() * 1.6) / ai.aggro;
+    }
+  }
+
+  /** A pickup worth a detour in a fight: a weapon when empty-handed, a repair when hurt, a shield. */
+  function combatPickup(s, g) {
+    const c = g.track.center;
+    let best = null, bd = 340;
+    for (const p of g.pickups) {
+      if (!p.on) continue;
+      if (p.kind === 'W' ? !!s.weapon : p.type === 'nitro' || (p.type === 'repair' && s.hp > s.maxHp * 0.7) || (p.type === 'shield' && s.shield > 0)) continue;
+      if (g.zone && Math.hypot(p.x - c.x, p.y - c.y) > g.zone.r - 20) continue;
+      const d = Math.hypot(p.x - s.x, p.y - s.y) * (p.type === 'repair' && s.hp < s.maxHp * 0.4 ? 0.4 : 1);
+      if (d < bd) { bd = d; best = p; }
+    }
+    return best;
+  }
+
+  /** Combat brain: stay in the arena (and the zone), grab what helps, otherwise hunt the nearest ship. */
+  function thinkCombat(s, g, dt) {
+    const ai = s.ai, inp = s.input, tr = g.track, c = tr.center;
+    s.speedMult = ai.skill;
+
+    ai.tgtT = (ai.tgtT || 0) - dt;
+    if (ai.tgtT <= 0 || (ai.tgt && ai.tgt.dead > 0)) {
+      ai.tgtT = 0.5 + Math.random() * 0.7;
+      let best = null, score = 1e9;
+      for (const o of g.ships) {
+        if (o === s || o.dead > 0) continue;
+        // nearest first; stick with the current target, finish off the wounded, leave the untouchable
+        const sc = Math.hypot(o.x - s.x, o.y - s.y) * (o === ai.tgt ? 0.7 : 1) * (o.invuln > 0 ? 2.5 : 1) * (0.6 + 0.4 * o.hp / o.maxHp);
+        if (sc < score) { score = sc; best = o; }
+      }
+      ai.tgt = best;
+      ai.pick = combatPickup(s, g);
+    }
+
+    const o = ai.tgt, cd = Math.hypot(c.x - s.x, c.y - s.y);
+    const limit = Math.min(tr.radius - 50, g.zone ? g.zone.r - 45 : 1e9);
+    let tx = c.x, ty = c.y, chase = false, idle = false;
+    if (cd > limit) { /* head back in */ }
+    else if (ai.pick && ai.pick.on) { tx = ai.pick.x; ty = ai.pick.y; }
+    else if (o) {
+      // lead the shot: bolts leave with half of our own velocity
+      const lead = Math.min(0.7, Math.hypot(o.x - s.x, o.y - s.y) / C.BOLT_SPEED);
+      tx = o.x + (o.vx - s.vx * 0.5) * lead; ty = o.y + (o.vy - s.vy * 0.5) * lead;
+      chase = true;
+    } else idle = cd < 90;
+
+    const dx = tx - s.x, dy = ty - s.y, dist = Math.hypot(dx, dy) || 1;
+    const bent = dodge(s, g, dx / dist, dy / dist, dist, ai.margin);
+    let want;
+    if (chase && !bent && dist < 300) want = Math.atan2(dy, dx) + Math.sin(g.t * 2.3 + ai.margin) * (ai.wobble || 0);
+    else want = Math.atan2(steer.y * 330 - s.vy * 0.45, steer.x * 330 - s.vx * 0.45); // against our own drift
+    const diff = angDiff(want, s.angle), ad = Math.abs(diff);
+    inp.turn = clamp(diff * 6, -1, 1);
+    inp.thrust = idle ? 0 : ad > 1.7 ? 0 : ad > 1 ? 0.45 : chase && dist < 110 ? 0.5 : 1; // ease off rather than ram
+
+    const speed = Math.hypot(s.vx, s.vy);
+    if (speed < 24 && s.stun <= 0 && inp.thrust > 0.4) ai.stuck += dt; else ai.stuck = Math.max(0, ai.stuck - dt * 2);
+    if (ai.stuck > 1.2) { ai.stuck = 0; ai.rev = 0.7; ai.revTurn = Math.random() < 0.5 ? -1 : 1; }
+    if (ai.rev > 0) { ai.rev -= dt; inp.thrust = 0; inp.brake = 1; inp.turn = ai.revTurn; }
+
+    aiFire(s, g, dt);
+  }
+
   function think(s, g, dt) {
     const ai = s.ai, inp = s.input, tr = g.track, cps = tr.cps, N = cps.length;
     inp.turn = 0; inp.thrust = 0; inp.brake = 0; inp.fire = false;
     if (g.phase !== 'race' || s.dead > 0) return;
+    if (g.combat) { thinkCombat(s, g, dt); return; }
 
     // rubber band: ease off when well ahead of the player, push when behind
     if (!g.demo && !g.playerDone && s !== g.player) {
@@ -1124,26 +1507,8 @@
     let ux = dx / dist, uy = dy / dist;
     const speed = Math.hypot(s.vx, s.vy);
 
-    // steer around planets that sit between us and the target
-    for (const p of tr.planets) {
-      const pd = Math.hypot(p.x - s.x, p.y - s.y);
-      if (pd - p.r > dist) continue;
-      if (avoid(s, p.x, p.y, p.r + 30 + ai.margin, ux, uy)) { ux = steer.x; uy = steer.y; }
-    }
-    // ...then around the nearest asteroid or mine in the way
-    let block = null, blockR = 0, reach = Math.min(dist, 130 + speed * 0.3);
-    for (const a of g.rocks) {
-      if (a.dead) continue;
-      const ax = a.x - s.x, ay = a.y - s.y, along = ax * ux + ay * uy;
-      if (along < -6 || along > reach) continue;
-      if (Math.abs(ax * uy - ay * ux) < a.cr + 15) { block = a; blockR = a.cr + 17; reach = along; }
-    }
-    for (const m of g.mines) {
-      const ax = m.x - s.x, ay = m.y - s.y, along = ax * ux + ay * uy;
-      if (along < 0 || along > reach) continue;
-      if (Math.abs(ax * uy - ay * ux) < 24) { block = m; blockR = 28; reach = along; }
-    }
-    if (block && avoid(s, block.x, block.y, blockR, ux, uy)) { ux = steer.x; uy = steer.y; }
+    dodge(s, g, ux, uy, dist, ai.margin);
+    ux = steer.x; uy = steer.y;
 
     // aim a little against our own sideways drift, then turn towards that
     const want = Math.atan2(uy * 330 - s.vy * 0.45, ux * 330 - s.vx * 0.45);
@@ -1167,24 +1532,7 @@
     }
     if (ai.rev > 0) { ai.rev -= dt; inp.thrust = 0; inp.brake = 1; inp.turn = ai.revTurn; }
 
-    // weapons
-    ai.fireT -= dt;
-    if (!s.weapon || ai.fireT > 0 || s.stun > 0 || s.emp > 0) return;
-    const ca = Math.cos(s.angle), sa = Math.sin(s.angle), w = s.weapon;
-    let fire = false;
-    for (const o of g.ships) {
-      if (o === s || o.dead > 0 || o.invuln > 0) continue;
-      const ox = o.x - s.x, oy = o.y - s.y, od = Math.hypot(ox, oy) || 1, fwd = (ox * ca + oy * sa) / od;
-      if (w === 'blaster') fire = od < 380 && fwd > 0.985;
-      else if (w === 'missile') fire = od < 620 && od > 70 && fwd > 0.72;
-      else if (w === 'mine') fire = od < 190 && fwd < -0.5;
-      else if (w === 'emp') fire = od < C.EMP_RANGE * 0.7;
-      if (fire) break;
-    }
-    if (fire) {
-      inp.fire = true;
-      ai.fireT = w === 'blaster' ? 0.15 / Math.min(1, ai.aggro) : (0.7 + Math.random() * 1.6) / ai.aggro;
-    }
+    aiFire(s, g, dt);
   }
 
   /* --------------------------------------------------------- fx + camera */
@@ -1210,7 +1558,7 @@
   }
 
   function updateCamera(g, dt) {
-    const f = g.player;
+    const f = g.player.gone && g.spec ? g.spec : g.player; // out of a battle royale: watch a survivor
     if (f.rw) { // the ghost moves too fast for a smoothed camera
       g.cam.x = f.x; g.cam.y = f.y;
       g.shake *= Math.exp(-9 * dt);
@@ -1240,19 +1588,20 @@
       updateShip(s, g, dt, racing);
     }
     collideShips(g);
-    updateCheckpoints(g);
+    if (!g.combat) updateCheckpoints(g);
     updatePickups(g, dt);
     updateShots(g, dt);
     updateMines(g, dt);
     updateWaves(g, dt);
     updateRocks(g, dt);
     updateFx(g, dt);
-    rank(g);
+    if (g.combat) updateCombat(g, dt);
+    else rank(g);
 
     // "wrong way" when the player keeps flying away from the next gate
     const p = g.player;
-    if (!g.demo && racing && !p.rw && p.dead <= 0 && !g.playerDone) recordHistory(p, dt);
-    if (!g.demo && racing && p.dead <= 0) {
+    if (!g.demo && !g.combat && racing && !p.rw && p.dead <= 0 && !g.playerDone) recordHistory(p, dt);
+    if (!g.demo && !g.combat && racing && p.dead <= 0) {
       const cp = g.track.cps[p.nextCp], dx = cp.x - p.x, dy = cp.y - p.y;
       const sp = Math.hypot(p.vx, p.vy), d = Math.hypot(dx, dy) || 1;
       if (sp > 90 && (p.vx * dx + p.vy * dy) / (sp * d) < -0.45) p.wrong += dt;
@@ -1303,12 +1652,20 @@
 
     if (hit.full) g.fullscreen();
     if (g.state === 'title') {
-      if (hit.up || hit.down) { g.menuRow = 1 - g.menuRow; RR.audio.sfx('select'); }
+      if (hit.up || hit.down) { g.menuRow = (g.menuRow + (hit.up ? 2 : 1)) % 3; RR.audio.sfx('select'); }
       const d = hit.left ? -1 : hit.right ? 1 : 0;
-      if (d) { if (g.menuRow === 0) g.setTrack(d); else g.setDiff(d); }
+      if (d) { if (g.menuRow === 0) g.setMode(d); else if (g.menuRow === 1) g.setTrack(d); else g.setDiff(d); }
       if (hit.ok || hit.fire) g.begin();
       else if (hit.name) g.editName();
       else if (hit.board) g.showBoard();
+      else if (hit.hangar) g.openHangar();
+    } else if (g.state === 'hangar') {
+      // row 0 is the ship, rows 1.. are its stats
+      const rows = STATS.length + 1;
+      if (hit.up || hit.down) { g.hangarRow = (g.hangarRow + (hit.up ? rows - 1 : 1)) % rows; RR.audio.sfx('select'); }
+      const d = hit.left ? -1 : hit.right ? 1 : 0;
+      if (d) { if (g.hangarRow === 0) g.hangarBrowse(d); else g.spend(g.hangarShip, g.hangarRow - 1, d); }
+      if (hit.ok || hit.pause || hit.hangar) g.closeHangar();
     } else if (g.state === 'board') {
       if (hit.ok || hit.pause || hit.board || hit.fire) g.closeBoard();
     } else if (g.state === 'play') {

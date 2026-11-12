@@ -22,6 +22,24 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
   faint ghost marks where it would put you. Rivals can't use it.
 - **Weapons** (red crates, one slot): Blaster, homing Missile, Mine, EMP shockwave.
 - **Rivals** in three skill levels: Rookie, Pilot, Ace. They pick up and use items too.
+- **Three events**, chosen on the menu:
+  - **Grand Prix**: the race described above.
+  - **Dogfight**: no gates, just a walled arena. Every ship has a cannon that never runs dry;
+    crates add missiles, mines and EMPs. Wrecks respawn. First to 5 kills wins, or the most
+    kills when the 3-minute clock runs out.
+  - **Battle Royale**: the same arenas with one life each. After 12 seconds a zone starts
+    closing on the middle of the arena and burns any hull outside it, shield or not. Last ship
+    flying wins. Once you are out, the camera follows a survivor.
+  A kill goes to whoever hit the ship in its last 5 seconds, even if a planet finished it off.
+- **The hangar** (H on the menu): four ships with five stats each: Accel, Top Speed,
+  Handling, Hull and Firepower (a weapon damage multiplier).
+  - Finishing 1st, 2nd or 3rd in any event earns 3, 2 or 1 stat points; a win adds one more
+    against Pilot rivals and two more against Ace.
+  - Points raise a ship's stats up to that ship's ceiling. Every ship can spend all the
+    points you have earned, and points can be taken back and moved at any time.
+  - Wins unlock better ships with higher ceilings: the Dart (2 wins), the Hammer (5) and the
+    Phoenix (9). The starting Sparrow flies exactly like the rivals' ships.
+  - Progress is saved in the browser, like your records.
 - **Zoom** the world in or out in whole-pixel steps, so the pixel art stays sharp. The HUD
   keeps its size at every level, and your choice is remembered.
 - Hull damage, wrecks and respawns, lap and race records, an attract-mode race behind the menu.
@@ -39,6 +57,7 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
 | Zoom | Z cycles normal / wide / close; + and - or the mouse wheel step through every level | ZOOM button |
 | Pause | P or Esc | II button |
 | Menu | Arrows, Enter | Tap |
+| Hangar | H on the menu; arrows pick a ship or stat and spend points, Enter closes | HANGAR button, then the arrows and - / + buttons |
 | Other | M mute, C CRT filter, F fullscreen, N pilot name, T world top 10 | FULLSCREEN, PILOT, TOP 10 buttons |
 
 A gamepad also works (stick or d-pad to turn, A to thrust, B to brake, X to fire, Y or LB for
@@ -58,7 +77,7 @@ npm test           # API tests, plus browser tests of the game if Playwright is 
 ```
 
 The browser tests drive the real game in headless Chromium (AI races on every course, zoom,
-do-over). They need `npm install --no-save playwright && npx playwright install chromium`
+do-over, the hangar, dogfights and battle royales in every arena). They need `npm install --no-save playwright && npx playwright install chromium`
 and are skipped without it.
 
 The game itself is static. Opening `public/index.html` straight from disk also works; it
@@ -207,8 +226,8 @@ public/               the game (static)
   src/audio.js        chip-synth sound effects and music
   src/input.js        keyboard, touch stick, gamepad
   src/net.js          leaderboard client
-  src/tracks.js       course definitions and builder
-  src/game.js         physics, weapons, AI, laps, game states
+  src/tracks.js       course and arena definitions and builder
+  src/game.js         physics, weapons, AI, laps, combat modes, hangar, game states
   src/render.js       world, HUD, menus
   src/main.js         the two canvas layers (zooming world, fixed-size HUD) and main loop
 server.js             static files + leaderboard API

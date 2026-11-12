@@ -186,6 +186,30 @@
       }
     }
 
+    /* arena wall (dashed) and, in a battle royale, the closing zone */
+    if (g.combat) {
+      const b = tr.bounds;
+      ctx.fillStyle = PAL.steel;
+      for (let wx = Math.ceil(Math.max(b.x0, cx) / 8) * 8; wx <= Math.min(b.x1, cx + W); wx += 8) {
+        ctx.fillRect(wx - cx, b.y0 - cy, 4, 1);
+        ctx.fillRect(wx - cx, b.y1 - cy, 4, 1);
+      }
+      for (let wy = Math.ceil(Math.max(b.y0, cy) / 8) * 8; wy <= Math.min(b.y1, cy + H); wy += 8) {
+        ctx.fillRect(b.x0 - cx, wy - cy, 1, 4);
+        ctx.fillRect(b.x1 - cx, wy - cy, 1, 4);
+      }
+    }
+    if (g.zone && g.zone.r > 2) {
+      const z = g.zone, zx = tr.center.x - cx, zy = tr.center.y - cy;
+      const n = Math.max(16, Math.floor(z.r * RR.TAU / 6)), spin = (g.t * 18) / z.r;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * RR.TAU + spin, x = Math.round(zx + Math.cos(a) * z.r), y = Math.round(zy + Math.sin(a) * z.r);
+        if (x < -2 || y < -2 || x > W + 2 || y > H + 2) continue;
+        ctx.fillStyle = i & 1 ? PAL.alarm : PAL.orange;
+        ctx.fillRect(x - 1, y - 1, 2, 2);
+      }
+    }
+
     /* pickups */
     for (const pk of g.pickups) {
       if (!pk.on) continue;
@@ -257,6 +281,14 @@
         RR.ring(ctx, sx, sy, 16, PAL.cyan, 8, g.t * 10);
         RR.ring(ctx, sx, sy, 14, PAL.sky, 8, -g.t * 10);
       }
+      // in a fight, show how much hull a damaged rival has left
+      if (g.combat && !g.demo && s !== p && s.hp < s.maxHp) {
+        const f = clamp(s.hp / s.maxHp, 0, 1), bx = Math.round(sx) - 6, by = Math.round(sy) - 18;
+        ctx.fillStyle = PAL.ink;
+        ctx.fillRect(bx - 1, by - 1, 15, 4);
+        ctx.fillStyle = f > 0.55 ? PAL.lime : f > 0.3 ? PAL.yellow : PAL.alarm;
+        ctx.fillRect(bx, by, Math.max(1, Math.round(13 * f)), 2);
+      }
     }
 
     drawParts(g, ctx, cx, cy, W, H, 1);
@@ -291,18 +323,43 @@
       ctx.fillRect(Math.round(sx), sy + 11, 1, 1);
     }
 
-    /* edge arrow towards the next gate when it is off-screen */
-    if (!g.playerDone) {
-      const cp = tr.cps[p.nextCp], sx = cp.x - cx, sy = cp.y - cy;
+    /* edge arrow towards the next gate when it is off-screen; in a fight it
+     * points at the nearest rival, or back into the zone when you are outside it */
+    let aim = null, hostile = false;
+    if (!g.playerDone && !g.combat) aim = tr.cps[p.nextCp];
+    else if (!g.playerDone && p.dead <= 0) {
+      if (p.zoned) aim = tr.center;
+      else {
+        let bd = 1e9;
+        for (const o of g.ships) {
+          const d = Math.hypot(o.x - p.x, o.y - p.y);
+          if (o !== p && o.dead <= 0 && d < bd) { bd = d; aim = o; hostile = true; }
+        }
+      }
+    }
+    if (aim) {
+      const sx = aim.x - cx, sy = aim.y - cy;
       if (!vis(sx, sy, -10)) {
-        const ang = Math.atan2(sy - H / 2, sx - W / 2), c = Math.cos(ang), s = Math.sin(ang);
-        const k = Math.min((W / 2 - 24) / Math.abs(c || 1e-6), (H / 2 - 24) / Math.abs(s || 1e-6));
-        const pulse = Math.sin(g.t * 9) * 4;
-        const ax = W / 2 + c * (k + pulse), ay = H / 2 + s * (k + pulse);
+        // launch from just beside the ship, glide out towards the gate, then
+        // hold at the screen edge for a while before starting over
+        const SCALE = 2, R = 20, M = R + 4; // arrow drawn 2x; halo radius; edge margin
+        const TRAVEL = 1.5, HOLD = 1.8;     // seconds
+        const px = p.x - cx, py = p.y - cy;
+        const ang = Math.atan2(sy - py, sx - px), c = Math.cos(ang), s = Math.sin(ang);
+        const kx = c > 1e-6 ? (W - M - px) / c : c < -1e-6 ? (px - M) / -c : Infinity;
+        const ky = s > 1e-6 ? (H - M - py) / s : s < -1e-6 ? (py - M) / -s : Infinity;
+        const r0 = 36, r1 = Math.max(r0, Math.min(kx, ky));
+        const u = Math.min(1, (g.t % (TRAVEL + HOLD)) / TRAVEL);
+        const d = r0 + (r1 - r0) * u * u * (3 - 2 * u); // ease in and out: a gentle glide
+        const ax = px + c * d, ay = py + s * d;
         // dark halo so it reads over bright nebula and planets, then a white blink
-        RR.disc(ctx, ax, ay, 12, 'rgba(7,7,26,0.55)');
-        RR.ring(ctx, ax, ay, 12, PAL.yellow, 8, g.t * 10);
-        RR.drawRot(ctx, (g.t * 5) % 1 < 0.25 ? Art.arrowFlash : Art.arrow, ax, ay, ang);
+        RR.disc(ctx, ax, ay, R, 'rgba(7,7,26,0.55)');
+        RR.ring(ctx, ax, ay, R, hostile ? PAL.alarm : PAL.yellow, 10, g.t * 10);
+        const img = (g.t * 5) % 1 < 0.25 ? Art.arrowFlash : Art.arrow;
+        ctx.setTransform(SCALE, 0, 0, SCALE, Math.round(ax), Math.round(ay));
+        ctx.rotate(ang);
+        ctx.drawImage(img, -img.width / 2, -img.height / 2);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
       }
     }
 
@@ -320,6 +377,15 @@
     panel(ctx, mx - 2, my - 2, mm.w + 4, mm.h + 4);
     ctx.drawImage(mm.cv, mx, my);
     const blink = Math.floor(g.t * 6) & 1;
+    if (g.zone && g.zone.r * mm.s >= 1) {
+      const c = g.track.center;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(mx, my, mm.w, mm.h);
+      ctx.clip();
+      RR.ring(ctx, mx + c.x * mm.s + mm.ox, my + c.y * mm.s + mm.oy, g.zone.r * mm.s, PAL.alarm);
+      ctx.restore();
+    }
     for (const c of g.track.cps) {
       const next = c.i === p.nextCp && !g.playerDone;
       const x = Math.round(mx + c.x * mm.s + mm.ox), y = Math.round(my + c.y * mm.s + mm.oy);
@@ -341,47 +407,86 @@
     const L = 4 + ins.l, Tp = 4 + ins.t, Rr = W - 4 - ins.r, B = H - 4 - ins.b;
     const narrow = Rr - L < 330; // phones held upright
 
-    /* lap + position */
+    /* lap + position, or the score in a fight */
     panel(ctx, L, Tp, 104, 34);
-    text(ctx, 'LAP', L + 6, Tp + 5, PAL.silver);
-    text(ctx, Math.min(g.laps, Math.max(1, p.lap)) + '/' + g.laps, L + 6, Tp + 15, PAL.white, 2);
-    text(ctx, 'POS', L + 56, Tp + 5, PAL.silver);
-    text(ctx, ORD[p.place - 1], L + 56, Tp + 15, PLACE_COL[p.place - 1], 2);
+    if (g.royale) {
+      let alive = 0;
+      for (const s of g.ships) if (!s.gone) alive++;
+      text(ctx, 'ALIVE', L + 6, Tp + 5, PAL.silver);
+      text(ctx, alive + '/' + g.ships.length, L + 6, Tp + 15, PAL.white, 2);
+      text(ctx, 'KILLS', L + 56, Tp + 5, PAL.silver);
+      text(ctx, String(p.kills), L + 56, Tp + 15, PAL.yellow, 2);
+    } else {
+      text(ctx, g.combat ? 'KILLS' : 'LAP', L + 6, Tp + 5, PAL.silver);
+      text(ctx, g.combat ? p.kills + '/' + C.KILL_TARGET : Math.min(g.laps, Math.max(1, p.lap)) + '/' + g.laps, L + 6, Tp + 15, PAL.white, 2);
+      text(ctx, 'POS', L + 56, Tp + 5, PAL.silver);
+      text(ctx, ORD[p.place - 1], L + 56, Tp + 15, PLACE_COL[p.place - 1], 2);
+    }
 
     drawMinimap(g, ctx, Rr - mm.w - 2, Tp + 2);
 
     /* clocks: top centre, or tucked under the minimap when there is no room */
-    const total = p.finished ? p.finishTime : g.raceTime;
     const cx = narrow ? Rr - 1 : W / 2, cy = narrow ? Tp + mm.h + 9 : Tp + 3, al = narrow ? 'right' : 'center';
-    text(ctx, fmt(total), cx, cy, PAL.white, 2, al, PAL.ink);
-    if (!p.finished) text(ctx, 'LAP ' + fmt(g.raceTime - p.lapStart), cx, cy + 18, PAL.silver, 1, al, PAL.ink);
-    if (p.bestLap) text(ctx, 'BEST ' + fmt(p.bestLap), cx, cy + 27, PAL.yellow, 1, al, PAL.ink);
+    if (g.combat) {
+      const now = g.over ? g.endT : g.raceTime;
+      if (g.royale) {
+        const wait = C.ZONE_GRACE - now;
+        text(ctx, fmt(now), cx, cy, PAL.white, 2, al, PAL.ink);
+        if (wait > 0) text(ctx, 'ZONE CLOSES IN ' + Math.ceil(wait), cx, cy + 18, PAL.silver, 1, al, PAL.ink);
+        else if (!g.over) text(ctx, 'THE ZONE IS CLOSING', cx, cy + 18, Math.floor(T * 3) & 1 ? PAL.alarm : PAL.orange, 1, al, PAL.ink);
+      } else {
+        const left = Math.max(0, C.DOGFIGHT_TIME - now);
+        text(ctx, fmt(left), cx, cy, left < 20 && Math.floor(T * 4) & 1 ? PAL.alarm : PAL.white, 2, al, PAL.ink);
+        text(ctx, 'FIRST TO ' + C.KILL_TARGET + ' KILLS', cx, cy + 18, PAL.silver, 1, al, PAL.ink);
+      }
+    } else {
+      const total = p.finished ? p.finishTime : g.raceTime;
+      text(ctx, fmt(total), cx, cy, PAL.white, 2, al, PAL.ink);
+      if (!p.finished) text(ctx, 'LAP ' + fmt(g.raceTime - p.lapStart), cx, cy + 18, PAL.silver, 1, al, PAL.ink);
+      if (p.bestLap) text(ctx, 'BEST ' + fmt(p.bestLap), cx, cy + 27, PAL.yellow, 1, al, PAL.ink);
+    }
 
     /* hull + speed */
     const hx = L, hy = touch ? Tp + 38 : B - 28;
     panel(ctx, hx, hy, 104, 28);
-    const hull = p.dead > 0 && !p.rw ? 0 : p.hp / C.MAXHP;
+    const hull = p.dead > 0 && !p.rw ? 0 : p.hp / p.maxHp;
     const low = hull < 0.3 && Math.floor(T * 8) & 1;
     text(ctx, 'HULL', hx + 6, hy + 5, low ? PAL.alarm : PAL.silver);
     bar(ctx, hx + 33, hy + 5, 13, hull, hull > 0.55 ? PAL.lime : hull > 0.3 ? PAL.yellow : PAL.alarm);
     text(ctx, 'SPD', hx + 6, hy + 16, PAL.silver);
     bar(ctx, hx + 33, hy + 16, 13, Math.hypot(p.vx, p.vy) / 500, p.nitro > 0 ? PAL.yellow : PAL.cyan);
 
+    /* who wrecked whom */
+    if (g.combat) {
+      let fy = touch ? Tp + 98 : Tp + 40;
+      for (const f of g.feed) {
+        if (f.t > 4.2 && Math.floor(T * 12) & 1) continue;
+        const line = f.a ? f.a + ' WRECKED ' + f.b : f.b + (f.zone ? ' LOST TO THE ZONE' : ' CRASHED');
+        text(ctx, line, L + 2, fy, f.a === p.name ? PAL.yellow : f.b === p.name ? PAL.alarm : PAL.silver, 1, 'left', PAL.ink);
+        fy += 9;
+      }
+    }
+
     /* weapon slot (keyboard play; on touch the FIRE button shows it) */
     if (!touch) {
       const rx = Rr - 72, ry = B - 34, held = p.rewind > 0;
-      panel(ctx, rx, ry, 34, 34, held ? (Math.floor(T * 4) & 1 ? PAL.white : PAL.violet) : PAL.slate);
-      if (!held) ctx.globalAlpha = 0.3;
-      ctx.drawImage(Art.icons.rewind, rx + 8, ry + 4, 18, 18);
-      ctx.globalAlpha = 1;
-      text(ctx, 'E', rx + 17, ry + 25, held ? PAL.white : PAL.steel, 1, 'center');
-      if (held) text(ctx, 'DO-OVER', rx + 33, ry - 10, PAL.violet, 1, 'right', PAL.ink);
+      if (!g.combat) { // no do-overs in a fight
+        panel(ctx, rx, ry, 34, 34, held ? (Math.floor(T * 4) & 1 ? PAL.white : PAL.violet) : PAL.slate);
+        if (!held) ctx.globalAlpha = 0.3;
+        ctx.drawImage(Art.icons.rewind, rx + 8, ry + 4, 18, 18);
+        ctx.globalAlpha = 1;
+        text(ctx, 'E', rx + 17, ry + 25, held ? PAL.white : PAL.steel, 1, 'center');
+        if (held) text(ctx, 'DO-OVER', rx + 33, ry - 10, PAL.violet, 1, 'right', PAL.ink);
+      }
       const wx = Rr - 34, wy = B - 34;
-      panel(ctx, wx, wy, 34, 34, p.weapon ? RR.ITEMS[p.weapon].color : PAL.slate);
+      panel(ctx, wx, wy, 34, 34, p.weapon ? RR.ITEMS[p.weapon].color : g.combat ? PAL.cyan : PAL.slate);
       if (p.weapon) {
         ctx.drawImage(Art.icons[p.weapon], wx + 8, wy + 4, 18, 18);
         text(ctx, 'X' + p.ammo, wx + 17, wy + 24, PAL.white, 1, 'center');
         text(ctx, RR.ITEMS[p.weapon].name, wx + 33, wy - 10, RR.ITEMS[p.weapon].color, 1, 'right', PAL.ink);
+      } else if (g.combat) { // the built-in cannon never runs dry
+        ctx.drawImage(Art.icons.blaster, wx + 8, wy + 4, 18, 18);
+        text(ctx, 'CANNON', wx + 33, wy - 10, PAL.cyan, 1, 'right', PAL.ink);
       } else {
         text(ctx, 'NO', wx + 17, wy + 9, PAL.steel, 1, 'center');
         text(ctx, 'WPN', wx + 17, wy + 18, PAL.steel, 1, 'center');
@@ -419,17 +524,19 @@
       } else {
         text(ctx, 'ARROWS / WASD TO FLY - SPACE TO FIRE', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
       }
-      text(ctx, 'FLY THROUGH THE GLOWING DONUT', W / 2, hy2 + (touch ? 24 : 12), PAL.pink, 1, 'center', PAL.ink);
+      text(ctx, g.royale ? 'LAST SHIP FLYING WINS' : g.combat ? 'WRECK THEM - FIRST TO ' + C.KILL_TARGET + ' KILLS' : 'FLY THROUGH THE GLOWING DONUT',
+        W / 2, hy2 + (touch ? 24 : 12), PAL.pink, 1, 'center', PAL.ink);
     } else if (g.msg) {
       const m = g.msg;
       const sc = Math.max(1, Math.min(m.scale, Math.floor((W - 12) / (m.text.length * 6))));
       if (m.t < m.dur - 0.3 || Math.floor(T * 16) & 1) text(ctx, m.text, W / 2, my, m.color, sc, 'center', PAL.ink);
     }
     if (g.state === 'play' && !g.playerDone && Math.floor(T * 5) & 1) {
-      if (p.out) text(ctx, 'RETURN TO THE COURSE!', W / 2, H * 0.64, PAL.alarm, 1, 'center', PAL.ink);
+      if (p.zoned && p.dead <= 0) text(ctx, 'OUTSIDE THE ZONE!', W / 2, H * 0.64, PAL.alarm, 2, 'center', PAL.ink);
+      else if (p.out) text(ctx, g.combat ? 'ARENA WALL - TURN BACK!' : 'RETURN TO THE COURSE!', W / 2, H * 0.64, PAL.alarm, 1, 'center', PAL.ink);
       else if (p.wrong > 1.1) text(ctx, 'WRONG WAY!', W / 2, H * 0.64, PAL.alarm, 2, 'center', PAL.ink);
     }
-    if (p.dead > 0 && !p.rw && g.state === 'play') text(ctx, 'RESPAWNING', W / 2, H * 0.5, PAL.silver, 1, 'center', PAL.ink);
+    if (p.dead > 0 && !p.rw && !p.gone && g.state === 'play') text(ctx, 'RESPAWNING', W / 2, H * 0.5, PAL.silver, 1, 'center', PAL.ink);
 
     if (touch && g.state === 'play') {
       const by = narrow ? cy + 40 : Tp + mm.h + 8;
@@ -457,9 +564,12 @@
       panel(ctx, r.x, r.y, r.w, r.h, on ? PAL.white : col);
       if (on) { ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2); }
     };
-    const f = L.fire, wc = p.weapon ? RR.ITEMS[p.weapon].color : PAL.steel;
+    const f = L.fire, wc = p.weapon ? RR.ITEMS[p.weapon].color : g.combat ? PAL.cyan : PAL.steel;
     key(f, t.fire, wc);
-    if (p.weapon) {
+    if (!p.weapon && g.combat) {
+      ctx.drawImage(Art.icons.blaster, f.x + 17, f.y + 7, 27, 27);
+      text(ctx, 'CANNON', f.x + f.w / 2, f.y + 40, wc, 1, 'center');
+    } else if (p.weapon) {
       ctx.drawImage(Art.icons[p.weapon], f.x + 17, f.y + 7, 27, 27);
       text(ctx, RR.ITEMS[p.weapon].name, f.x + f.w / 2, f.y + 38, wc, 1, 'center');
       text(ctx, 'X' + p.ammo, f.x + f.w / 2, f.y + 48, PAL.white, 1, 'center');
@@ -532,9 +642,28 @@
 
     /* menu card */
     const gap = compact ? 3 : 6;
-    const extras = net.online || (touch && canFullscreen());
     const pw = Math.min(W - 8, 300), px = Math.round((W - pw) / 2);
-    const ph = 5 + 27 + 10 + 10 + gap + 27 + gap + 21 + (extras ? gap + 2 + 16 : 0) + 6;
+    const mode = RR.MODES[g.modeIdx], fight = g.modeIdx !== 0;
+
+    // small buttons under PRESS ENTER, wrapped onto as many lines as they need
+    const spare = g.pointsLeft(g.prog.ship), items = [];
+    items.push(['HANGAR' + (touch ? '' : ' (H)') + (spare > 0 ? ' +' + spare : ''), function () { g.openHangar(); },
+      spare > 0 && Math.floor(T * 3) & 1 ? PAL.white : PAL.yellow]);
+    if (net.online) {
+      items.push(['PILOT ' + g.name + (touch ? '' : ' (N)'), function () { g.editName(); }, PAL.cyan]);
+      if (!fight) items.push(['TOP 10' + (touch ? '' : ' (T)'), function () { g.showBoard(); }, PAL.pink]);
+    }
+    if (touch && canFullscreen()) items.push(['FULLSCREEN', function () { g.fullscreen(); }, PAL.silver]);
+    const lines = [[]];
+    let lineW = 0;
+    items.forEach(function (it) {
+      it.w = RR.textW(it[0]) + 10;
+      if (lineW && lineW + 4 + it.w > pw - 8) { lines.push([]); lineW = 0; }
+      lineW += (lineW ? 4 : 0) + it.w;
+      lines[lines.length - 1].push(it);
+    });
+
+    const ph = 5 + 27 + gap + 27 + 10 + 10 + gap + 27 + gap + 21 + gap + 2 + lines.length * 18 - 2 + 6;
     panel(ctx, px, y - 5, pw, ph, PAL.navy);
 
     const row = function (idx, label, value, onL, onR) {
@@ -549,56 +678,56 @@
       g.ui.push({ x: W / 2 + ax - 24, y: y - 3, w: 48, h: 31, act: onR });
     };
 
-    const def = RR.TRACKS[g.trackIdx], rec = g.best[def.id], board = net.boards[def.id];
-    row(0, 'COURSE ' + (g.trackIdx + 1) + '/' + RR.TRACKS.length, def.name,
+    row(0, 'EVENT', mode.name, function () { g.setMode(-1); }, function () { g.setMode(1); });
+    y += 27 + gap;
+    const list = fight ? RR.ARENAS : RR.TRACKS, at = fight ? g.arenaIdx : g.trackIdx;
+    const def = list[at], rec = g.best[def.id], board = net.boards[def.id];
+    row(1, (fight ? 'ARENA ' : 'COURSE ') + (at + 1) + '/' + list.length, def.name,
       function () { g.setTrack(-1); }, function () { g.setTrack(1); });
     y += 27;
     text(ctx, def.blurb, W / 2, y, PAL.sky, 1, 'center', PAL.ink);
     y += 10;
-    let line = rec && rec.race ? 'YOU ' + fmt(rec.race) : def.laps + ' LAPS';
-    if (net.online) line += '   WORLD ' + (board && board.length ? fmt(board[0].time) + ' ' + board[0].name : '-:--.--');
-    else if (!(rec && rec.race)) line += ' - NO RECORD YET';
-    text(ctx, line, W / 2, y, rec && rec.race ? PAL.yellow : PAL.silver, 1, 'center', PAL.ink);
+    if (fight) text(ctx, mode.rule, W / 2, y, PAL.silver, 1, 'center', PAL.ink);
+    else {
+      let line = rec && rec.race ? 'YOU ' + fmt(rec.race) : def.laps + ' LAPS';
+      if (net.online) line += '   WORLD ' + (board && board.length ? fmt(board[0].time) + ' ' + board[0].name : '-:--.--');
+      else if (!(rec && rec.race)) line += ' - NO RECORD YET';
+      text(ctx, line, W / 2, y, rec && rec.race ? PAL.yellow : PAL.silver, 1, 'center', PAL.ink);
+    }
     y += 10 + gap;
-    row(1, 'RIVALS', RR.DIFFS[g.diffIdx].name, function () { g.setDiff(-1); }, function () { g.setDiff(1); });
+    row(2, 'RIVALS', RR.DIFFS[g.diffIdx].name, function () { g.setDiff(-1); }, function () { g.setDiff(1); });
     y += 27 + gap;
 
     const bw = Math.min(150, pw - 20), bx = Math.round(W / 2 - bw / 2), hot = Math.floor(T * 3) & 1;
     panel(ctx, bx, y, bw, 21, hot ? PAL.yellow : PAL.orange);
-    text(ctx, touch ? 'TAP TO RACE' : 'PRESS ENTER', W / 2, y + 4, hot ? PAL.yellow : PAL.orange, 2, 'center', PAL.ink);
+    text(ctx, touch ? 'TAP TO ' + mode.go : 'PRESS ENTER', W / 2, y + 4, hot ? PAL.yellow : PAL.orange, 2, 'center', PAL.ink);
     g.ui.push({ x: bx, y: y - 2, w: bw, h: 25, act: function () { g.begin(); } });
-    y += 21;
+    y += 21 + gap + 2;
 
-    if (extras) {
-      y += gap + 2;
-      const items = [];
-      if (net.online) {
-        items.push(['PILOT ' + g.name + (touch ? '' : ' (N)'), function () { g.editName(); }, PAL.cyan]);
-        items.push(['TOP 10' + (touch ? '' : ' (T)'), function () { g.showBoard(); }, PAL.pink]);
-      }
-      if (touch && canFullscreen()) items.push(['FULLSCREEN', function () { g.fullscreen(); }, PAL.silver]);
-      let tw = 0;
-      const ws = items.map(function (it) { const w = RR.textW(it[0]) + 10; tw += w; return w; });
-      let ix = Math.round(W / 2 - (tw + (items.length - 1) * 4) / 2);
-      items.forEach(function (it, k) {
-        button(g, ctx, it[0], ix, y, ws[k], 16, it[1], it[2]);
-        ix += ws[k] + 4;
+    lines.forEach(function (ln) {
+      let tw = (ln.length - 1) * 4;
+      ln.forEach(function (it) { tw += it.w; });
+      let ix = Math.round(W / 2 - tw / 2);
+      ln.forEach(function (it) {
+        button(g, ctx, it[0], ix, y, it.w, 16, it[1], it[2]);
+        ix += it.w + 4;
       });
-      y += 16;
-    }
+      y += 18;
+    });
+    y -= 2;
 
     const fy = H - 22 - ins.b;
     if (y + 8 > fy) return; // no room for the help lines on very short screens
     if (touch) {
       if (tall && y + 30 < fy) text(ctx, 'TIP: TURN YOUR PHONE SIDEWAYS', W / 2, fy - 16, PAL.yellow, 1, 'center', PAL.ink);
-      text(ctx, 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, fight ? 'WIN EVENTS TO EARN STAT POINTS' : 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, fight ? 'AND UNLOCK BETTER SHIPS' : 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
     } else if (W >= 440) {
       text(ctx, 'ARROWS / WASD  FLY    SPACE  FIRE    E  DO-OVER    P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, 'Z OR WHEEL  ZOOM    M  MUTE    C  CRT FILTER    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
+      text(ctx, 'H  HANGAR    Z OR WHEEL  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     } else {
       text(ctx, 'ARROWS/WASD FLY - SPACE FIRE - E REWIND', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, 'Z ZOOM - P PAUSE - M MUTE - C CRT', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
+      text(ctx, 'H HANGAR - Z ZOOM - P PAUSE - M MUTE', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     }
   }
 
@@ -667,6 +796,66 @@
       function () { g.closeBoard(); }, PAL.lime);
   }
 
+  /**
+   * The hangar: pick a ship and spend stat points on it. Each bar shows the
+   * ship's own level (grey), points you have put in (yellow) and room left up
+   * to that ship's ceiling; the dots past the end are out of its reach.
+   */
+  function drawHangar(g, ctx, W, H) {
+    const T = g.t, touch = RR.input.touchMode, ST = RR.STATS;
+    const i = g.hangarShip, h = RR.HULLS[i], open = g.shipUnlocked(i), left = g.pointsLeft(i);
+    ctx.fillStyle = 'rgba(7,7,26,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W - 8, 250), ph = 216;
+    const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
+    panel(ctx, x, y, pw, ph, PAL.yellow);
+    text(ctx, 'HANGAR', W / 2, y + 7, PAL.yellow, 2, 'center', PAL.plum);
+    text(ctx, 'WINS ' + g.prog.wins + '    STAT POINTS ' + g.prog.points, W / 2, y + 25, PAL.silver, 1, 'center');
+    const mark = function (ry, hh) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry, pw - 10, hh); };
+
+    /* the ship */
+    const sy = y + 38, sel = g.hangarRow === 0 && !touch;
+    if (sel) mark(sy - 3, 48);
+    const spr = Art.ship(h.design, 0);
+    if (!open) ctx.globalAlpha = 0.3;
+    ctx.drawImage(spr, x + 30, sy, spr.width * 2, spr.height * 2);
+    ctx.globalAlpha = 1;
+    text(ctx, h.name, x + 70, sy + 3, open ? PAL.white : PAL.steel, 2, 'left', PAL.ink);
+    text(ctx, h.blurb, x + 70, sy + 21, PAL.sky);
+    const need = h.wins - g.prog.wins;
+    text(ctx, open ? 'YOUR SHIP' : 'LOCKED - ' + need + ' MORE WIN' + (need > 1 ? 'S' : ''), x + 70, sy + 32, open ? PAL.lime : PAL.alarm);
+    const nud = sel ? Math.round(Math.sin(T * 8) * 1.5) : 0, acol = sel || touch ? PAL.yellow : PAL.steel;
+    text(ctx, '<', x + 14 - nud, sy + 14, acol, 2, 'center', PAL.ink);
+    text(ctx, '>', x + pw - 14 + nud, sy + 14, acol, 2, 'center', PAL.ink);
+    g.ui.push({ x: x, y: sy - 3, w: 28, h: 48, act: function () { g.hangarBrowse(-1); } });
+    g.ui.push({ x: x + pw - 28, y: sy - 3, w: 28, h: 48, act: function () { g.hangarBrowse(1); } });
+
+    /* its stats */
+    let ry = y + 92;
+    const bx = x + 70;
+    ST.forEach(function (st, k) {
+      const lv = g.statLevel(i, k), base = h.base[k], cap = h.cap[k], on = g.hangarRow === k + 1 && !touch;
+      if (on) mark(ry - 4, 15);
+      text(ctx, st.name, x + 10, ry, on ? PAL.yellow : PAL.silver);
+      for (let c = 0; c < 10; c++) {
+        if (c >= cap) { ctx.fillStyle = PAL.slate; ctx.fillRect(bx + c * 5 + 1, ry + 3, 2, 1); continue; }
+        ctx.fillStyle = c < base ? PAL.silver : c < lv ? PAL.yellow : PAL.dusk;
+        ctx.fillRect(bx + c * 5, ry, 4, 7);
+      }
+      text(ctx, lv + '/' + cap, bx + 54, ry, lv >= cap ? PAL.lime : PAL.white);
+      const less = open && lv > base, more = open && left > 0 && lv < cap;
+      button(g, ctx, '-', x + pw - 52, ry - 4, 22, 15, function () { g.spend(i, k, -1); }, less ? PAL.white : PAL.slate);
+      button(g, ctx, '+', x + pw - 27, ry - 4, 22, 15, function () { g.spend(i, k, 1); }, more ? PAL.yellow : PAL.slate);
+      ry += 17;
+    });
+    text(ctx, open ? 'POINTS LEFT FOR THIS SHIP: ' + left : 'WIN RACES AND FIGHTS TO UNLOCK', W / 2, ry + 1,
+      open && left > 0 ? PAL.yellow : PAL.steel, 1, 'center');
+
+    const bw = 96;
+    button(g, ctx, touch ? 'DONE' : 'DONE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 23, bw, 17,
+      function () { g.closeHangar(); }, PAL.lime);
+  }
+
   function drawPause(g, ctx, W, H) {
     ctx.fillStyle = 'rgba(7,7,26,0.6)';
     ctx.fillRect(0, 0, W, H);
@@ -699,14 +888,33 @@
       ctx.fillStyle = s.colors.a;
       ctx.fillRect(x + 28, ry, 7, 7);
       text(ctx, me ? g.name : s.name, x + 42, ry, col);
-      text(ctx, s.finished ? fmt(s.finishTime) : 'RACING' + '...'.slice(0, 1 + (Math.floor(T * 3) % 3)),
-        x + pw - 14, ry, s.finished ? col : PAL.steel, 1, 'right');
+      if (g.royale) {
+        text(ctx, s.kills + ' KILL' + (s.kills === 1 ? '' : 'S'), x + pw - 62, ry, col, 1, 'right');
+        text(ctx, s.gone ? 'OUT' : g.over ? 'WINNER' : 'ALIVE', x + pw - 14, ry, s.gone ? PAL.steel : PAL.lime, 1, 'right');
+      } else if (g.combat) {
+        text(ctx, s.kills + ' KILL' + (s.kills === 1 ? '' : 'S'), x + pw - 62, ry, col, 1, 'right');
+        text(ctx, s.deaths + ' LOST', x + pw - 14, ry, PAL.steel, 1, 'right');
+      } else {
+        text(ctx, s.finished ? fmt(s.finishTime) : 'RACING' + '...'.slice(0, 1 + (Math.floor(T * 3) % 3)),
+          x + pw - 14, ry, s.finished ? col : PAL.steel, 1, 'right');
+      }
       ry += 14;
     }
     ry += 3;
-    text(ctx, 'BEST LAP ' + fmt(p.bestLap) + (g.newRecord ? '   NEW RECORD!' : ''), W / 2, ry,
-      g.newRecord && Math.floor(T * 4) & 1 ? PAL.yellow : PAL.cyan, 1, 'center');
-    if (net.online) {
+    if (g.combat) text(ctx, g.royale && !g.over ? 'THE FIGHT GOES ON WITHOUT YOU' : RR.DIFFS[g.diffIdx].name + ' RIVALS', W / 2, ry, PAL.cyan, 1, 'center');
+    else {
+      text(ctx, 'BEST LAP ' + fmt(p.bestLap) + (g.newRecord ? '   NEW RECORD!' : ''), W / 2, ry,
+        g.newRecord && Math.floor(T * 4) & 1 ? PAL.yellow : PAL.cyan, 1, 'center');
+    }
+    // what it earned: stat points, and any ship the win unlocked
+    const rw = g.reward;
+    if (rw) {
+      const fresh = rw.unlocked.length && Math.floor(T) & 1;
+      text(ctx, fresh ? 'NEW SHIP IN THE HANGAR: ' + rw.unlocked.join(' ')
+        : rw.pts ? '+' + rw.pts + ' STAT POINT' + (rw.pts > 1 ? 'S' : '') + ' FOR THE HANGAR' : 'TOP 3 EARNS STAT POINTS',
+        W / 2, ry + 24, fresh ? PAL.lime : rw.pts ? PAL.yellow : PAL.steel, 1, 'center');
+    }
+    if (net.online && !g.combat) {
       const r = net.result;
       let msg = 'POSTING YOUR TIME...', col = PAL.silver;
       if (r && r.track === g.track.def.id) {
@@ -738,6 +946,7 @@
     ctx.clearRect(0, 0, W, H);
     if (g.state === 'title') drawTitle(g, ctx, W, H);
     else if (g.state === 'board') drawBoard(g, ctx, W, H);
+    else if (g.state === 'hangar') drawHangar(g, ctx, W, H);
     else {
       drawHUD(g, ctx, W, H);
       if (RR.input.touchMode && g.state === 'play') drawTouch(g, ctx, W, H);

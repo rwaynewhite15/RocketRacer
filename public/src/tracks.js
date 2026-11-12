@@ -105,6 +105,51 @@
     },
   ]);
 
+  /*
+   * Arenas for the combat modes: no gates, just a walled square of space
+   * `radius` out from (cx, cy). The middle is kept clear, because that is
+   * where a battle royale ends up.
+   *
+   * rings    pickups spaced around the centre { d, n, kind, a }
+   */
+  RR.ARENAS = [
+    {
+      id: 'crucible', name: 'THE CRUCIBLE', blurb: 'THREE WORLDS AND OPEN SKY', arena: true, seed: 53,
+      nebula: ['#2e0f1c', '#4a1424', '#6a1c2c', '#1c1038', '#2a1654', '#3a1e70'],
+      cx: 1500, cy: 1500, radius: 720, spawnA: 0.35,
+      planets: [
+        { x: 1130, y: 1350, r: 110, type: 'lava', seed: 31 },
+        { x: 1850, y: 1720, r: 92, type: 'ice', seed: 32 },
+        { x: 1640, y: 1010, r: 56, type: 'moon', seed: 33 },
+      ],
+      fields: [
+        { x: 1260, y: 1880, rx: 230, ry: 120, n: 9, max: 2 },
+        { x: 1990, y: 1240, rx: 140, ry: 200, n: 8, max: 2 },
+      ],
+      rings: [
+        { d: 150, n: 3, kind: 'W', a: 0.5 },
+        { d: 400, n: 5, kind: 'P', a: 1.1 },
+        { d: 590, n: 4, kind: 'W', a: 0.1 },
+      ],
+    },
+    {
+      id: 'garden', name: 'ROCK GARDEN', blurb: 'A BRAWL IN THE THICK OF THE BELT', arena: true, seed: 67,
+      nebula: ['#0e2a1c', '#12402a', '#185a36', '#101c46', '#16295e', '#1d3a78'],
+      cx: 1500, cy: 1500, radius: 760, spawnA: 0,
+      planets: [
+        { x: 960, y: 1960, r: 150, type: 'gas', seed: 41, ring: true },
+        { x: 1890, y: 1160, r: 64, type: 'moon', seed: 42 },
+      ],
+      fields: [{ x: 1500, y: 1500, rx: 660, ry: 620, n: 44, max: 3 }],
+      orbiters: [{ planet: 1, dist: 150, n: 3, speed: 0.4, size: 1 }],
+      rings: [
+        { d: 170, n: 4, kind: 'W', a: 0.8 },
+        { d: 420, n: 5, kind: 'P', a: 0.3 },
+        { d: 620, n: 4, kind: 'W', a: 1.3 },
+      ],
+    },
+  ];
+
   function segDist(px, py, ax, ay, bx, by) {
     const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
     const t = RR.clamp(((px - ax) * dx + (py - ay) * dy) / l2, 0, 1);
@@ -113,10 +158,11 @@
 
   function build(def) {
     const rnd = RR.rng(def.seed * 9973 + 1);
-    const N = def.cps.length;
+    const arena = !!def.arena;
+    const N = arena ? 0 : def.cps.length;
 
     /* checkpoints ------------------------------------------------------- */
-    const cps = def.cps.map(function (p, i) { return { i: i, x: p[0], y: p[1], finish: i === 0 }; });
+    const cps = (def.cps || []).map(function (p, i) { return { i: i, x: p[0], y: p[1], finish: i === 0 }; });
     cps.forEach(function (c, i) {
       const prev = cps[(i + N - 1) % N];
       c.segLen = Math.hypot(c.x - prev.x, c.y - prev.y); // length of the leg arriving here
@@ -140,16 +186,36 @@
       };
     });
 
-    /* starting grid: staggered pairs behind the start gate --------------- */
-    const c0 = cps[0], cl = cps[N - 1];
-    const gl = Math.hypot(c0.x - cl.x, c0.y - cl.y);
-    const ux = (c0.x - cl.x) / gl, uy = (c0.y - cl.y) / gl;
-    const grid = [];
-    for (let i = 0; i < 6; i++) {
-      const back = 112 + (i >> 1) * 46 + (i & 1) * 18, side = i & 1 ? 1 : -1;
-      grid.push({ x: c0.x - ux * back - uy * side * 22, y: c0.y - uy * back + ux * side * 22, a: Math.atan2(uy, ux) });
+    /** Nudge a point out of any planet it landed in (or too near). */
+    function offPlanets(pt, pad) {
+      planets.forEach(function (p) {
+        const d = Math.hypot(pt.x - p.x, pt.y - p.y), min = p.r + pad;
+        if (d < min) { pt.x = p.x + ((pt.x - p.x) / (d || 1)) * min; pt.y = p.y + ((pt.y - p.y) / (d || 1)) * min; }
+      });
+      return pt;
     }
-    const laneEnd = { x: c0.x - ux * 290, y: c0.y - uy * 290 };
+
+    /* starting grid: staggered pairs behind the start gate, or (arenas) a
+     * circle of spawn points facing the middle ---------------------------- */
+    const grid = [];
+    let c0 = null, ux = 0, uy = 0, laneEnd = null;
+    if (arena) {
+      for (let i = 0; i < 6; i++) {
+        const a = (def.spawnA || 0) + (i / 6) * TAU;
+        const pt = offPlanets({ x: def.cx + Math.cos(a) * def.radius * 0.6, y: def.cy + Math.sin(a) * def.radius * 0.6 }, 80);
+        grid.push({ x: pt.x, y: pt.y, a: Math.atan2(def.cy - pt.y, def.cx - pt.x) });
+      }
+    } else {
+      c0 = cps[0];
+      const cl = cps[N - 1];
+      const gl = Math.hypot(c0.x - cl.x, c0.y - cl.y);
+      ux = (c0.x - cl.x) / gl; uy = (c0.y - cl.y) / gl;
+      for (let i = 0; i < 6; i++) {
+        const back = 112 + (i >> 1) * 46 + (i & 1) * 18, side = i & 1 ? 1 : -1;
+        grid.push({ x: c0.x - ux * back - uy * side * 22, y: c0.y - uy * back + ux * side * 22, a: Math.atan2(uy, ux) });
+      }
+      laneEnd = { x: c0.x - ux * 290, y: c0.y - uy * 290 };
+    }
 
     /* pickups ----------------------------------------------------------- */
     const pickups = [];
@@ -159,13 +225,16 @@
       const mx = a.x + dx * row.t, my = a.y + dy * row.t, gap = row.gap || 36;
       for (let k = 0; k < row.n; k++) {
         const off = (k - (row.n - 1) / 2) * gap;
-        let x = mx - (dy / l) * off, y = my + (dx / l) * off;
         // never bury a pickup in a planet
-        planets.forEach(function (p) {
-          const d = Math.hypot(x - p.x, y - p.y), min = p.r + 46;
-          if (d < min) { x = p.x + ((x - p.x) / (d || 1)) * min; y = p.y + ((y - p.y) / (d || 1)) * min; }
-        });
-        pickups.push({ x: x, y: y, kind: row.kind });
+        const pt = offPlanets({ x: mx - (dy / l) * off, y: my + (dx / l) * off }, 46);
+        pickups.push({ x: pt.x, y: pt.y, kind: row.kind });
+      }
+    });
+    (def.rings || []).forEach(function (ring) {
+      for (let k = 0; k < ring.n; k++) {
+        const a = (ring.a || 0) + (k / ring.n) * TAU;
+        const pt = offPlanets({ x: def.cx + Math.cos(a) * ring.d, y: def.cy + Math.sin(a) * ring.d }, 46);
+        pickups.push({ x: pt.x, y: pt.y, kind: ring.kind });
       }
     });
 
@@ -176,7 +245,11 @@
       for (let k = 0; k < planets.length; k++) if (Math.hypot(x - planets[k].x, y - planets[k].y) < planets[k].r + 26 + r) return false;
       for (let k = 0; k < pickups.length; k++) if (Math.hypot(x - pickups[k].x, y - pickups[k].y) < 30 + r) return false;
       for (let k = 0; k < rocks.length; k++) if (Math.hypot(x - rocks[k].x, y - rocks[k].y) < r + rocks[k].r + 16) return false;
-      if (segDist(x, y, laneEnd.x, laneEnd.y, c0.x + ux * 120, c0.y + uy * 120) < 74 + r) return false;
+      if (laneEnd && segDist(x, y, laneEnd.x, laneEnd.y, c0.x + ux * 120, c0.y + uy * 120) < 74 + r) return false;
+      if (arena) {
+        for (let k = 0; k < grid.length; k++) if (Math.hypot(x - grid[k].x, y - grid[k].y) < 70 + r) return false;
+        if (Math.hypot(x - def.cx, y - def.cy) > def.radius - r - 20) return false;
+      }
       return true;
     }
     (def.fields || []).forEach(function (f) {
@@ -215,7 +288,11 @@
       x0 = Math.min(x0, p.x - p.r); y0 = Math.min(y0, p.y - p.r);
       x1 = Math.max(x1, p.x + p.r); y1 = Math.max(y1, p.y + p.r);
     });
-    const bounds = { x0: x0 - 420, y0: y0 - 420, x1: x1 + 420, y1: y1 + 420 };
+    let bounds = { x0: x0 - 420, y0: y0 - 420, x1: x1 + 420, y1: y1 + 420 };
+    if (arena) {
+      x0 = def.cx - def.radius; y0 = def.cy - def.radius; x1 = def.cx + def.radius; y1 = def.cy + def.radius;
+      bounds = { x0: x0, y0: y0, x1: x1, y1: y1 };
+    }
 
     const MW = 90, MH = 62, pad = 4;
     const ms = Math.min((MW - pad * 2) / (x1 - x0), (MH - pad * 2) / (y1 - y0));
@@ -232,7 +309,8 @@
     return {
       def: def, name: def.name, laps: def.laps,
       cps: cps, donuts: donuts, planets: planets, grid: grid, pickups: pickups, rocks: rocks,
-      bounds: bounds,
+      bounds: bounds, arena: arena,
+      center: arena ? { x: def.cx, y: def.cy } : null, radius: arena ? def.radius : 0,
       mini: { cv: mini, w: MW, h: MH, s: ms, ox: mox, oy: moy },
       nebula: Art.nebula(def.seed, def.nebula),
     };
@@ -242,5 +320,10 @@
   RR.getTrack = function (idx) {
     if (!built[idx]) built[idx] = build(TRACKS[idx]);
     return built[idx];
+  };
+  RR.getArena = function (idx) {
+    const key = 'a' + idx;
+    if (!built[key]) built[key] = build(RR.ARENAS[idx]);
+    return built[key];
   };
 })();

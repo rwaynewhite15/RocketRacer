@@ -137,11 +137,12 @@ test('do-over: goes back about 3 s, un-flies a gate, and the race clock keeps ru
       const want = log.find((e) => e.t >= before.t - 3.0);
       g.tryRewind();
       out.started = { rw: !!p.rw, charge: p.rewind };
+      const tgt = p.rw.tgt, tgtSpeed = Math.hypot(tgt.vx, tgt.vy); // what it was doing 3 s ago
       n = 0;
       while (p.rw && n++ < 120 * 3) g.step(S);
       out.A = {
         dist: Math.hypot(p.x - want.x, p.y - want.y), cp: p.cpCount, wantCp: want.cp, beforeCp: before.cp,
-        alive: p.dead === 0, invuln: p.invuln, clock: g.raceTime - before.t, speed: Math.hypot(p.vx, p.vy),
+        alive: p.dead === 0, invuln: p.invuln, clock: g.raceTime - before.t, speed: Math.hypot(p.vx, p.vy), tgtSpeed,
       };
 
       // B: a gate flown through inside the window counts again once re-flown
@@ -163,7 +164,8 @@ test('do-over: goes back about 3 s, un-flies a gate, and the race clock keeps ru
     assert.strictEqual(r.A.cp, r.A.wantCp, 'gate progress is what it was 3 s ago');
     assert.ok(r.A.beforeCp > r.A.cp, 'the test window really contained a gate');
     assert.ok(r.A.alive && r.A.invuln > 1.9, 'alive and protected');
-    assert.ok(r.A.speed > 50, 'keeps flying');
+    // it lands with the velocity it had back then (not always fast: the AI sometimes brakes hard for a gate)
+    assert.ok(Math.abs(r.A.speed - r.A.tgtSpeed) < 1, 'keeps the speed it had: ' + r.A.speed + ' vs ' + r.A.tgtSpeed);
     assert.ok(r.A.clock > 0.8 && r.A.clock < 1.1, 'the race clock kept running: ' + r.A.clock);
     assert.ok(r.B.after < r.B.passed, 'gate is un-flown');
     assert.ok(r.B.reflown >= r.B.passed, 'and counts again when re-flown');
@@ -278,6 +280,180 @@ test('do-over: needs history, one at a time, humans only, not during the countdo
     assert.deepStrictEqual(r.tookOne, { charge: 1, gone: true });
     assert.deepStrictEqual(r.secondLeft, { charge: 1, stillThere: true });
     assert.deepStrictEqual(r.countdown, { rw: false, charge: 1 });
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test('hangar: races earn stat points, wins unlock ships, upgrades stop at the ship\'s ceiling and are saved', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  try {
+    const r = await page.evaluate(() => {
+      const g = RR.game, out = {};
+      out.fresh = { ship: g.prog.ship, open: RR.HULLS.map((h, i) => g.shipUnlocked(i)), spent: g.spend(0, 0, 1) };
+
+      // a real race on autopilot pays out by finishing place
+      T.fresh(0);
+      let n = 0; while (!g.playerDone && n++ < 120 * 400) g.step(1 / 120);
+      const place = g.player.place;
+      out.paid = { got: g.reward.pts, want: Math.max(0, 4 - place) + (place === 1 ? g.diffIdx : 0), points: g.prog.points, wins: g.prog.wins, won: place === 1 ? 1 : 0 };
+
+      // spend: the Sparrow goes from 3 to its ceiling of 6 and no further; points can be taken back
+      g.prog.points = 20; g.prog.wins = 2;
+      out.ups = [1, 1, 1, 1].map(() => g.spend(0, 1, 1));
+      out.level = g.statLevel(0, 1);
+      out.left = g.pointsLeft(0);
+      out.back = [g.spend(0, 1, -1), g.statLevel(0, 1), g.spend(0, 2, -1)];
+      g.spend(0, 1, 1); g.spend(0, 3, 1);
+
+      // two wins open the Dart, nothing more; a locked ship can be looked at but not flown or upgraded
+      out.open = RR.HULLS.map((h, i) => g.shipUnlocked(i));
+      g.state = 'title'; g.openHangar(); g.hangarBrowse(-1);
+      out.locked = { viewing: g.hangarShip, flying: g.prog.ship, spend: g.spend(3, 0, 1) };
+      g.hangarBrowse(1); g.closeHangar();
+
+      // the upgrades reach the ship that flies
+      g.startRace(false);
+      const p = g.player, C = RR.CFG;
+      out.flown = { speed: (p.accK / p.dragK).toFixed(3), hp: p.maxHp, rival: g.ships[1].maxHp, design: p.design };
+      g.prog.ship = 1; g.save();
+      return out;
+    });
+    assert.deepStrictEqual(r.fresh, { ship: 0, open: [true, false, false, false], spent: false });
+    assert.strictEqual(r.paid.got, r.paid.want);
+    assert.strictEqual(r.paid.points, r.paid.want);
+    assert.strictEqual(r.paid.wins, r.paid.won);
+    assert.deepStrictEqual(r.ups, [true, true, true, false], 'three levels of room, then the ceiling');
+    assert.strictEqual(r.level, 6);
+    assert.strictEqual(r.left, 17);
+    assert.deepStrictEqual(r.back, [true, 5, false]);
+    assert.deepStrictEqual(r.open, [true, true, false, false]);
+    assert.deepStrictEqual(r.locked, { viewing: 3, flying: 0, spend: false });
+    assert.deepStrictEqual(r.flown, { speed: '1.060', hp: 112, rival: 100, design: 0 });
+
+    // progress survives a reload...
+    await page.reload();
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    const kept = await page.evaluate(() => ({ p: RR.game.prog, design: RR.game.player.design }));
+    assert.deepStrictEqual(kept.p, { wins: 2, points: 20, ship: 1, up: { sparrow: [0, 3, 0, 1, 0], dart: [0, 0, 0, 0, 0], hammer: [0, 0, 0, 0, 0], phoenix: [0, 0, 0, 0, 0] } });
+    assert.strictEqual(kept.design, 1, 'the attract mode flies the chosen ship');
+
+    // ...and a doctored save is cut back to what the rules allow
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem('rocketracer.v1'));
+      s.prog = { wins: 1, points: 2, ship: 3, up: { sparrow: [9, 9, 9, 9, 9], dart: [1, 0, 0, 0, 0] } };
+      localStorage.setItem('rocketracer.v1', JSON.stringify(s));
+    });
+    await page.reload();
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    const fixed = await page.evaluate(() => RR.game.prog);
+    assert.strictEqual(fixed.ship, 0, 'cannot fly a locked ship');
+    assert.deepStrictEqual(fixed.up.sparrow, [0, 0, 0, 0, 0], 'more upgrades than points: wiped');
+    assert.deepStrictEqual(fixed.up.dart, [1, 0, 0, 0, 0]);
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test('dogfight: the shooter gets the kill, the wreck respawns, five kills win', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  try {
+    const r = await page.evaluate(() => {
+      const g = RR.game, out = {};
+      g.modeIdx = 1; g.startRace(false); g.state = 'play'; T.run(4.2);
+      g.ships.forEach((s) => { s.ai = null; }); // hands off: nobody moves or shoots but us
+      const p = g.player, v = g.ships[1], c = g.track.center;
+      const duel = () => { p.x = c.x; p.y = c.y; p.vx = p.vy = 0; p.angle = 0; v.x = c.x + 110; v.y = c.y; v.vx = v.vy = 0; v.hp = 5; v.invuln = 0; };
+      out.setup = { combat: g.combat, gates: g.track.cps.length, cannon: p.weapon === null };
+      duel();
+      RR.input.down.fire = true; T.run(0.5); RR.input.down.fire = false;
+      out.kill = { kills: p.kills, deaths: v.deaths, wrecked: v.dead > 0, out: v.gone, over: g.over, feed: g.feed.length };
+      T.run(2.5);
+      out.back = { alive: v.dead === 0, hp: v.hp, safe: v.invuln > 0 };
+      p.kills = 4; duel();
+      RR.input.down.fire = true; T.run(0.5); RR.input.down.fire = false;
+      out.end = { over: g.over, done: g.playerDone, place: p.place, pts: g.reward.pts, wins: g.prog.wins };
+      T.run(3);
+      out.state = g.state;
+      out.frozen = p.kills;
+      return out;
+    });
+    assert.deepStrictEqual(r.setup, { combat: true, gates: 0, cannon: true });
+    assert.deepStrictEqual(r.kill, { kills: 1, deaths: 1, wrecked: true, out: false, over: false, feed: 1 });
+    assert.deepStrictEqual(r.back, { alive: true, hp: 100, safe: true });
+    assert.deepStrictEqual(r.end, { over: true, done: true, place: 1, pts: 4, wins: 1 });
+    assert.strictEqual(r.state, 'results');
+    assert.strictEqual(r.frozen, 5, 'the score stands once the fight is over');
+    await page.waitForTimeout(300); // draw the results
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test('battle royale: one life, the zone closes and burns, last ship flying wins', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  try {
+    const r = await page.evaluate(() => {
+      const g = RR.game, C = RR.CFG, out = {};
+      g.modeIdx = 2; g.startRace(false); g.state = 'play'; T.run(4.2);
+      g.ships.forEach((s) => { s.ai = null; });
+      const p = g.player, v = g.ships[1], w = g.ships[2], c = g.track.center, r0 = g.zone.r0;
+      out.start = { whole: g.zone.r === r0 && r0 > g.track.radius * 1.4, alive: g.ships.filter((s) => !s.gone).length };
+
+      // a kill is for good
+      p.x = c.x; p.y = c.y; p.vx = p.vy = 0; p.angle = 0; v.x = c.x + 110; v.y = c.y; v.vx = v.vy = 0; v.hp = 5; v.invuln = 0;
+      RR.input.down.fire = true; T.run(0.5); RR.input.down.fire = false;
+      T.run(4);
+      out.kill = { kills: p.kills, gone: v.gone, place: v.place, over: g.over };
+
+      // half-way through the shrink the zone is half the size, and outside it hurts
+      g.raceTime = C.ZONE_GRACE + C.ZONE_SHRINK / 2;
+      w.x = c.x; w.y = c.y - g.zone.r0; w.vx = w.vy = 0; w.hp = 100; w.shield = 5;
+      p.hp = p.maxHp;
+      T.run(1);
+      out.zone = { half: Math.abs(g.zone.r / r0 - 0.5) < 0.02, burned: w.hp < 90, zoned: w.zoned, inside: p.hp === p.maxHp && !p.zoned };
+
+      // when it closes completely everyone burns: the healthiest ship is the last one flying
+      g.ships.forEach((s) => { if (s !== p && !s.gone) s.hp = 1; });
+      g.raceTime = C.ZONE_GRACE + C.ZONE_SHRINK;
+      T.run(0.5);
+      out.end = { over: g.over, done: g.playerDone, place: p.place, alive: g.ships.filter((s) => !s.gone).length, wins: g.prog.wins, pts: g.reward.pts };
+      out.order = g.order.map((s) => s.place).join('');
+      return out;
+    });
+    assert.deepStrictEqual(r.start, { whole: true, alive: 6 });
+    assert.deepStrictEqual(r.kill, { kills: 1, gone: true, place: 6, over: false });
+    assert.deepStrictEqual(r.zone, { half: true, burned: true, zoned: true, inside: true });
+    assert.deepStrictEqual(r.end, { over: true, done: true, place: 1, alive: 1, wins: 1, pts: 4 });
+    assert.strictEqual(r.order, '123456');
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test('rivals fight both combat modes to a finish in every arena', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  try {
+    const results = await page.evaluate(() => {
+      const g = RR.game, out = [];
+      for (let mode = 1; mode <= 2; mode++) {
+        for (let a = 0; a < RR.ARENAS.length; a++) {
+          g.modeIdx = mode; g.arenaIdx = a; g.startRace(false); g.state = 'play';
+          g.player.ai = T.ai();
+          let n = 0; while (!g.over && n++ < 120 * 400) g.step(1 / 120);
+          out.push({
+            what: RR.MODES[mode].name + ' / ' + g.track.name, over: g.over, secs: Math.round(g.endT),
+            kills: g.ships.reduce((k, s) => k + s.kills, 0), alive: g.ships.filter((s) => !s.gone).length,
+            placed: g.order.map((s) => s.place).join(''), inArena: g.ships.every((s) => s.gone || Math.hypot(s.x - g.track.center.x, s.y - g.track.center.y) < g.track.radius * 1.6),
+          });
+        }
+      }
+      return out;
+    });
+    for (const r of results) {
+      assert.ok(r.over, r.what + ': not over after 400 s');
+      assert.ok(r.kills >= 1, r.what + ': nobody was wrecked');
+      assert.strictEqual(r.placed, '123456', r.what);
+      assert.ok(r.inArena, r.what + ': a ship left the arena');
+      if (/ROYALE/.test(r.what)) assert.ok(r.alive <= 1, r.what + ': ' + r.alive + ' ships still flying');
+      else assert.ok(r.secs <= 181, r.what + ': ran past the time limit');
+    }
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
 });
