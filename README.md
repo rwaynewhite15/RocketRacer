@@ -15,8 +15,15 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
   at the screen edge points to it. The checkered donut is start/finish. Three laps.
 - **Planets** are solid and pull on your rocket. **Asteroids** drift, bounce and can be shot.
 - **Power-ups** (green capsules, used instantly): Nitro, Shield, Repair.
+- **Do-over** (rare violet capsule, kept until you use it): rewinds your ship 3 seconds. You
+  fly the way back as a ghost along the path you just took, then carry on from there with the
+  hull, lap and gate progress you had then, and 2 seconds of protection. It also undoes a
+  wreck. The race clock and your rivals keep going, so it costs time. While you hold one, a
+  faint ghost marks where it would put you. Rivals can't use it.
 - **Weapons** (red crates, one slot): Blaster, homing Missile, Mine, EMP shockwave.
 - **Rivals** in three skill levels: Rookie, Pilot, Ace. They pick up and use items too.
+- **Zoom** the world in or out in whole-pixel steps, so the pixel art stays sharp. The HUD
+  keeps its size at every level, and your choice is remembered.
 - Hull damage, wrecks and respawns, lap and race records, an attract-mode race behind the menu.
 - All art is generated in code at start-up and all sound is synthesised, so there are no
   image or audio files to load.
@@ -28,11 +35,14 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
 | Fly | Arrow keys or WASD (turn, thrust, brake/reverse) | Left thumb: push the stick the way you want to go |
 | Fire weapon | Space (or X / J) | FIRE button |
 | Brake | Down / S | BRAKE button |
+| Do-over | E or Shift | DO-OVER button (appears while you hold one) |
+| Zoom | Z cycles normal / wide / close; + and - or the mouse wheel step through every level | ZOOM button |
 | Pause | P or Esc | II button |
 | Menu | Arrows, Enter | Tap |
 | Other | M mute, C CRT filter, F fullscreen, N pilot name, T world top 10 | FULLSCREEN, PILOT, TOP 10 buttons |
 
-A gamepad also works (stick or d-pad to turn, A to thrust, B to brake, X to fire).
+A gamepad also works (stick or d-pad to turn, A to thrust, B to brake, X to fire, Y or LB for
+a do-over, Back to zoom, Start to pause).
 
 On phones the game uses larger pixels, keeps the HUD clear of notches, and can be added to
 the home screen as a full-screen app. Landscape gives the best view.
@@ -109,7 +119,7 @@ public/               the game (static)
   src/tracks.js       course definitions and builder
   src/game.js         physics, weapons, AI, laps, game states
   src/render.js       world, HUD, menus
-  src/main.js         canvas sizing and main loop
+  src/main.js         the two canvas layers (zooming world, fixed-size HUD) and main loop
 server.js             static files + leaderboard API
 lib/store.js          Firestore and in-memory leaderboard storage
 test/api.test.js      API tests

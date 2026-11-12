@@ -21,6 +21,8 @@
     MISSILE_SPEED: 560, MISSILE_TURN: 3.4, MISSILE_LIFE: 4.5, MISSILE_DMG: 34,
     MINE_DMG: 30, MINE_LIFE: 45,
     EMP_RANGE: 240, EMP_TIME: 2.4,
+    // do-over: the ship is sampled HIST_DT apart and the last REWIND_SPAN seconds are kept
+    REWIND_SPAN: 3, HIST_DT: 0.05, REWIND_DUR: 0.9, REWIND_MIN: 0.5, REWIND_INVULN: 2,
   });
 
   const ITEMS = (RR.ITEMS = {
@@ -31,9 +33,10 @@
     missile: { name: 'MISSILE', color: PAL.orange, ammo: 2 },
     mine: { name: 'MINE', color: PAL.alarm, ammo: 3 },
     emp: { name: 'EMP', color: PAL.violet, ammo: 1 },
+    rewind: { name: 'DO-OVER', color: PAL.violet },
   });
   const ROLL = {
-    P: [['nitro', 45], ['shield', 30], ['repair', 25]],
+    P: [['nitro', 38], ['shield', 26], ['repair', 22], ['rewind', 14]],
     W: [['blaster', 35], ['missile', 30], ['mine', 20], ['emp', 15]],
   };
 
@@ -75,6 +78,9 @@
     best: {}, crt: true, newRecord: false,
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
     inset: { l: 0, t: 0, r: 0, b: 0 }, // notch / rounded-corner margins, in game pixels
+    // The world layer can zoom; the HUD layer (W x H) keeps its pixel size.
+    vw: 640, vh: 360, // size of the world view in world pixels
+    baseScale: 2, zoomOffset: 0, zoomScale: 1, toast: null,
   });
 
   /* ------------------------------------------------------- persistence */
@@ -88,6 +94,7 @@
       RR.audio.muted = !!s.muted;
       if (s.diff >= 0 && s.diff < DIFFS.length) G.diffIdx = s.diff;
       if (s.track >= 0 && s.track < RR.TRACKS.length) G.trackIdx = s.track;
+      if (Number.isInteger(s.zoom) && Math.abs(s.zoom) <= 2) G.zoomOffset = s.zoom;
       G.name = RR.net.cleanName(s.name);
       if (typeof s.pid === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(s.pid)) G.pid = s.pid;
     } catch (e) { /* storage unavailable: play without saved records */ }
@@ -98,7 +105,7 @@
     try {
       window.localStorage.setItem(STORE, JSON.stringify({
         best: G.best, crt: G.crt, muted: RR.audio.muted, diff: G.diffIdx, track: G.trackIdx,
-        name: G.name, pid: G.pid,
+        name: G.name, pid: G.pid, zoom: G.zoomOffset,
       }));
     } catch (e) { /* ignore */ }
   }
@@ -123,6 +130,7 @@
     return {
       idx: i, name: racer.name, team: racer.team, design: racer.design,
       sprite: Art.ship(racer.design, racer.team), white: Art.shipWhite(racer.design),
+      ghost: Art.tint(Art.ship(racer.design, racer.team), '#a98bff'),
       ports: Art.shipPorts(racer.design), colors: Art.TEAMS[racer.team],
       x: slot.x, y: slot.y, vx: 0, vy: 0, angle: slot.a, angVel: 0,
       spawn: { x: slot.x, y: slot.y, a: slot.a },
@@ -132,6 +140,7 @@
       finished: false, finishTime: 0, place: i + 1, progress: 0,
       input: { turn: 0, thrust: 0, brake: 0, fire: false },
       ai: null, speedMult: 1, thrusting: 0, exh: 0, smk: 0, hitFlash: 0, out: false, wrong: 0,
+      rewind: 0, rw: null, hist: [], histT: 0, // do-over charge, rewind in progress, state history
     };
   }
 
@@ -286,7 +295,7 @@
 
   function near(g, x, y, pad) {
     pad = pad || 70;
-    return Math.abs(x - g.cam.x) < g.W / 2 + pad && Math.abs(y - g.cam.y) < g.H / 2 + pad;
+    return Math.abs(x - g.cam.x) < g.vw / 2 + pad && Math.abs(y - g.cam.y) < g.vh / 2 + pad;
   }
 
   /** Positional sound: fades with distance from the camera; silent in demo. */
@@ -388,9 +397,145 @@
       s.x = s.spawn.x; s.y = s.spawn.y; s.angle = s.spawn.a;
     }
     s.vx = s.vy = 0; s.angVel = 0; s.dead = 0; s.hp = C.MAXHP; s.invuln = 2.5;
+    s.hist.length = 0; s.histT = 0;
     if (s.ai) { s.ai.stuck = 0; s.ai.stuckN = 0; s.ai.rev = 0; }
     ringFx(g, s.x, s.y, 30, 6, 0.3, PAL.cyan);
   }
+
+  /* ------------------------------------------------------------- do-over */
+
+  /** Sample the player's state every HIST_DT; only the last REWIND_SPAN seconds are kept. */
+  function recordHistory(s, dt) {
+    s.histT += dt;
+    if (s.histT < C.HIST_DT - 1e-6) return;
+    s.histT -= C.HIST_DT;
+    const h = s.hist;
+    h.push({
+      x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle, angVel: s.angVel, hp: s.hp,
+      nextCp: s.nextCp, cpCount: s.cpCount, lap: s.lap, lapStart: s.lapStart,
+      nLaps: s.lapTimes.length, bestLap: s.bestLap,
+    });
+    if (h.length > Math.round(C.REWIND_SPAN / C.HIST_DT) + 1) h.shift();
+  }
+
+  /** Position and heading at a fractional index along a list of samples. */
+  function pathAt(pts, f) {
+    const n = pts.length, i = clamp(Math.floor(f), 0, n - 2), a = clamp(f - i, 0, 1);
+    const P = pts[i], Q = pts[i + 1];
+    return { x: P.x + (Q.x - P.x) * a, y: P.y + (Q.y - P.y) * a, angle: P.angle + angDiff(Q.angle, P.angle) * a };
+  }
+  RR.pathAt = pathAt;
+
+  /**
+   * Spend the do-over: the ship becomes a ghost that retraces its recorded
+   * path backwards, then picks up flying from where it was 3 seconds ago.
+   * The race clock and everyone else keep going, so it costs real time.
+   */
+  G.tryRewind = function () {
+    const g = this, p = g.player;
+    if (g.demo || g.state !== 'play' || g.phase !== 'race' || g.playerDone || p.rw || p.rewind <= 0) return;
+    if (p.hist.length < Math.round(C.REWIND_MIN / C.HIST_DT) + 1) {
+      floatText(g, p.x, p.y - 16, 'TOO SOON', PAL.silver);
+      RR.audio.sfx('deny');
+      return;
+    }
+    p.rewind = 0;
+    const pts = p.hist.slice();
+    pts.push({ x: p.x, y: p.y, angle: p.angle }); // the way back starts from where we are now
+    p.rw = {
+      t: 0, dur: C.REWIND_DUR, pts: pts, tgt: p.hist[0], u: 0, f: pts.length - 1,
+      span: (p.hist.length - 1) * C.HIST_DT, hpWas: p.dead > 0 ? 0 : p.hp,
+    };
+    // `dead` makes every other system (collisions, pickups, gates, weapons) ignore the ghost
+    p.dead = 1e9; p.vx = p.vy = 0; p.angVel = 0; p.thrusting = 0;
+    g.flash = 0.3; g.msg = null;
+    ringFx(g, p.x, p.y, 8, 40, 0.35, PAL.violet);
+    RR.audio.sfx('rewind');
+    RR.audio.music({ tempo: 0.5 });
+    RR.input.buzz(60);
+  };
+
+  function stepRewind(s, g, dt) {
+    const r = s.rw;
+    r.t += dt;
+    const k = clamp(r.t / r.dur, 0, 1);
+    r.u = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2; // ease in and out: how far back, 0..1
+    r.f = (1 - r.u) * (r.pts.length - 1);
+    const at = pathAt(r.pts, r.f);
+    s.x = at.x; s.y = at.y; s.angle = at.angle;
+    if (Math.random() < 0.7) {
+      part(g, s.x + (Math.random() - 0.5) * 8, s.y + (Math.random() - 0.5) * 8,
+        (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, 0.35 + Math.random() * 0.3, 2, FX.ion, 1, 0);
+    }
+    if (k >= 1) finishRewind(s, g);
+  }
+
+  function finishRewind(s, g) {
+    const r = s.rw, t = r.tgt;
+    s.rw = null;
+    s.x = t.x; s.y = t.y; s.vx = t.vx; s.vy = t.vy; s.angle = t.angle; s.angVel = t.angVel;
+    s.hp = Math.max(t.hp, r.hpWas); // undo the damage, but never lose a repair picked up since
+    s.nextCp = t.nextCp; s.cpCount = t.cpCount; s.lap = t.lap; s.lapStart = t.lapStart;
+    s.lapTimes.length = t.nLaps; s.bestLap = t.bestLap; // gates and laps passed in the meantime don't count
+    s.dead = 0; s.stun = 0; s.emp = 0; s.invuln = C.REWIND_INVULN;
+    s.hist.length = 0; s.histT = 0;
+    g.cam.x = s.x; g.cam.y = s.y;
+    g.flash = 0.4;
+    burst(g, s.x, s.y, 22, 160, FX.ion, 0.6);
+    ringFx(g, s.x, s.y, 30, 6, 0.3, PAL.cyan);
+    ringFx(g, s.x, s.y, 4, 34, 0.4, PAL.violet);
+    banner(g, 'DO-OVER!', PAL.violet, 1.1, 4);
+    RR.audio.sfx('rewound');
+    RR.audio.music({ tempo: s.lap >= g.laps ? 1.12 : 1 });
+    RR.input.buzz(40);
+  }
+
+  /* --------------------------------------------------------------- zoom */
+
+  /**
+   * The world is drawn at a whole-number pixel scale, so zoom steps are
+   * whole-number changes from the base scale. Offsets are only offered while
+   * the view stays between half and double the normal size.
+   */
+  G.zoomLevels = function () {
+    const base = this.baseScale || 2, out = [];
+    for (let d = -2; d <= 2; d++) {
+      const sc = base + d, ratio = sc / base;
+      if (sc >= 1 && ratio >= 0.5 && ratio <= 2) out.push(d);
+    }
+    return out;
+  };
+  /** The zoom offset actually in effect (the saved one, clamped to what this screen allows). */
+  G.zoomEff = function () {
+    let best = 0, bd = 1e9;
+    for (const d of this.zoomLevels()) {
+      const x = Math.abs(d - this.zoomOffset);
+      if (x < bd) { bd = x; best = d; }
+    }
+    return best;
+  };
+  function toast(g, text) { g.toast = { text: text, t: 0, dur: 1.3 }; }
+  G.setZoom = function (off) {
+    if (off === this.zoomEff()) return false;
+    this.zoomOffset = off;
+    RR.resize();
+    toast(this, 'ZOOM ' + +this.zoomScale.toFixed(2) + 'X');
+    RR.audio.sfx('select');
+    save();
+    return true;
+  };
+  /** +1 = closer, -1 = wider. */
+  G.zoomBy = function (d) {
+    const lv = this.zoomLevels(), i = lv.indexOf(this.zoomEff()), j = clamp(i + d, 0, lv.length - 1);
+    if (j !== i) this.setZoom(lv[j]);
+    else toast(this, d > 0 ? 'MAX ZOOM' : 'WIDEST VIEW');
+  };
+  /** One-button zoom (Z key, touch button): normal -> wide -> close -> normal. */
+  G.zoomCycle = function () {
+    const ok = this.zoomLevels(), order = [0, -1, 1].filter(function (d) { return ok.indexOf(d) >= 0; });
+    const i = order.indexOf(this.zoomEff());
+    if (order.length > 1) this.setZoom(order[(i + 1) % order.length]);
+  };
 
   /* ------------------------------------------------------------- weapons */
 
@@ -616,8 +761,11 @@
     } else if (p.type === 'repair') {
       s.hp = Math.min(C.MAXHP, s.hp + 50);
       if (isP) RR.audio.sfx('power');
+    } else if (p.type === 'rewind') {
+      s.rewind = 1;
+      if (isP) { RR.audio.sfx('power'); banner(g, 'DO-OVER READY', PAL.violet, 1.6, 3); }
     }
-    burst(g, p.x, p.y, 12, 120, T.ammo ? FX.fire : FX.shield, 0.45);
+    burst(g, p.x, p.y, 12, 120, T.ammo ? FX.fire : p.type === 'rewind' ? FX.ion : FX.shield, 0.45);
     ringFx(g, p.x, p.y, 6, 20, 0.22, T.color);
     if (isP) floatText(g, p.x, p.y - 12, T.name, T.color);
   }
@@ -632,6 +780,8 @@
       }
       for (const s of g.ships) {
         if (s.dead > 0) continue;
+        // only the human can use a do-over, and only one at a time: otherwise leave it for later
+        if (p.type === 'rewind' && (s.ai || s.rewind > 0)) continue;
         const dx = s.x - p.x, dy = s.y - p.y;
         if (dx * dx + dy * dy < rr) { collect(s, p, g); break; }
       }
@@ -705,6 +855,7 @@
   /* --------------------------------------------------------------- ships */
 
   function updateShip(s, g, dt, racing) {
+    if (s.rw) { stepRewind(s, g, dt); return; }
     if (s.dead > 0) {
       s.dead -= dt;
       if (s.dead <= 0) respawn(s, g);
@@ -898,6 +1049,7 @@
   function rank(g) {
     const cps = g.track.cps;
     for (const s of g.ships) {
+      if (s.rw) continue; // a ship being rewound keeps its place until it lands
       const cp = cps[s.nextCp];
       const seg = s.cpCount === 0 ? 420 : cp.segLen;
       s.progress = s.cpCount + (1 - clamp(Math.hypot(cp.x - s.x, cp.y - s.y) / seg, 0, 1)) * 0.999;
@@ -917,7 +1069,7 @@
     let best = null, bestLat = 48;
     for (const p of g.pickups) {
       if (!p.on) continue;
-      if (p.kind === 'W' ? !!s.weapon : (p.type === 'repair' && s.hp > 80) || (p.type === 'shield' && s.shield > 0)) continue;
+      if (p.kind === 'W' ? !!s.weapon : p.type === 'rewind' || (p.type === 'repair' && s.hp > 80) || (p.type === 'shield' && s.shield > 0)) continue;
       const px = p.x - s.x, py = p.y - s.y, along = px * ux + py * uy;
       if (along < 24 || along > Math.min(dist, 280)) continue;
       const lat = Math.abs(px * uy - py * ux);
@@ -1059,8 +1211,13 @@
 
   function updateCamera(g, dt) {
     const f = g.player;
+    if (f.rw) { // the ghost moves too fast for a smoothed camera
+      g.cam.x = f.x; g.cam.y = f.y;
+      g.shake *= Math.exp(-9 * dt);
+      return;
+    }
     let lx = f.vx * 0.36, ly = f.vy * 0.36;
-    const max = Math.min(g.W, g.H) * 0.27, m = Math.hypot(lx, ly);
+    const max = Math.min(g.vw, g.vh) * 0.27, m = Math.hypot(lx, ly);
     if (m > max) { lx *= max / m; ly *= max / m; }
     const k = 1 - Math.exp(-(f.dead > 0 ? 2 : 4.5) * dt);
     g.cam.x += (f.x + lx - g.cam.x) * k;
@@ -1094,6 +1251,7 @@
 
     // "wrong way" when the player keeps flying away from the next gate
     const p = g.player;
+    if (!g.demo && racing && !p.rw && p.dead <= 0 && !g.playerDone) recordHistory(p, dt);
     if (!g.demo && racing && p.dead <= 0) {
       const cp = g.track.cps[p.nextCp], dx = cp.x - p.x, dy = cp.y - p.y;
       const sp = Math.hypot(p.vx, p.vy), d = Math.hypot(dx, dy) || 1;
@@ -1132,6 +1290,9 @@
     const I = RR.input, hit = I.hit;
     if (hit.mute) { RR.audio.setMuted(!RR.audio.muted); save(); }
     if (hit.crt) { g.crt = !g.crt; applyCrt(); save(); }
+    if (hit.zoomIn) g.zoomBy(1);
+    if (hit.zoomOut) g.zoomBy(-1);
+    if (hit.zoom) g.zoomCycle();
 
     for (const tp of I.taps) {
       for (let k = g.ui.length - 1; k >= 0; k--) {
@@ -1152,6 +1313,7 @@
       if (hit.ok || hit.pause || hit.board || hit.fire) g.closeBoard();
     } else if (g.state === 'play') {
       if (hit.pause) g.pause();
+      else if (hit.rewind) g.tryRewind();
     } else if (g.state === 'paused') {
       if (hit.pause || hit.ok) g.resume();
       else if (hit.restart) g.begin();
@@ -1166,7 +1328,8 @@
   G.frame = function (dt) {
     const g = this, I = RR.input;
     I.updateTouch(g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null);
-    if (!I.typing) handleUI(g);
+    if (!I.typing) { I.pollPad(); handleUI(g); }
+    if (g.toast) { g.toast.t += dt; if (g.toast.t >= g.toast.dur) g.toast = null; }
 
     g.acc += dt;
     let n = 0;

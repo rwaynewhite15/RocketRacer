@@ -234,6 +234,17 @@
       '.VV...VV.',
       '...VVV...',
     ],
+    rewind: [ // the "rewind" double arrow: light on top, violet below
+      '....c...c',
+      '...cc..cc',
+      '..ccc.ccc',
+      '.cccccccc',
+      'wwwwwwwww',
+      '.VVVVVVVV',
+      '..VVV.VVV',
+      '...VV..VV',
+      '....V...V',
+    ],
   };
 
   function pickupSprite(icon, light, mid, dark) {
@@ -650,9 +661,11 @@
     Object.keys(ICONS).forEach(function (k) {
       Art.icons[k] = sprite(ICONS[k]);
       const power = k === 'nitro' || k === 'shield' || k === 'repair';
-      Art.pickups[k] = power
-        ? pickupSprite(Art.icons[k], '#c8f58a', '#38b764', '#0f2a1c')
-        : pickupSprite(Art.icons[k], '#ffb38a', '#e5404f', '#2e1019');
+      Art.pickups[k] = k === 'rewind'
+        ? pickupSprite(Art.icons[k], '#e6c0ff', '#a855f7', '#1d0f3d')
+        : power
+          ? pickupSprite(Art.icons[k], '#c8f58a', '#38b764', '#0f2a1c')
+          : pickupSprite(Art.icons[k], '#ffb38a', '#e5404f', '#2e1019');
     });
 
     Art.mine = [

@@ -29,6 +29,8 @@
     Escape: 'pause', KeyP: 'pause',
     KeyM: 'mute', KeyC: 'crt', KeyR: 'restart', KeyQ: 'quit',
     KeyN: 'name', KeyT: 'board', KeyF: 'full',
+    KeyE: 'rewind', ShiftLeft: 'rewind', ShiftRight: 'rewind',
+    KeyZ: 'zoom', Equal: 'zoomIn', NumpadAdd: 'zoomIn', Minus: 'zoomOut', NumpadSubtract: 'zoomOut',
   };
 
   window.addEventListener('keydown', function (e) {
@@ -90,6 +92,15 @@
     canvas.addEventListener('pointerup', up);
     canvas.addEventListener('pointercancel', up);
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    // mouse wheel / trackpad scroll zooms, one step per flick
+    let wheelAt = 0;
+    canvas.addEventListener('wheel', function (e) {
+      e.preventDefault();
+      const now = performance.now();
+      if (now - wheelAt < 180 || !e.deltaY) return;
+      wheelAt = now;
+      I.hit[e.deltaY < 0 ? 'zoomIn' : 'zoomOut'] = true;
+    }, { passive: false });
   };
 
   function inside(x, y, r, pad) {
@@ -142,6 +153,18 @@
     return null;
   }
   function btn(p, i) { return !!(p.buttons[i] && p.buttons[i].pressed); }
+
+  /** Gamepad buttons that act once per press, folded into the same `hit` flags as keys. */
+  const PAD_ACTIONS = { rewind: [3, 4], zoom: [8], pause: [9] };
+  const padWas = {};
+  I.pollPad = function () {
+    const p = pad();
+    for (const name in PAD_ACTIONS) {
+      const now = !!p && PAD_ACTIONS[name].some(function (b) { return btn(p, b); });
+      if (now && !padWas[name]) I.hit[name] = true;
+      padWas[name] = now;
+    }
+  };
 
   /** Player controls. `ship` is needed to turn the stick heading into a turn rate. */
   I.read = function (ship) {

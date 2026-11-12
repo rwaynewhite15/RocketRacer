@@ -25,8 +25,9 @@ body {
   overflow: hidden;
 }
 
-/* The canvas is scaled by a whole number, so keep every pixel a hard square. */
-#screen {
+/* The canvases are scaled by whole numbers, so keep every pixel a hard square. */
+#screen,
+#hud {
   position: absolute;
   top: 0;
   left: 0;
@@ -36,6 +37,10 @@ body {
   image-rendering: pixelated;
   touch-action: none;
   cursor: crosshair;
+}
+
+#screen {
+  pointer-events: none;
 }
 
 /* CRT glass: one dark line per game-pixel row, plus a soft vignette. */

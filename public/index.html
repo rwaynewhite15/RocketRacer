@@ -17,7 +17,9 @@
 </head>
 <body>
   <div id="stage">
-    <canvas id="screen" width="640" height="360" aria-label="Rocket Racer game"></canvas>
+    <!-- world layer (zooms) under a HUD layer (constant size); the HUD layer takes the input -->
+    <canvas id="screen" width="640" height="360" aria-hidden="true"></canvas>
+    <canvas id="hud" width="640" height="360" aria-label="Rocket Racer game"></canvas>
     <div id="crt" aria-hidden="true"></div>
   </div>
 

@@ -1,19 +1,33 @@
 /* ==========================================================================
  * ROCKET RACER — main.js
- * Boot: size the canvas to whole-number pixel scaling, then run the loop.
+ * Boot: size the two canvas layers to whole-number pixel scaling, then run
+ * the loop.
  *
- * The game renders at a low "virtual" resolution and the browser scales it
- * up by an exact integer factor, so every game pixel is a crisp square block
- * on any display. Phones get chunkier pixels than desktops so the action
- * and the text stay readable on a small screen.
+ *   #screen  the world. Its pixel size changes with the zoom level.
+ *   #hud     menus, HUD and touch controls. Always the base pixel size,
+ *            so text stays readable however far you zoom.
+ *
+ * The base scale is chosen so the short side of the screen is about 380 game
+ * pixels (270 on phones). Zooming moves the world layer to a neighbouring
+ * whole-number scale, so every game pixel is still a crisp square block.
  * ======================================================================== */
 (function () {
   'use strict';
 
   const RR = window.RR, G = RR.game;
-  const canvas = document.getElementById('screen');
+  const world = document.getElementById('screen');
+  const hud = document.getElementById('hud');
   const probe = document.getElementById('probe');
-  const ctx = canvas.getContext('2d', { alpha: false });
+  const wctx = world.getContext('2d', { alpha: false });
+  const hctx = hud.getContext('2d');
+
+  function fit(canvas, ctx, w, h, scale, dpr) {
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+    canvas.style.width = (w * scale) / dpr + 'px';
+    canvas.style.height = (h * scale) / dpr + 'px';
+    ctx.imageSmoothingEnabled = false;
+  }
 
   function resize() {
     const dpr = window.devicePixelRatio || 1;
@@ -21,27 +35,29 @@
     const pw = Math.max(1, Math.floor(cw * dpr)), ph = Math.max(1, Math.floor(ch * dpr));
     // game pixels along the short side of the screen: ~270 on phones, ~380 otherwise
     const shortSide = Math.min(cw, ch) < 520 ? 270 : 380;
-    const scale = Math.max(1, Math.round(Math.min(pw, ph) / shortSide));
-    const W = Math.ceil(pw / scale), H = Math.ceil(ph / scale);
-    if (canvas.width !== W) canvas.width = W;
-    if (canvas.height !== H) canvas.height = H;
-    canvas.style.width = (W * scale) / dpr + 'px';
-    canvas.style.height = (H * scale) / dpr + 'px';
-    ctx.imageSmoothingEnabled = false;
-    G.W = W; G.H = H;
+    const base = Math.max(1, Math.round(Math.min(pw, ph) / shortSide));
+    G.baseScale = base;
+    const zoomed = base + G.zoomEff(); // world pixel scale at the current zoom level
+
+    const W = Math.ceil(pw / base), H = Math.ceil(ph / base);
+    const vw = Math.ceil(pw / zoomed), vh = Math.ceil(ph / zoomed);
+    fit(hud, hctx, W, H, base, dpr);
+    fit(world, wctx, vw, vh, zoomed, dpr);
+    G.W = W; G.H = H; G.vw = vw; G.vh = vh; G.zoomScale = zoomed / base;
 
     // notch / home-indicator margins, measured through CSS env() on #probe
     if (probe) {
-      const cs = window.getComputedStyle(probe), k = dpr / scale;
+      const cs = window.getComputedStyle(probe), k = dpr / base;
       const px = function (v) { return Math.ceil((parseFloat(v) || 0) * k); };
       G.inset.l = px(cs.paddingLeft); G.inset.t = px(cs.paddingTop);
       G.inset.r = px(cs.paddingRight); G.inset.b = px(cs.paddingBottom);
     }
 
-    // scanline pitch follows the size of one game pixel
-    document.documentElement.style.setProperty('--px', scale / dpr + 'px');
-    document.body.classList.toggle('tinypx', scale < 2);
+    // scanline pitch follows the size of one HUD pixel
+    document.documentElement.style.setProperty('--px', base / dpr + 'px');
+    document.body.classList.toggle('tinypx', base < 2);
   }
+  RR.resize = resize;
 
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', function () { window.setTimeout(resize, 120); });
@@ -58,16 +74,16 @@
     box.addEventListener('keydown', function (e) { if (e.key === 'Escape') G.closeName(false); });
   }
 
-  resize();
-  RR.input.attach(canvas);
-  G.init();
+  RR.input.attach(hud);
+  G.init(); // loads the saved zoom level...
+  resize(); // ...which sizes the layers
 
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
     last = now;
     G.frame(dt);
-    G.render(ctx);
+    G.render(wctx, hctx);
     window.requestAnimationFrame(frame);
   }
   window.requestAnimationFrame(frame);

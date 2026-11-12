@@ -75,6 +75,7 @@
       home: { x: ins.l + 58, y: H - ins.b - 58 },
       fire: { x: fx, y: fy, w: fs, h: fs },
       brake: { x: fx - bs - 8, y: H - ins.b - m - bs, w: bs, h: bs },
+      rewind: { x: fx + fs - 44, y: fy - 54, w: 44, h: 44 }, // shown only while a do-over is held
     };
   };
 
@@ -92,6 +93,39 @@
       ctx.fillStyle = r[k];
       ctx.fillRect(sx - (sz >> 1), sy - (sz >> 1), sz, sz);
     }
+  }
+
+  /** The player's ghost during a do-over: dotted path still to unwind, echoes, a ringed silhouette. */
+  function drawRewindGhost(g, ctx, s, cx, cy, W, H) {
+    const r = s.rw, pts = r.pts, n = pts.length, f = r.f;
+    ctx.fillStyle = PAL.violet;
+    for (let i = Math.ceil(f); i < n; i++) {
+      const x = Math.round(pts[i].x - cx), y = Math.round(pts[i].y - cy);
+      if (x > -4 && y > -4 && x < W + 4 && y < H + 4) ctx.fillRect(x - 1, y - 1, 2, 2);
+    }
+    for (let e = 3; e >= 1; e--) { // echoes trailing back towards the present
+      const at = RR.pathAt(pts, Math.min(n - 1, f + e * 1.8));
+      ctx.globalAlpha = 0.14 * (4 - e);
+      RR.drawRot(ctx, s.ghost, at.x - cx, at.y - cy, at.angle + Math.PI / 2);
+    }
+    glow(ctx, s.x - cx, s.y - cy, 16, '#a98bff'); // (resets the alpha)
+    ctx.globalAlpha = 0.9;
+    RR.drawRot(ctx, s.ghost, s.x - cx, s.y - cy, s.angle + Math.PI / 2);
+    ctx.globalAlpha = 1;
+    RR.ring(ctx, s.x - cx, s.y - cy, 15, PAL.cyan, 8, -g.t * 12);
+  }
+
+  /** Worn-tape look for the whole world while rewinding: torn bands, violet wash, scanlines. */
+  function drawRewindOverlay(g, ctx, W, H) {
+    for (let i = 0; i < 5; i++) {
+      const y = Math.floor(Math.random() * H), h = 1 + Math.floor(Math.random() * 5);
+      const dx = Math.round((Math.random() - 0.5) * 18);
+      ctx.drawImage(ctx.canvas, 0, y, W, h, dx, y, W, h);
+    }
+    ctx.fillStyle = 'rgba(110,70,255,0.16)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    for (let y = Math.floor(g.t * 40) % 3; y < H; y += 3) ctx.fillRect(0, y, W, 1);
   }
 
   function drawWorld(g, ctx, W, H) {
@@ -157,8 +191,19 @@
       if (!pk.on) continue;
       const sx = Math.round(pk.x - cx), sy = Math.round(pk.y - cy + Math.sin(g.t * 3 + pk.ph) * 2);
       if (!vis(sx, sy, 20)) continue;
-      glow(ctx, sx, sy, 17, pk.kind === 'W' ? '#e5404f' : '#38b764');
+      glow(ctx, sx, sy, 17, pk.kind === 'W' ? '#e5404f' : pk.type === 'rewind' ? '#a855f7' : '#38b764');
       ctx.drawImage(Art.pickups[pk.type], sx - 8, sy - 8);
+    }
+
+    /* while holding a do-over: a faint ghost where it would put you back */
+    if (!g.demo && p.rewind > 0 && !p.rw && p.dead <= 0 && !g.playerDone && p.hist.length > 10) {
+      const t = p.hist[0], sx = t.x - cx, sy = t.y - cy;
+      if (vis(sx, sy, 24)) {
+        ctx.globalAlpha = 0.3 + 0.12 * Math.sin(g.t * 6);
+        RR.drawRot(ctx, p.ghost, sx, sy, t.angle + Math.PI / 2);
+        ctx.globalAlpha = 1;
+        RR.ring(ctx, sx, sy, 15, PAL.violet, 8, g.t * 5);
+      }
     }
 
     /* mines */
@@ -198,6 +243,7 @@
 
     /* ships */
     for (const s of g.ships) {
+      if (s.rw) { drawRewindGhost(g, ctx, s, cx, cy, W, H); continue; }
       if (s.dead > 0) continue;
       const sx = s.x - cx, sy = s.y - cy;
       if (!vis(sx, sy, 30)) continue;
@@ -256,6 +302,7 @@
       }
     }
 
+    if (p.rw) drawRewindOverlay(g, ctx, W, H);
     if (g.flash > 0) {
       ctx.fillStyle = 'rgba(255,255,255,' + Math.min(0.6, g.flash).toFixed(3) + ')';
       ctx.fillRect(0, 0, W, H);
@@ -277,7 +324,7 @@
     }
     for (let i = g.ships.length - 1; i >= 0; i--) {
       const s = g.ships[i];
-      if (s.dead > 0) continue;
+      if (s.dead > 0 && !s.rw) continue;
       const x = Math.round(mx + s.x * mm.s + mm.ox), y = Math.round(my + s.y * mm.s + mm.oy);
       if (i === 0) { ctx.fillStyle = PAL.white; ctx.fillRect(x - 2, y - 2, 5, 5); }
       ctx.fillStyle = s.colors.a;
@@ -309,7 +356,7 @@
     /* hull + speed */
     const hx = L, hy = touch ? Tp + 38 : B - 28;
     panel(ctx, hx, hy, 104, 28);
-    const hull = p.dead > 0 ? 0 : p.hp / C.MAXHP;
+    const hull = p.dead > 0 && !p.rw ? 0 : p.hp / C.MAXHP;
     const low = hull < 0.3 && Math.floor(T * 8) & 1;
     text(ctx, 'HULL', hx + 6, hy + 5, low ? PAL.alarm : PAL.silver);
     bar(ctx, hx + 33, hy + 5, 13, hull, hull > 0.55 ? PAL.lime : hull > 0.3 ? PAL.yellow : PAL.alarm);
@@ -318,6 +365,13 @@
 
     /* weapon slot (keyboard play; on touch the FIRE button shows it) */
     if (!touch) {
+      const rx = Rr - 72, ry = B - 34, held = p.rewind > 0;
+      panel(ctx, rx, ry, 34, 34, held ? (Math.floor(T * 4) & 1 ? PAL.white : PAL.violet) : PAL.slate);
+      if (!held) ctx.globalAlpha = 0.3;
+      ctx.drawImage(Art.icons.rewind, rx + 8, ry + 4, 18, 18);
+      ctx.globalAlpha = 1;
+      text(ctx, 'E', rx + 17, ry + 25, held ? PAL.white : PAL.steel, 1, 'center');
+      if (held) text(ctx, 'DO-OVER', rx + 33, ry - 10, PAL.violet, 1, 'right', PAL.ink);
       const wx = Rr - 34, wy = B - 34;
       panel(ctx, wx, wy, 34, 34, p.weapon ? RR.ITEMS[p.weapon].color : PAL.slate);
       if (p.weapon) {
@@ -331,7 +385,7 @@
     }
 
     /* active power-up timers */
-    let ey = touch ? hy + 33 : B - 12;
+    let ey = touch ? hy + 33 : B - 58;
     const ex = touch ? L + 2 : Rr - 100;
     if (p.shield > 0) {
       ctx.drawImage(Art.icons.shield, ex, ey - 1);
@@ -345,7 +399,11 @@
 
     /* big centre messages */
     const my = Math.round(H * (narrow ? 0.3 : 0.24));
-    if (g.phase === 'countdown') {
+    if (p.rw) {
+      const sc = W < 300 ? 2 : 3;
+      if (Math.floor(T * 8) & 1) text(ctx, '<< REWIND <<', W / 2, my, PAL.violet, sc, 'center', PAL.ink);
+      text(ctx, '-' + (p.rw.span * (1 - p.rw.u)).toFixed(1) + 'S', W / 2, my + sc * 9 + 4, PAL.cyan, 2, 'center', PAL.ink);
+    } else if (g.phase === 'countdown') {
       const n = Math.ceil(g.count);
       if (n > 3) text(ctx, 'READY', W / 2, my + 8, PAL.white, 4, 'center', PAL.ink);
       else text(ctx, String(n), W / 2, my - 6, [PAL.lime, PAL.lime, PAL.yellow, PAL.alarm][n], 8, 'center', PAL.ink);
@@ -367,10 +425,12 @@
       if (p.out) text(ctx, 'RETURN TO THE COURSE!', W / 2, H * 0.64, PAL.alarm, 1, 'center', PAL.ink);
       else if (p.wrong > 1.1) text(ctx, 'WRONG WAY!', W / 2, H * 0.64, PAL.alarm, 2, 'center', PAL.ink);
     }
-    if (p.dead > 0 && g.state === 'play') text(ctx, 'RESPAWNING', W / 2, H * 0.5, PAL.silver, 1, 'center', PAL.ink);
+    if (p.dead > 0 && !p.rw && g.state === 'play') text(ctx, 'RESPAWNING', W / 2, H * 0.5, PAL.silver, 1, 'center', PAL.ink);
 
     if (touch && g.state === 'play') {
-      button(g, ctx, 'II', Rr - 26, narrow ? cy + 40 : Tp + mm.h + 8, 26, 18, function () { g.pause(); });
+      const by = narrow ? cy + 40 : Tp + mm.h + 8;
+      button(g, ctx, 'II', Rr - 26, by, 26, 18, function () { g.pause(); });
+      button(g, ctx, 'ZOOM', Rr - 64, by, 34, 18, function () { g.zoomCycle(); }, PAL.cyan);
     }
   }
 
@@ -405,6 +465,14 @@
     }
     key(L.brake, t.brake, PAL.steel);
     text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.silver, 1, 'center');
+
+    if (p.rewind > 0 && !p.rw) {
+      const r = L.rewind;
+      panel(ctx, r.x, r.y, r.w, r.h, Math.floor(g.t * 4) & 1 ? PAL.white : PAL.violet);
+      ctx.drawImage(Art.icons.rewind, r.x + 13, r.y + 6, 18, 18);
+      text(ctx, 'DO-OVER', r.x + r.w / 2, r.y + 31, PAL.violet, 1, 'center');
+      g.ui.push({ x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8, act: function () { g.tryRewind(); } });
+    }
   }
 
   /* ------------------------------------------------------------ overlays */
@@ -511,11 +579,11 @@
       text(ctx, 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
     } else if (W >= 440) {
-      text(ctx, 'ARROWS / WASD  FLY     SPACE  FIRE     P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, 'FLY THROUGH EVERY DONUT IN ORDER     M  MUTE     C  CRT FILTER', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
+      text(ctx, 'ARROWS / WASD  FLY    SPACE  FIRE    E  DO-OVER    P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'Z OR WHEEL  ZOOM    M  MUTE    C  CRT FILTER    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     } else {
-      text(ctx, 'ARROWS/WASD FLY - SPACE FIRE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, 'P PAUSE - M MUTE - C CRT', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
+      text(ctx, 'ARROWS/WASD FLY - SPACE FIRE - E REWIND', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'Z ZOOM - P PAUSE - M MUTE - C CRT', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     }
   }
 
@@ -611,15 +679,19 @@
 
   /* ---------------------------------------------------------------- frame */
 
-  G.render = function (ctx) {
+  G.render = function (wctx, hctx) {
     const g = this, W = g.W, H = g.H;
     g.ui.length = 0;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.globalCompositeOperation = 'source-over';
-    ctx.imageSmoothingEnabled = false;
+    [wctx, hctx].forEach(function (c) {
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.globalAlpha = 1;
+      c.globalCompositeOperation = 'source-over';
+      c.imageSmoothingEnabled = false;
+    });
 
-    drawWorld(g, ctx, W, H);
+    drawWorld(g, wctx, g.vw, g.vh); // zoomable layer underneath
+    const ctx = hctx; // HUD layer on top: same pixel size at every zoom
+    ctx.clearRect(0, 0, W, H);
     if (g.state === 'title') drawTitle(g, ctx, W, H);
     else if (g.state === 'board') drawBoard(g, ctx, W, H);
     else {
@@ -627,6 +699,11 @@
       if (RR.input.touchMode && g.state === 'play') drawTouch(g, ctx, W, H);
       if (g.state === 'paused') drawPause(g, ctx, W, H);
       else if (g.state === 'results') drawResults(g, ctx, W, H);
+    }
+    if (g.toast && (g.toast.t < g.toast.dur - 0.3 || Math.floor(g.t * 16) & 1)) {
+      // on touch screens the bottom corners belong to the buttons, so float it higher
+      const ty = RR.input.touchMode ? Math.round(H * 0.7) : H - 40 - g.inset.b;
+      text(ctx, g.toast.text, W / 2, ty, PAL.cyan, 2, 'center', PAL.ink);
     }
     if (RR.audio.muted && g.state !== 'play') text(ctx, 'SOUND OFF', W / 2, H - 9 - g.inset.b, PAL.steel, 1, 'center', PAL.ink);
   };

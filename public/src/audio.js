@@ -120,6 +120,17 @@
       arp('triangle', [131, 131, 131, 165, 196, 165, 196, 262], 0.11, 0.16, 0.3 * v);
     },
     lose: function (v) { arp('square', [392, 330, 262, 196], 0.14, 0.2, 0.16 * v); },
+    // tape winding back: a fast rising whirr with a hiss on top
+    rewind: function (v) {
+      tone('sawtooth', 160, 1700, 0.85, 0.1 * v);
+      tone(pulse12, 320, 3200, 0.85, 0.05 * v);
+      noise(0.85, 0.12 * v, 500, 5000, 0, 'bandpass');
+    },
+    rewound: function (v) {
+      arp(pulse25, [1319, 988, 1319, 1760], 0.05, 0.12, 0.17 * v);
+      tone('triangle', 330, 82, 0.35, 0.3 * v);
+    },
+    deny: function (v) { tone('square', 196, 130, 0.14, 0.15 * v); },
   };
 
   const lastPlayed = {};
