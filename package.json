@@ -1,0 +1,18 @@
+{
+  "name": "rocket-racer",
+  "version": "1.0.0",
+  "description": "Rocket Racer - an 8-bit rocket race around planets and asteroids, with a Cloud Run + Firestore leaderboard backend",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "STORE=memory node server.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^7.11.0"
+  }
+}

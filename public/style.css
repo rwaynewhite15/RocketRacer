@@ -1,0 +1,177 @@
+:root {
+  --px: 3px; /* on-screen size of one game pixel; set from main.js */
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #07071a;
+  overscroll-behavior: none;
+}
+
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* The canvases are scaled by whole numbers, so keep every pixel a hard square. */
+#screen,
+#hud {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+  touch-action: none;
+  cursor: crosshair;
+}
+
+#screen {
+  pointer-events: none;
+}
+
+/* CRT glass: one dark line per game-pixel row, plus a soft vignette. */
+#crt {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 58%, rgba(0, 0, 0, 0.34) 100%),
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0) 0,
+      rgba(0, 0, 0, 0) calc(var(--px) * 0.67),
+      rgba(0, 0, 0, 0.17) calc(var(--px) * 0.67),
+      rgba(0, 0, 0, 0.17) var(--px)
+    );
+}
+
+/* Scanlines turn to mush when game pixels are a single device pixel. */
+body.tinypx #crt {
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 58%, rgba(0, 0, 0, 0.34) 100%);
+}
+
+body.nocrt #crt {
+  display: none;
+}
+
+noscript {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: #f4f4f4;
+  font: 16px/1.4 monospace;
+}
+
+/* Zero-size element whose padding reports the device's safe-area insets. */
+#probe {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  visibility: hidden;
+  pointer-events: none;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px)
+    env(safe-area-inset-left, 0px);
+}
+
+/* Pilot-name dialog: plain HTML so phones can bring up their keyboard. */
+#namebox {
+  position: fixed;
+  left: 50%;
+  top: 22%;
+  transform: translateX(-50%);
+  z-index: 10;
+  box-sizing: border-box;
+  width: min(92vw, 340px);
+  padding: 18px 18px 16px;
+  background: #0d0d26;
+  border: 3px solid #ff6fb5;
+  box-shadow: 6px 6px 0 #1a1c2c, 0 0 0 100vmax rgba(7, 7, 26, 0.72);
+  color: #f4f4f4;
+  font: 700 15px/1.3 ui-monospace, "SF Mono", Menlo, Consolas, "Courier New", monospace;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+#namebox[hidden] {
+  display: none;
+}
+
+#namebox label {
+  display: block;
+  margin-bottom: 10px;
+  color: #ffcd75;
+}
+
+#namebox input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px 8px;
+  background: #07071a;
+  border: 3px solid #41a6f6;
+  border-radius: 0;
+  color: #73eff7;
+  font: inherit;
+  font-size: 22px; /* 16px+ stops iOS zooming the page on focus */
+  letter-spacing: 0.14em;
+  text-align: center;
+  text-transform: uppercase;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+#namebox input:focus {
+  border-color: #ffcd75;
+}
+
+#namebox p {
+  margin: 10px 0 14px;
+  color: #94b0c2;
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+
+#namebox .row {
+  display: flex;
+  gap: 10px;
+}
+
+#namebox button {
+  flex: 1;
+  min-height: 44px;
+  padding: 8px;
+  background: #1a1c2c;
+  border: 3px solid #a7f070;
+  border-radius: 0;
+  color: #a7f070;
+  font: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+#namebox button[type="button"] {
+  border-color: #566c86;
+  color: #94b0c2;
+}
+
+#namebox button:active {
+  background: #333c57;
+}

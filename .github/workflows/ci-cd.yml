@@ -1,0 +1,150 @@
+name: CI/CD
+
+# Pull request      -> Test                                  (no cloud access)
+# Push to main      -> Test -> Staging -> Production
+# "Run workflow"    -> on main: the same full release
+#                      on any other branch: Test -> Staging only, to try a
+#                      branch on the staging site before merging it
+#
+# Staging and production are two Cloud Run services in one project. The image
+# is built once, proven on staging, and that exact image is what production
+# gets. Each rollout is: deploy a revision with NO traffic -> smoke-test it ->
+# only then switch traffic (tools/ci-deploy.sh). A failed check leaves the
+# previous revision serving.
+#
+# One-time Google Cloud setup: tools/setup-cicd.sh. It prints the repository
+# variables used below (Settings > Secrets and variables > Actions >
+# Variables). There are no secrets or stored keys.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PROJECT: ${{ vars.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Syntax check
+        run: |
+          for f in server.js lib/*.js public/src/*.js tools/*.js; do node --check "$f"; done
+          for f in deploy.sh tools/*.sh; do bash -n "$f"; done
+
+      # Playwright is only needed by the tests, so it is not a dependency of the app.
+      - name: Install a browser for the game tests
+        run: |
+          npm install --no-save --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium
+
+      - name: API and game tests
+        run: npm test
+
+      - name: Build the container and check that it boots
+        run: |
+          docker build -t rocketracer:ci .
+          docker run -d --name rr -p 8080:8080 -e STORE=memory rocketracer:ci
+          for i in $(seq 1 20); do curl -fsS localhost:8080/api/health && break; sleep 1; done
+          curl -fsS localhost:8080/api/health | jq -e '.ok == true'
+          curl -fsS localhost:8080/ | grep -q 'Rocket Racer'
+          docker logs rr
+          docker rm -f rr
+
+  staging:
+    name: Deploy to staging
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write # lets the job prove its identity to Google
+    concurrency:
+      group: deploy-staging # one rollout at a time, never cancelled half-way
+      cancel-in-progress: false
+    environment:
+      name: staging
+      url: ${{ steps.rollout.outputs.url }}
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    env:
+      SERVICE: ${{ vars.STAGING_SERVICE || 'rocketracer-staging' }}
+      AR_REPO: ${{ vars.AR_REPO || 'rocketracer' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.STAGING_WIF_PROVIDER }}
+          service_account: ${{ vars.STAGING_DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Build and push the image
+        id: build
+        run: |
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          TAGGED="$REGION-docker.pkg.dev/$PROJECT/$AR_REPO/rocketracer:$GITHUB_SHA"
+          docker build -t "$TAGGED" .
+          docker push "$TAGGED"
+          # refer to it by digest from here on: a digest cannot be moved to different contents later
+          echo "image=$(docker inspect --format='{{index .RepoDigests 0}}' "$TAGGED")" >> "$GITHUB_OUTPUT"
+
+      - name: Roll out to staging
+        id: rollout
+        run: tools/ci-deploy.sh "$SERVICE" "${{ steps.build.outputs.image }}" staging
+
+  production:
+    name: Deploy to production
+    needs: staging
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    # To approve each production release by hand, add required reviewers to
+    # this environment (Settings > Environments > production).
+    environment:
+      name: production
+      url: ${{ steps.rollout.outputs.url }}
+    env:
+      SERVICE: ${{ vars.CLOUD_RUN_SERVICE || 'rocketracer' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Roll out the image staging just proved
+        id: rollout
+        run: tools/ci-deploy.sh "$SERVICE" "${{ needs.staging.outputs.image }}" production
