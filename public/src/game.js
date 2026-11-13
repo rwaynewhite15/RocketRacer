@@ -117,7 +117,7 @@
     cam: { x: 0, y: 0 }, shake: 0, flash: 0, msg: null, ui: [],
     best: {}, crt: true, newRecord: false,
     autoFull: true, wantFull: false, // full screen on phones (see G.fullscreen)
-    // touch controls the player has moved: { land|port: { steer|fire|brake|rewind: {x, y} } },
+    // touch controls the player has moved: { land|port: { fire|brake|rewind: {x, y} } },
     // as fractions of the screen so they survive other screen sizes (see RR.touchLayout)
     controls: {},
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
@@ -273,7 +273,7 @@
       x: slot.x, y: slot.y, vx: 0, vy: 0, angle: slot.a, angVel: 0,
       spawn: { x: slot.x, y: slot.y, a: slot.a },
       hp: lo.maxHp, shield: 0, nitro: 0, stun: 0, spinRate: 0, emp: 0, invuln: 0, dead: 0,
-      weapon: null, ammo: 0, cool: 0, prevFire: false,
+      weapon: null, ammo: 0, cool: 0, prevFire: false, stickHeld: false, stickAim: null, launch: null,
       nextCp: 0, cpCount: 0, lap: 0, lapStart: 0, lapTimes: [], bestLap: 0,
       finished: false, finishTime: 0, place: i + 1, progress: 0,
       input: { turn: 0, thrust: 0, brake: 0, fire: false },
@@ -424,7 +424,7 @@
 
   /* ------------------------------------------------- moving the controls */
 
-  const CONTROL_NAMES = ['steer', 'fire', 'brake', 'rewind'];
+  const CONTROL_NAMES = ['fire', 'brake', 'rewind']; // (steering is a drag anywhere, so it has no spot to move)
 
   /** Keep only well-formed saved positions (fractions of the screen). */
   function cleanControls(raw) {
@@ -471,7 +471,7 @@
       if (p.drag === undefined) {
         p.drag = null;
         for (const n of CONTROL_NAMES) {
-          const c = L.centre[n], reach = n === 'steer' || n === 'fire' ? L[n].grab : 30;
+          const c = L.centre[n], reach = n === 'fire' ? L.fire.grab : 30;
           if (Math.hypot(p.sx - c.x, p.sy - c.y) <= reach) { p.drag = n; p.ox = c.x - p.sx; p.oy = c.y - p.sy; break; }
         }
       }
@@ -853,6 +853,7 @@
   /* ------------------------------------------------------------- weapons */
 
   /** The rival a missile should chase: close, and near the line it is launched along. */
+  RR.pickTarget = function (s, g, ang) { return pickTarget(s, g, ang); }; // (the HUD marks the lock while aiming)
   function pickTarget(s, g, ang) {
     const a = ang === undefined ? s.angle : ang;
     const ca = Math.cos(a), sa = Math.sin(a);
@@ -869,14 +870,32 @@
     return best;
   }
 
+  /**
+   * Weapons. The blaster (and the combat cannon) is automatic: it fires all
+   * the time the trigger is held, straight ahead, or the way the fire stick is
+   * pushed. Missiles from the touch fire stick are aimed: hold the stick, push
+   * it the way to fire, and let go to launch (straight ahead if it was not
+   * pushed). Let go while the launcher is still reloading and the missile goes
+   * as soon as it is ready. Everything else fires once per press: missiles
+   * from a key or gamepad straight ahead, mines behind, EMP all round.
+   */
   function tryFire(s, g) {
-    const fire = s.input.fire, edge = fire && !s.prevFire;
+    const inp = s.input, fire = inp.fire, edge = fire && !s.prevFire;
     s.prevFire = fire;
     const w = s.weapon || (g.combat ? 'blaster' : null); // in combat every ship has a cannon
-    if (!fire || !w || s.cool > 0 || s.dead > 0 || s.stun > 0 || s.emp > 0) return;
-    if (w !== 'blaster' && !edge) return;
-    // blasts and missiles go where the fire stick aims (straight ahead without one)
-    const aim = s.input.aim != null ? s.input.aim : s.angle;
+    // the touch fire stick: remember where it last pointed, so letting go launches that way
+    const letGo = s.stickHeld && !inp.stick;
+    if (inp.stick) s.stickAim = inp.aim;
+    s.stickHeld = !!inp.stick;
+    if (w === 'missile' && letGo) s.launch = { aim: s.stickAim };
+    if (s.launch && (w !== 'missile' || s.dead > 0 || s.stun > 0 || s.emp > 0)) s.launch = null;
+    if (!w || s.cool > 0 || s.dead > 0 || s.stun > 0 || s.emp > 0) return;
+
+    let aim;
+    if (s.launch) { aim = s.launch.aim; s.launch = null; } // an aimed missile, let go
+    else if (w === 'blaster' ? fire : edge && !(w === 'missile' && inp.stick)) aim = inp.aim;
+    else return;
+    if (aim == null) aim = s.angle; // straight ahead
     const ca = Math.cos(aim), sa = Math.sin(aim);
 
     if (w === 'blaster') {
@@ -1708,7 +1727,7 @@
       else {
         const inp = RR.input.read(s);
         s.input.turn = inp.turn; s.input.thrust = inp.thrust; s.input.brake = inp.brake; s.input.fire = inp.fire;
-        s.input.aim = inp.aim;
+        s.input.aim = inp.aim; s.input.stick = inp.stick;
       }
       if (racing) tryFire(s, g);
       updateShip(s, g, dt, racing);
@@ -1812,7 +1831,7 @@
   /** Called once per animation frame with the real elapsed time. */
   G.frame = function (dt) {
     const g = this, I = RR.input;
-    I.updateTouch(g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null);
+    I.updateTouch(g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null, g.ui);
     if (g.state === 'layout') dragControls(g);
     if (!I.typing) { I.pollPad(); handleUI(g); }
     if (g.toast) { g.toast.t += dt; if (g.toast.t >= g.toast.dur) g.toast = null; }
