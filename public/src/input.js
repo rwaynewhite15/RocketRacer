@@ -1,7 +1,7 @@
 /* ==========================================================================
  * ROCKET RACER — input.js
  * Keyboard, touch and gamepad, folded into one small API:
- *   RR.input.read(ship)    -> { turn, thrust, brake, fire, aim } for the player
+ *   RR.input.read(ship)    -> { turn, thrust, brake, fire, aim, stick } for the player
  *   RR.input.hit[action]   -> true for the frame an action key went down
  *   RR.input.taps          -> pointer presses this frame, in game pixels
  *
@@ -11,9 +11,12 @@
  *               drag from where you started is the engine power, rising to
  *               full at DRAG_MAX. Past that the start point trails the thumb,
  *               so easing back always lowers the power straight away.
- *   fire stick  fixed in place (movable in Pause > Move controls). Push it
- *               any way to aim and fire that way, whatever way the rocket
- *               faces; hold it still in the middle to fire straight ahead.
+ *   fire stick  fixed in place (movable in Pause > Move controls). The
+ *               blaster is automatic: it fires all the time the stick is
+ *               held, straight ahead until the stick is pushed, then the way
+ *               it is pushed. Missiles are aimed: push the stick the way to
+ *               fire and let go to launch (let go without pushing: straight
+ *               ahead). Mines and EMP go off as the stick is touched.
  *   BRAKE       a button.
  * ======================================================================== */
 (function () {
@@ -236,8 +239,9 @@
       if (btn(p, 1) || btn(p, 6) || btn(p, 13)) brake = 1;
       if (btn(p, 2) || btn(p, 5)) fire = true;
     }
-    // aim: the direction the fire stick points, or null to fire straight ahead
-    return { turn: RR.clamp(turn, -1, 1), thrust: thrust, brake: brake, fire: fire, aim: t.aim };
+    // aim: the direction the fire stick points, or null to fire straight ahead;
+    // stick: a thumb is on the touch fire stick (aimed weapons fire as it lets go)
+    return { turn: RR.clamp(turn, -1, 1), thrust: thrust, brake: brake, fire: fire, aim: t.aim, stick: !!t.aimStick };
   };
 
   /** Short haptic tick on phones that support it. */

@@ -51,7 +51,7 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
 | | Keyboard | Phone / tablet |
 |---|---|---|
 | Fly | Arrow keys or WASD (turn, thrust, brake/reverse) | Touch anywhere and drag. The rocket heads the way you drag, and the farther you drag from where you started, the more engine power. A power meter appears by your thumb and fills to MAX (about a thumb's width of travel); ease back to throttle down, lift to coast |
-| Fire weapon | Space (or X / J): fires the way the rocket points | Fire stick: push it to aim and fire that way, or hold it in the middle to fire straight ahead. Blaster and missiles follow the aim; mines drop behind, EMP spreads all round |
+| Fire weapon | Space (or X / J): fires the way the rocket points; hold it for the blaster's automatic fire | Fire stick. Blaster: automatic, firing all the time you hold the stick, straight ahead until you drag it, then the way you drag. Missiles: hold the stick, drag the way to fire (a faint dashed line shows the aim and corner marks show the rival it will lock onto), and let go to launch; a quick tap launches straight ahead. Mines drop behind and EMP spreads all round as soon as you touch the stick |
 | Brake | Down / S | BRAKE button |
 | Do-over | E or Shift | DO-OVER button (appears while you hold one) |
 | Zoom | Z cycles normal / wide / close; + and - or the mouse wheel step through every level | ZOOM button |

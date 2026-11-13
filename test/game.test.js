@@ -847,54 +847,143 @@ test('touch: a power meter appears with the drag, fills as it lengthens, and top
   } finally { await ph.ctx.close(); }
 });
 
-test('touch: the fire stick aims blasts where it points, and fires straight ahead when held still', { skip }, async () => {
+test('touch: the blaster fires all the time the fire stick is held, straight ahead and then the way it is dragged', { skip }, async () => {
   const ph = await phoneRace();
   try {
     const f = (await ph.layout()).fire;
-    // blaster in hand, rocket pointing up and still: shots should follow the stick, not the nose
-    const arm = () => ph.page.evaluate(() => { const p = RR.game.player; p.weapon = 'blaster'; p.ammo = 99; p.angle = -Math.PI / 2; p.angVel = 0; p.vx = p.vy = 0; });
-    const lastBolt = () => ph.page.evaluate(() => {
-      const g = RR.game, me = g.player, b = g.shots.filter((s) => s.owner === me && s.type === 'bolt').pop();
-      return b ? { dir: Math.atan2(b.vy - me.vy * 0.5, b.vx - me.vx * 0.5), ship: me.angle, aim: RR.input.touch.aim } : null;
+    // note every bolt as it leaves, with the way it went (less the rocket's own drift)
+    await ph.page.evaluate(() => {
+      const g = RR.game, me = g.player, push = g.shots.push;
+      window.fired = [];
+      g.shots.push = function (b) {
+        if (b.owner === me) window.fired.push({ type: b.type, dir: b.type === 'bolt' ? Math.atan2(b.vy - me.vy * 0.5, b.vx - me.vx * 0.5) : b.angle, target: g.ships.indexOf(b.target), ship: me.angle });
+        return push.apply(this, arguments);
+      };
+      me.weapon = 'blaster'; me.ammo = 999; me.angle = -Math.PI / 2; me.angVel = 0; me.vx = me.vy = 0;
     });
-    await arm();
+    const fired = () => ph.page.evaluate(() => window.fired.slice());
+    const shown = () => ph.page.evaluate(() => RR.game.aimShown);
+
+    await ph.down([f.x + 1, f.y + 1]); // pressed and held, not dragged
+    await ph.page.waitForTimeout(500);
+    let b = await fired();
+    assert.ok(b.length >= 3, 'automatic: it keeps firing while held (' + b.length + ' shots)');
+    for (const x of b) assert.ok(angleGap(x.dir, x.ship) < 0.1, 'straight ahead while not dragged: ' + x.dir + ' vs ' + x.ship);
+    assert.strictEqual(await shown(), null, 'no aim line while firing straight ahead');
+
+    await ph.move([f.x - 30, f.y + 30]); // then dragged down and to the left, still held
+    await ph.page.waitForTimeout(400);
+    const after = (await fired()).slice(b.length + 2);
+    assert.ok(after.length >= 2, 'still firing after the drag');
+    for (const x of after) {
+      assert.ok(angleGap(x.dir, 3 * Math.PI / 4) < 0.1, 'the blasts go down-left: ' + x.dir);
+      assert.ok(angleGap(x.ship, -Math.PI / 2) < 0.2, 'while the rocket still points up');
+    }
+    const line = await shown();
+    assert.ok(line && line.weapon === 'blaster' && angleGap(line.ang, 3 * Math.PI / 4) < 0.05, 'a dashed aim line points down-left: ' + JSON.stringify(line));
+
+    await ph.up();
+    await ph.page.waitForTimeout(150);
+    const n = (await fired()).length;
+    await ph.page.waitForTimeout(400);
+    assert.strictEqual((await fired()).length, n, 'and stops when let go');
+    assert.strictEqual(await shown(), null, 'the aim line goes with it');
+    assert.deepStrictEqual(ph.errors, []);
+  } finally { await ph.ctx.close(); }
+});
+
+test('touch: missiles are aimed with a drag on the fire stick and launch on letting go; mines drop at once; keys still fire at once', { skip }, async () => {
+  const ph = await phoneRace();
+  try {
+    const f = (await ph.layout()).fire;
+    // a rival to the right and one straight ahead; the rest out of the way
+    const setup = (weapon, ammo) => ph.page.evaluate(([weapon, ammo]) => {
+      const g = RR.game, me = g.player, push = g.shots.push;
+      if (!window.fired) {
+        window.fired = [];
+        g.shots.push = function (b) {
+          if (b.owner === me) window.fired.push({ type: b.type, dir: b.angle, target: g.ships.indexOf(b.target), ship: me.angle });
+          return push.apply(this, arguments);
+        };
+      }
+      window.fired.length = 0;
+      me.weapon = weapon; me.ammo = ammo; me.cool = 0; me.angle = -Math.PI / 2; me.angVel = 0; me.vx = me.vy = 0;
+      const others = g.ships.filter((o) => o !== me);
+      others.forEach((o, i) => { o.vx = o.vy = 0; o.dead = i < 2 ? 0 : 100; });
+      Object.assign(others[0], { x: me.x + 230, y: me.y }); // right
+      Object.assign(others[1], { x: me.x, y: me.y - 230 }); // ahead
+      return { right: g.ships.indexOf(others[0]), ahead: g.ships.indexOf(others[1]) };
+    }, [weapon, ammo]);
+    const st = () => ph.page.evaluate(() => ({ fired: window.fired.slice(), ammo: RR.game.player.ammo, shown: RR.game.aimShown }));
+
+    // hold: nothing launches, and the line shows straight ahead, locked onto the rival there
+    let who = await setup('missile', 2);
+    await ph.down([f.x, f.y]);
+    await ph.page.waitForTimeout(350);
+    let r = await st();
+    assert.deepStrictEqual([r.fired.length, r.ammo], [0, 2], 'holding the stick does not launch');
+    assert.ok(r.shown && r.shown.weapon === 'missile' && angleGap(r.shown.ang, -Math.PI / 2) < 0.05, 'aim line straight ahead: ' + JSON.stringify(r.shown));
+    assert.strictEqual(r.shown.lock, who.ahead, 'marked: the rival ahead');
+
+    // drag right: still nothing, the line and the lock swing round
+    await ph.move([f.x + 32, f.y]);
+    await ph.page.waitForTimeout(300);
+    r = await st();
+    assert.deepStrictEqual([r.fired.length, r.ammo], [0, 2], 'dragging does not launch either');
+    assert.ok(angleGap(r.shown.ang, 0) < 0.05, 'aim line to the right: ' + r.shown.ang);
+    assert.strictEqual(r.shown.lock, who.right, 'marked: the rival to the right');
+
+    // let go: one missile, to the right, after that rival, though the rocket points up
+    await ph.up();
+    await ph.page.waitForTimeout(120);
+    r = await st();
+    assert.strictEqual(r.fired.length, 1, 'letting go launches');
+    assert.ok(angleGap(r.fired[0].dir, 0) < 0.05, 'launched to the right: ' + r.fired[0].dir);
+    assert.ok(angleGap(r.fired[0].ship, -Math.PI / 2) < 0.1, 'while the rocket points up');
+    assert.strictEqual(r.fired[0].target, who.right, 'locked onto the rival it was aimed at');
+    assert.strictEqual(r.ammo, 1);
+    assert.strictEqual(r.shown, null, 'the aim line is gone');
+
+    // a plain tap (no drag) launches straight ahead
+    who = await setup('missile', 2);
+    await ph.down([f.x, f.y]);
+    await ph.page.waitForTimeout(90);
+    await ph.up();
+    await ph.page.waitForTimeout(100);
+    r = await st();
+    assert.strictEqual(r.fired.length, 1, 'a tap launches');
+    assert.ok(angleGap(r.fired[0].dir, -Math.PI / 2) < 0.05, 'straight ahead: ' + r.fired[0].dir);
+    assert.strictEqual(r.fired[0].target, who.ahead);
+
+    // a second aimed launch let go while the launcher reloads still goes, once it is ready
     await ph.down([f.x, f.y]);
     await ph.page.waitForTimeout(60);
-    await ph.move([f.x - 30, f.y + 30]); // down and to the left
-    await ph.page.waitForTimeout(400);
-    let b = await lastBolt();
-    assert.ok(b, 'it fired');
-    assert.ok(angleGap(b.aim, 3 * Math.PI / 4) < 0.05, 'aiming down-left: ' + b.aim);
-    assert.ok(angleGap(b.dir, 3 * Math.PI / 4) < 0.1, 'the blast went down-left: ' + b.dir);
-    assert.ok(angleGap(b.ship, -Math.PI / 2) < 0.2, 'while the rocket still points up');
+    await ph.move([f.x + 32, f.y]);
+    await ph.page.waitForTimeout(60);
     await ph.up();
-    await ph.page.waitForTimeout(250);
+    await ph.page.waitForTimeout(600);
+    r = await st();
+    assert.strictEqual(r.fired.length, 2, 'the quick second missile was not lost');
+    assert.ok(angleGap(r.fired[1].dir, 0) < 0.05, 'and went the way it was aimed: ' + r.fired[1].dir);
+    assert.strictEqual(r.ammo, 0);
 
-    await arm();
-    await ph.down([f.x + 2, f.y + 1]); // a thumb resting in the middle
-    await ph.page.waitForTimeout(400);
-    b = await lastBolt();
-    assert.strictEqual(b.aim, null);
-    assert.ok(angleGap(b.dir, b.ship) < 0.1, 'straight ahead: ' + b.dir + ' vs ' + b.ship);
+    // mines drop as soon as the stick is touched, behind the rocket
+    await setup('mine', 1);
+    await ph.down([f.x, f.y]);
+    await ph.page.waitForTimeout(100);
+    const mine = await ph.page.evaluate(() => { const me = RR.game.player, m = RR.game.mines.filter((x) => x.owner === me).pop(); return m && [m.x - me.x, m.y - me.y]; });
+    assert.ok(mine, 'the mine dropped while the stick was still held');
+    assert.ok(Math.abs(mine[0]) < 4 && Math.abs(mine[1] - 16) < 4, 'behind (below) the rocket: ' + mine);
     await ph.up();
 
-    // missiles launch along the aim too; mines still drop behind the rocket
-    const r = await ph.page.evaluate(() => {
-      const g = RR.game, me = g.player, read = RR.input.read, out = {};
-      RR.input.read = () => ({ turn: 0, thrust: 0, brake: 0, fire: true, aim: 0 }); // stick pushed right
-      try {
-        me.angle = -Math.PI / 2; me.vx = me.vy = 0; me.cool = 0; me.prevFire = false; me.weapon = 'missile'; me.ammo = 1;
-        g.step(1 / 120);
-        out.missile = g.shots.filter((s) => s.owner === me && s.type === 'missile').pop().angle;
-        me.angle = -Math.PI / 2; me.vx = me.vy = 0; me.cool = 0; me.prevFire = false; me.weapon = 'mine'; me.ammo = 1;
-        g.step(1 / 120);
-        const m = g.mines.filter((x) => x.owner === me).pop();
-        out.mine = [m.x - me.x, m.y - me.y];
-      } finally { RR.input.read = read; }
-      return out;
-    });
-    assert.ok(angleGap(r.missile, 0) < 0.1, 'missile launched to the right: ' + r.missile);
-    assert.ok(Math.abs(r.mine[0]) < 3 && Math.abs(r.mine[1] - 16) < 3, 'mine dropped behind (below) the rocket: ' + r.mine);
+    // with a keyboard, a missile still goes on the key press, straight ahead
+    await setup('missile', 1);
+    await ph.page.keyboard.down('Space');
+    await ph.page.waitForTimeout(100);
+    r = await st();
+    assert.strictEqual(r.fired.length, 1, 'Space launches at once');
+    assert.ok(angleGap(r.fired[0].dir, -Math.PI / 2) < 0.05, 'straight ahead');
+    await ph.page.keyboard.up('Space');
     assert.deepStrictEqual(ph.errors, []);
   } finally { await ph.ctx.close(); }
 });

@@ -297,13 +297,6 @@
         glow(ctx, sx - Math.cos(s.angle) * 14, sy - Math.sin(s.angle) * 14, boost ? 17 : 11, boost ? '#41a6f6' : '#ef7d57');
       }
       RR.drawRot(ctx, s.hitFlash > 0 ? s.white : s.sprite, sx, sy, s.angle + Math.PI / 2);
-      // where the fire stick is aiming (for the weapons that go where they're aimed)
-      const aimW = s.weapon || (g.combat ? 'blaster' : null);
-      if (s === p && !g.demo && g.state === 'play' && s.input.aim != null && (aimW === 'blaster' || aimW === 'missile')) {
-        const ax = Math.cos(s.input.aim), ay = Math.sin(s.input.aim);
-        RR.line(ctx, sx + ax * 16, sy + ay * 16, sx + ax * 54, sy + ay * 54, PAL.yellow, 3);
-        RR.ring(ctx, sx + ax * 60, sy + ay * 60, 4, PAL.yellow);
-      }
       if (s.shield > 0 && (s.shield > 1.5 || Math.floor(g.t * 12) & 1)) {
         RR.ring(ctx, sx, sy, 16, PAL.cyan, 8, g.t * 10);
         RR.ring(ctx, sx, sy, 14, PAL.sky, 8, -g.t * 10);
@@ -317,6 +310,10 @@
         ctx.fillRect(bx, by, Math.max(1, Math.round(13 * f)), 2);
       }
     }
+
+    /* where the fire stick is aiming */
+    g.aimShown = null;
+    if (!g.demo && g.state === 'play' && !p.rw && p.dead <= 0) drawAim(g, ctx, p, cx, cy);
 
     drawParts(g, ctx, cx, cy, W, H, 1);
 
@@ -587,6 +584,37 @@
     return { x: kx, y: ky };
   }
 
+  /**
+   * The fire stick's aim, kept faint so it never hides the race: a dashed line
+   * out from the rocket while the blaster is pushed one way, or while a missile
+   * is held ready to launch (straight ahead until the stick is pushed), plus
+   * corner brackets on the rival that missile would lock onto.
+   * g.aimShown records what was drawn (the tests read it).
+   */
+  function drawAim(g, ctx, s, cx, cy) {
+    const w = s.weapon || (g.combat ? 'blaster' : null), inp = s.input;
+    if (!inp.stick || !(w === 'missile' || (w === 'blaster' && inp.aim != null))) return;
+    const ang = inp.aim != null ? inp.aim : s.angle, ax = Math.cos(ang), ay = Math.sin(ang);
+    const col = s.weapon ? RR.ITEMS[s.weapon].color : PAL.cyan, x = s.x - cx, y = s.y - cy;
+    ctx.globalAlpha = 0.7;
+    RR.line(ctx, x + ax * 14, y + ay * 14, x + ax * 80, y + ay * 80, col, 7, 4); // dashes of 4, gaps of 3
+    const lock = w === 'missile' ? RR.pickTarget(s, g, ang) : null;
+    if (lock) brackets(ctx, lock.x - cx, lock.y - cy, 11, col);
+    ctx.globalAlpha = 1;
+    g.aimShown = { ang: ang, weapon: w, lock: lock ? g.ships.indexOf(lock) : -1 };
+  }
+
+  /** Four small corner marks round a point. */
+  function brackets(ctx, x, y, r, col) {
+    x = Math.round(x); y = Math.round(y);
+    ctx.fillStyle = col;
+    for (const k of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const px = x + k[0] * r, py = y + k[1] * r;
+      ctx.fillRect(k[0] < 0 ? px : px - 3, py, 4, 1);
+      ctx.fillRect(px, k[1] < 0 ? py : py - 3, 1, 4);
+    }
+  }
+
   /** A label under a stick, or over it when the stick sits at the bottom edge. */
   function stickLabel(ctx, c, str, col, H, ins) {
     const below = c.y + c.r + 5;
@@ -638,13 +666,14 @@
       text(ctx, 'FARTHER = MORE POWER', ins.l + 8, H - ins.b - 16, PAL.silver, 1, 'left', PAL.ink);
     }
 
-    /* fire stick: push to aim and fire that way, hold the middle to fire ahead */
+    /* fire stick: the blaster fires while held (ahead, or the way it is pushed); missiles go on letting go */
     const w = p.weapon || (g.combat ? 'blaster' : null);
     const wc = p.weapon ? RR.ITEMS[p.weapon].color : g.combat ? PAL.cyan : PAL.steel;
     const knob = drawStick(ctx, L.fire, t.aimStick, wc, w ? wc : PAL.steel);
     if (w) ctx.drawImage(Art.icons[w], knob.x - 4, knob.y - 4);
     const what = p.weapon ? RR.ITEMS[p.weapon].name + ' X' + p.ammo : g.combat ? 'CANNON' : 'NO WEAPON';
-    stickLabel(ctx, L.fire, t.aimStick ? 'AIM' : what, t.aimStick ? PAL.white : wc, H, ins);
+    const held = w === 'missile' ? 'LET GO TO FIRE' : w === 'blaster' ? 'AIM' : null;
+    stickLabel(ctx, L.fire, t.aimStick && held ? held : what, t.aimStick && held ? PAL.white : wc, H, ins);
 
     const key = function (r, on, col) {
       panel(ctx, r.x, r.y, r.w, r.h, on ? PAL.white : col);
