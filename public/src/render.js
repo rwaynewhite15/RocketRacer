@@ -61,21 +61,41 @@
   const NO_INSET = { l: 0, t: 0, r: 0, b: 0 };
 
   /**
-   * Touch controls, in game pixels: the left half is a floating thumb-stick,
-   * FIRE and BRAKE sit under the right thumb. `ins` keeps them clear of
-   * notches and rounded corners.
+   * Touch controls with a place on screen, in game pixels: the fire stick,
+   * BRAKE, and the DO-OVER button (shown only while one is held). Steering has
+   * no place: it is a drag that can start anywhere else (see input.js). Each
+   * control has a standard spot; the player can move them (Pause > Move
+   * controls). Moved spots are kept as fractions of the screen, separately for
+   * sideways and upright, and are always pulled back inside the screen and
+   * clear of notches.
    */
   RR.touchLayout = function (W, H, ins) {
     ins = ins || NO_INSET;
-    const fs = 60, bs = 42, m = 10;
-    const fx = W - ins.r - m - fs, fy = H - ins.b - m - fs;
+    const R = 34, grab = R + 24; // a thumb landing within `grab` of a stick's centre takes it
+    const def = { fire: { x: W - ins.r - 66, y: H - ins.b - 66 } };
+    if (W - ins.l - ins.r < 360) { // narrow (upright phone): stack BRAKE and DO-OVER above the fire stick
+      def.brake = { x: def.fire.x, y: def.fire.y - 80 };
+      def.rewind = { x: def.fire.x, y: def.brake.y - 54 };
+    } else {
+      def.brake = { x: def.fire.x - 82, y: H - ins.b - 31 };
+      def.rewind = { x: def.fire.x, y: def.fire.y - 74 };
+    }
+    const g = RR.game, saved = (g && g.controls && g.controls[W >= H ? 'land' : 'port']) || {};
+    const half = { fire: R + 2, brake: 21, rewind: 22 }, centre = {};
+    for (const n in def) {
+      const sp = saved[n], h = half[n];
+      centre[n] = {
+        x: Math.round(clamp(sp ? sp.x * W : def[n].x, ins.l + h + 2, W - ins.r - h - 2)),
+        y: Math.round(clamp(sp ? sp.y * H : def[n].y, ins.t + h + 2, H - ins.b - h - 2)),
+      };
+    }
+    const box = function (c, w, h) { return { x: c.x - w / 2, y: c.y - h / 2, w: w, h: h }; };
     return {
-      stick: { x: 0, y: Math.round(H * 0.2), w: Math.round(W * 0.5), h: H },
-      stickR: 34,
-      home: { x: ins.l + 58, y: H - ins.b - 58 },
-      fire: { x: fx, y: fy, w: fs, h: fs },
-      brake: { x: fx - bs - 8, y: H - ins.b - m - bs, w: bs, h: bs },
-      rewind: { x: fx + fs - 44, y: fy - 54, w: 44, h: 44 }, // shown only while a do-over is held
+      stickR: R,
+      fire: { x: centre.fire.x, y: centre.fire.y, r: R, grab: grab },
+      brake: box(centre.brake, 42, 42),
+      rewind: box(centre.rewind, 44, 44),
+      centre: centre,
     };
   };
 
@@ -290,6 +310,10 @@
         ctx.fillRect(bx, by, Math.max(1, Math.round(13 * f)), 2);
       }
     }
+
+    /* where the fire stick is aiming */
+    g.aimShown = null;
+    if (!g.demo && g.state === 'play' && !p.rw && p.dead <= 0) drawAim(g, ctx, p, cx, cy);
 
     drawParts(g, ctx, cx, cy, W, H, 1);
 
@@ -517,15 +541,16 @@
       if (n > 3) text(ctx, 'READY', W / 2, my + 8, PAL.white, 4, 'center', PAL.ink);
       else text(ctx, String(n), W / 2, my - 6, [PAL.lime, PAL.lime, PAL.yellow, PAL.alarm][n], 8, 'center', PAL.ink);
       // how-to-fly reminder while the lights count down
-      const hy2 = Math.round(H * 0.62);
+      const hy2 = Math.round(H * (touch ? 0.56 : 0.62));
       if (touch) {
-        text(ctx, 'PUSH THE STICK THE WAY', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
-        text(ctx, 'YOU WANT TO FLY', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
+        text(ctx, 'DRAG ANYWHERE: FLY THAT WAY', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
+        text(ctx, 'DRAG FARTHER: MORE POWER', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
+        text(ctx, 'FIRE STICK: SHOOT THAT WAY', W / 2, hy2 + 20, PAL.cyan, 1, 'center', PAL.ink);
       } else {
         text(ctx, 'ARROWS / WASD TO FLY - SPACE TO FIRE', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
       }
       text(ctx, g.royale ? 'LAST SHIP FLYING WINS' : g.combat ? 'WRECK THEM - FIRST TO ' + C.KILL_TARGET + ' KILLS' : 'FLY THROUGH THE GLOWING DONUT',
-        W / 2, hy2 + (touch ? 24 : 12), PAL.pink, 1, 'center', PAL.ink);
+        W / 2, hy2 + (touch ? 34 : 12), PAL.pink, 1, 'center', PAL.ink);
     } else if (g.msg) {
       const m = g.msg;
       const sc = Math.max(1, Math.min(m.scale, Math.floor((W - 12) / (m.text.length * 6))));
@@ -545,38 +570,115 @@
     }
   }
 
-  function drawTouch(g, ctx, W, H) {
-    const L = RR.touchLayout(W, H, g.inset), t = RR.input.touch, p = g.player, st = t.stick;
-
-    /* thumb-stick: parked bottom-left until a thumb lands, then it goes where the thumb is */
-    const bx = st ? st.x : L.home.x, by = st ? st.y : L.home.y;
-    const kx = bx + (st ? st.dx : 0), ky = by + (st ? st.dy : 0);
-    ctx.globalAlpha = st ? 0.3 : 0.16;
-    RR.disc(ctx, bx, by, L.stickR, PAL.navy);
-    ctx.globalAlpha = st ? 0.9 : 0.45;
-    RR.ring(ctx, bx, by, L.stickR, st ? PAL.cyan : PAL.silver, st ? 0 : 12, g.t * 1.5);
-    RR.disc(ctx, kx, ky, 12, st ? PAL.sky : PAL.steel);
+  /** One fixed thumb-stick: base ring, and a knob pushed out to where the thumb is. */
+  function drawStick(ctx, c, st, col, idleCol) {
+    const on = !!st;
+    ctx.globalAlpha = on ? 0.32 : 0.18;
+    RR.disc(ctx, c.x, c.y, c.r, PAL.navy);
+    ctx.globalAlpha = on ? 0.95 : 0.6;
+    RR.ring(ctx, c.x, c.y, c.r, on ? PAL.white : idleCol);
+    const kx = c.x + (st ? st.dx : 0), ky = c.y + (st ? st.dy : 0);
+    RR.disc(ctx, kx, ky, 12, on ? col : PAL.slate);
     ctx.globalAlpha = 1;
-    RR.ring(ctx, kx, ky, 12, st ? PAL.white : PAL.silver);
-    if (!st) text(ctx, 'STEER', bx, by + L.stickR + 5, PAL.silver, 1, 'center', PAL.ink);
+    RR.ring(ctx, kx, ky, 12, on ? PAL.white : idleCol);
+    return { x: kx, y: ky };
+  }
+
+  /**
+   * The fire stick's aim, kept faint so it never hides the race: a dashed line
+   * out from the rocket while the blaster is pushed one way, or while a missile
+   * is held ready to launch (straight ahead until the stick is pushed), plus
+   * corner brackets on the rival that missile would lock onto.
+   * g.aimShown records what was drawn (the tests read it).
+   */
+  function drawAim(g, ctx, s, cx, cy) {
+    const w = s.weapon || (g.combat ? 'blaster' : null), inp = s.input;
+    if (!inp.stick || !(w === 'missile' || (w === 'blaster' && inp.aim != null))) return;
+    const ang = inp.aim != null ? inp.aim : s.angle, ax = Math.cos(ang), ay = Math.sin(ang);
+    const col = s.weapon ? RR.ITEMS[s.weapon].color : PAL.cyan, x = s.x - cx, y = s.y - cy;
+    ctx.globalAlpha = 0.7;
+    RR.line(ctx, x + ax * 14, y + ay * 14, x + ax * 80, y + ay * 80, col, 7, 4); // dashes of 4, gaps of 3
+    const lock = w === 'missile' ? RR.pickTarget(s, g, ang) : null;
+    if (lock) brackets(ctx, lock.x - cx, lock.y - cy, 11, col);
+    ctx.globalAlpha = 1;
+    g.aimShown = { ang: ang, weapon: w, lock: lock ? g.ships.indexOf(lock) : -1 };
+  }
+
+  /** Four small corner marks round a point. */
+  function brackets(ctx, x, y, r, col) {
+    x = Math.round(x); y = Math.round(y);
+    ctx.fillStyle = col;
+    for (const k of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      const px = x + k[0] * r, py = y + k[1] * r;
+      ctx.fillRect(k[0] < 0 ? px : px - 3, py, 4, 1);
+      ctx.fillRect(px, k[1] < 0 ? py : py - 3, 1, 4);
+    }
+  }
+
+  /** A label under a stick, or over it when the stick sits at the bottom edge. */
+  function stickLabel(ctx, c, str, col, H, ins) {
+    const below = c.y + c.r + 5;
+    text(ctx, str, c.x, below + 7 <= H - ins.b - 1 ? below : c.y - c.r - 12, col, 1, 'center', PAL.ink);
+  }
+
+  /**
+   * The steering drag: a dot where the touch began, a line to the thumb, and a
+   * power meter above it (below, near the top of the screen) that fills as the
+   * drag lengthens and flashes MAX at full power. Nothing else is drawn round
+   * the touch, so the view of the race stays clear.
+   */
+  function drawDrag(ctx, dr, W, H, ins, T) {
+    const pw = dr.power, full = pw >= 0.999, blink = Math.floor(T * 8) & 1;
+    const col = pw < 0.6 ? PAL.lime : pw < 0.8 ? PAL.yellow : PAL.orange;
+    const hot = blink ? PAL.white : PAL.orange;
+    const ex = dr.x + dr.dx, ey = dr.y + dr.dy;
+
+    // no ring or disc round the touch: just where it began and the way it points
+    if (dr.dist > 2) RR.line(ctx, dr.x, dr.y, ex, ey, col, 2);
+    RR.disc(ctx, dr.x, dr.y, 2, PAL.white);
+
+    // the meter: ten segments, green to orange, well clear of the thumb
+    const n = 10, mw = n * 6 - 1 + 8, mh = 22;
+    const lit = pw <= 0 ? 0 : Math.max(1, Math.round(pw * n));
+    const mx = Math.round(clamp(dr.x - mw / 2, ins.l + 2, W - ins.r - mw - 2));
+    let my = Math.round(dr.y - dr.max - mh - 20);
+    if (my < ins.t + 2) my = Math.round(Math.min(dr.y + dr.max + 20, H - ins.b - mh - 2));
+    panel(ctx, mx, my, mw, mh, full ? hot : PAL.slate);
+    text(ctx, 'POWER', mx + 4, my + 3, PAL.silver);
+    text(ctx, full ? 'MAX' : Math.round(pw * 100) + '%', mx + mw - 4, my + 3, full ? hot : col, 1, 'right');
+    for (let i = 0; i < n; i++) {
+      ctx.fillStyle = i >= lit ? PAL.dusk : i < 6 ? PAL.lime : i < 8 ? PAL.yellow : PAL.orange;
+      ctx.fillRect(mx + 4 + i * 6, my + 13, 5, 6);
+    }
+    // what was drawn and where (the tests read this)
+    return { x: mx, y: my, w: mw, h: mh, lit: lit, of: n, full: full, segX: mx + 4, segY: my + 13, segStep: 6 };
+  }
+
+  function drawTouch(g, ctx, W, H) {
+    const L = RR.touchLayout(W, H, g.inset), t = RR.input.touch, p = g.player, ins = g.inset;
+
+    /* steering: a drag from anywhere; until the first one, say so */
+    g.meter = t.drag ? drawDrag(ctx, t.drag, W, H, ins, g.t) : null;
+    if (t.drag) {
+      if (t.drag.power > 0) p.dragged = true;
+    } else if (!p.dragged && g.phase === 'race' && Math.floor(g.t * 2) & 1) {
+      text(ctx, 'DRAG ANYWHERE TO FLY', ins.l + 8, H - ins.b - 26, PAL.silver, 1, 'left', PAL.ink);
+      text(ctx, 'FARTHER = MORE POWER', ins.l + 8, H - ins.b - 16, PAL.silver, 1, 'left', PAL.ink);
+    }
+
+    /* fire stick: the blaster fires while held (ahead, or the way it is pushed); missiles go on letting go */
+    const w = p.weapon || (g.combat ? 'blaster' : null);
+    const wc = p.weapon ? RR.ITEMS[p.weapon].color : g.combat ? PAL.cyan : PAL.steel;
+    const knob = drawStick(ctx, L.fire, t.aimStick, wc, w ? wc : PAL.steel);
+    if (w) ctx.drawImage(Art.icons[w], knob.x - 4, knob.y - 4);
+    const what = p.weapon ? RR.ITEMS[p.weapon].name + ' X' + p.ammo : g.combat ? 'CANNON' : 'NO WEAPON';
+    const held = w === 'missile' ? 'LET GO TO FIRE' : w === 'blaster' ? 'AIM' : null;
+    stickLabel(ctx, L.fire, t.aimStick && held ? held : what, t.aimStick && held ? PAL.white : wc, H, ins);
 
     const key = function (r, on, col) {
       panel(ctx, r.x, r.y, r.w, r.h, on ? PAL.white : col);
       if (on) { ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2); }
     };
-    const f = L.fire, wc = p.weapon ? RR.ITEMS[p.weapon].color : g.combat ? PAL.cyan : PAL.steel;
-    key(f, t.fire, wc);
-    if (!p.weapon && g.combat) {
-      ctx.drawImage(Art.icons.blaster, f.x + 17, f.y + 7, 27, 27);
-      text(ctx, 'CANNON', f.x + f.w / 2, f.y + 40, wc, 1, 'center');
-    } else if (p.weapon) {
-      ctx.drawImage(Art.icons[p.weapon], f.x + 17, f.y + 7, 27, 27);
-      text(ctx, RR.ITEMS[p.weapon].name, f.x + f.w / 2, f.y + 38, wc, 1, 'center');
-      text(ctx, 'X' + p.ammo, f.x + f.w / 2, f.y + 48, PAL.white, 1, 'center');
-    } else {
-      text(ctx, 'FIRE', f.x + f.w / 2, f.y + 20, PAL.steel, 2, 'center');
-      text(ctx, 'NO WEAPON', f.x + f.w / 2, f.y + 40, PAL.steel, 1, 'center');
-    }
     key(L.brake, t.brake, PAL.steel);
     text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.silver, 1, 'center');
 
@@ -587,6 +689,31 @@
       text(ctx, 'DO-OVER', r.x + r.w / 2, r.y + 31, PAL.violet, 1, 'center');
       g.ui.push({ x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8, act: function () { g.tryRewind(); } });
     }
+  }
+
+  /** Pause > MOVE CONTROLS: every control shown with its name, ready to be dragged. */
+  function drawLayout(g, ctx, W, H) {
+    const L = RR.touchLayout(W, H, g.inset), ins = g.inset, top = 8 + ins.t;
+    ctx.fillStyle = 'rgba(7,7,26,0.78)';
+    ctx.fillRect(0, 0, W, H);
+    text(ctx, 'MOVE CONTROLS', W / 2, top, PAL.white, 2, 'center', PAL.plum);
+    text(ctx, 'DRAG EACH ONE WHERE YOUR THUMB LIKES IT', W / 2, top + 20, PAL.silver, 1, 'center', PAL.ink);
+    text(ctx, (g.orientation() === 'land' ? 'SIDEWAYS' : 'UPRIGHT') + ' LAYOUT, SAVED SEPARATELY', W / 2, top + 30, PAL.steel, 1, 'center', PAL.ink);
+    const bw = 64;
+    button(g, ctx, 'DONE', Math.round(W / 2 - bw - 4), top + 43, bw, 18, function () { g.closeControls(); }, PAL.lime);
+    button(g, ctx, 'RESET', Math.round(W / 2 + 4), top + 43, bw, 18, function () { g.resetControls(); }, PAL.orange);
+
+    const held = {};
+    for (const id in RR.input.pointers) { const d = RR.input.pointers[id].drag; if (d) held[d] = true; }
+    const ring = function (c, n) { RR.ring(ctx, c.x, c.y, c.r, held[n] ? PAL.white : PAL.yellow, held[n] ? 0 : 12, g.t * 2); };
+    drawStick(ctx, L.fire, null, PAL.cyan, PAL.silver); ring(L.fire, 'fire');
+    stickLabel(ctx, L.fire, 'AIM + FIRE', PAL.yellow, H, ins);
+    panel(ctx, L.brake.x, L.brake.y, L.brake.w, L.brake.h, held.brake ? PAL.white : PAL.yellow);
+    text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.yellow, 1, 'center');
+    const r = L.rewind;
+    panel(ctx, r.x, r.y, r.w, r.h, held.rewind ? PAL.white : PAL.yellow);
+    ctx.drawImage(Art.icons.rewind, r.x + 13, r.y + 6, 18, 18);
+    text(ctx, 'DO-OVER', r.x + r.w / 2, r.y + 31, PAL.yellow, 1, 'center');
   }
 
   /* ------------------------------------------------------------ overlays */
@@ -880,6 +1007,7 @@
     button(g, ctx, touch ? 'QUIT TO MENU' : 'QUIT  (Q)', bx, y + 90, bw, 20, function () { g.toTitle(); }, PAL.orange);
     const snd = (RR.audio.muted ? 'SOUND OFF' : 'SOUND ON') + (touch ? '' : '  (M)');
     button(g, ctx, snd, bx, y + 114, bw, 20, function () { g.toggleSound(); }, RR.audio.muted ? PAL.steel : PAL.lime);
+    if (touch) button(g, ctx, 'MOVE CONTROLS', bx, y + 138, bw, 20, function () { g.editControls(); }, PAL.cyan);
   }
 
   function drawResults(g, ctx, W, H) {
@@ -966,6 +1094,7 @@
       drawHUD(g, ctx, W, H);
       if (RR.input.touchMode && g.state === 'play') drawTouch(g, ctx, W, H);
       if (g.state === 'paused') drawPause(g, ctx, W, H);
+      else if (g.state === 'layout') drawLayout(g, ctx, W, H);
       else if (g.state === 'results') drawResults(g, ctx, W, H);
     }
     if (g.toast && (g.toast.t < g.toast.dur - 0.3 || Math.floor(g.t * 16) & 1)) {

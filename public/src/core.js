@@ -170,15 +170,19 @@
     }
   };
 
-  /** Pixel line (Bresenham), optionally dotted with a gap every `dot` pixels. */
-  RR.line = function (ctx, x0, y0, x1, y1, color, dot) {
+  /**
+   * Pixel line (Bresenham). With `dot`, only every `dot`th pixel is drawn
+   * (dotted); with `on` as well, `on` pixels in every `dot` are drawn (dashed:
+   * dot 7, on 4 gives dashes of 4 with gaps of 3).
+   */
+  RR.line = function (ctx, x0, y0, x1, y1, color, dot, on) {
     x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
     ctx.fillStyle = color;
     const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0);
     const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
     let err = dx + dy, n = 0;
     for (;;) {
-      if (!dot || n % dot === 0) ctx.fillRect(x0, y0, 1, 1);
+      if (!dot || n % dot < (on || 1)) ctx.fillRect(x0, y0, 1, 1);
       n++;
       if (x0 === x1 && y0 === y1) break;
       const e2 = 2 * err;
