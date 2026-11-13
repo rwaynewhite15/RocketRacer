@@ -773,7 +773,7 @@ test('touch: dragging from anywhere steers that way, and the farther the drag th
   } finally { await ph.ctx.close(); }
 });
 
-test('touch: a power meter appears with the drag, fills as it lengthens, and tops out at MAX', { skip }, async () => {
+test('touch: a power meter appears with the drag, fills as it lengthens, and tops out at MAX; no circle is drawn round the touch', { skip }, async () => {
   const ph = await phoneRace();
   try {
     const { W, H, DEAD, MAX } = await ph.page.evaluate(() => ({ W: RR.game.W, H: RR.game.H, DEAD: RR.input.DRAG_DEAD, MAX: RR.input.DRAG_MAX }));
@@ -811,6 +811,22 @@ test('touch: a power meter appears with the drag, fills as it lengthens, and top
         last = m.lit;
       }
       assert.deepStrictEqual([m.lit, m.full], [m.of, true], 'full at the limit');
+
+      // no circle round the touch: the screen to the sides of the drag and behind it is left clear
+      // (checked out in the open, where no other part of the HUD is in the way)
+      const open = sx > 80 && sx < W - 80 && sy > H * 0.4 && sy < H * 0.6;
+      const clear = !open ? [] : await ph.page.evaluate(([x, y, R, dir]) => {
+        const c = document.getElementById('hud').getContext('2d'), W = RR.game.W, H = RR.game.H, inked = [];
+        for (const r of [R, R * 0.75, R * 0.5, R * 0.25]) {
+          for (const a of [0, Math.PI, -dir * Math.PI / 2, -dir * Math.PI / 4, -dir * 3 * Math.PI / 4]) {
+            const px = Math.round(x + Math.cos(a) * r), py = Math.round(y + Math.sin(a) * r);
+            if (px < 0 || py < 0 || px >= W || py >= H) continue;
+            if (c.getImageData(px, py, 1, 1).data[3]) inked.push([px, py]);
+          }
+        }
+        return inked;
+      }, [sx, sy, MAX, dir]);
+      assert.deepStrictEqual(clear, [], 'nothing drawn in a circle round the touch');
 
       await ph.move([sx, sy + dir * (MAX + 40)]);
       await ph.page.waitForTimeout(90);

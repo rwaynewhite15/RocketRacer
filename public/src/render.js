@@ -594,10 +594,10 @@
   }
 
   /**
-   * The steering drag. A dashed ring marks how far full power is; a disc grows
-   * out from the starting point as the thumb moves away; and a power meter
-   * sits above it (below, near the top of the screen), filling up and flashing
-   * MAX when the drag reaches the ring.
+   * The steering drag: a dot where the touch began, a line to the thumb, and a
+   * power meter above it (below, near the top of the screen) that fills as the
+   * drag lengthens and flashes MAX at full power. Nothing else is drawn round
+   * the touch, so the view of the race stays clear.
    */
   function drawDrag(ctx, dr, W, H, ins, T) {
     const pw = dr.power, full = pw >= 0.999, blink = Math.floor(T * 8) & 1;
@@ -605,18 +605,9 @@
     const hot = blink ? PAL.white : PAL.orange;
     const ex = dr.x + dr.dx, ey = dr.y + dr.dy;
 
-    ctx.globalAlpha = 0.25;
-    RR.disc(ctx, dr.x, dr.y, dr.dist, col); // the power so far
-    ctx.globalAlpha = full ? 1 : 0.55;
-    RR.ring(ctx, dr.x, dr.y, dr.max, full ? hot : PAL.silver, full ? 0 : 14, T * 2); // where full power is
-    ctx.globalAlpha = 1;
-    if (dr.dist > 2) {
-      RR.ring(ctx, dr.x, dr.y, dr.dist, col);
-      RR.line(ctx, dr.x, dr.y, ex, ey, PAL.white, 2); // the heading
-    }
-    RR.disc(ctx, dr.x, dr.y, 2, PAL.white); // the starting point
-    RR.disc(ctx, ex, ey, 5, col);
-    RR.ring(ctx, ex, ey, 5, PAL.white);
+    // no ring or disc round the touch: just where it began and the way it points
+    if (dr.dist > 2) RR.line(ctx, dr.x, dr.y, ex, ey, col, 2);
+    RR.disc(ctx, dr.x, dr.y, 2, PAL.white);
 
     // the meter: ten segments, green to orange, well clear of the thumb
     const n = 10, mw = n * 6 - 1 + 8, mh = 22;
