@@ -61,19 +61,18 @@
   const NO_INSET = { l: 0, t: 0, r: 0, b: 0 };
 
   /**
-   * Touch controls, in game pixels: a steering stick, a fire stick, BRAKE, and
-   * the DO-OVER button (shown only while one is held). Each has a standard spot;
-   * the player can move them (Pause > Move controls). Moved spots are kept as
-   * fractions of the screen, separately for sideways and upright, and are always
-   * pulled back inside the screen and clear of notches.
+   * Touch controls with a place on screen, in game pixels: the fire stick,
+   * BRAKE, and the DO-OVER button (shown only while one is held). Steering has
+   * no place: it is a drag that can start anywhere else (see input.js). Each
+   * control has a standard spot; the player can move them (Pause > Move
+   * controls). Moved spots are kept as fractions of the screen, separately for
+   * sideways and upright, and are always pulled back inside the screen and
+   * clear of notches.
    */
   RR.touchLayout = function (W, H, ins) {
     ins = ins || NO_INSET;
     const R = 34, grab = R + 24; // a thumb landing within `grab` of a stick's centre takes it
-    const def = {
-      steer: { x: ins.l + 66, y: H - ins.b - 66 },
-      fire: { x: W - ins.r - 66, y: H - ins.b - 66 },
-    };
+    const def = { fire: { x: W - ins.r - 66, y: H - ins.b - 66 } };
     if (W - ins.l - ins.r < 360) { // narrow (upright phone): stack BRAKE and DO-OVER above the fire stick
       def.brake = { x: def.fire.x, y: def.fire.y - 80 };
       def.rewind = { x: def.fire.x, y: def.brake.y - 54 };
@@ -82,7 +81,7 @@
       def.rewind = { x: def.fire.x, y: def.fire.y - 74 };
     }
     const g = RR.game, saved = (g && g.controls && g.controls[W >= H ? 'land' : 'port']) || {};
-    const half = { steer: R + 2, fire: R + 2, brake: 21, rewind: 22 }, centre = {};
+    const half = { fire: R + 2, brake: 21, rewind: 22 }, centre = {};
     for (const n in def) {
       const sp = saved[n], h = half[n];
       centre[n] = {
@@ -93,7 +92,6 @@
     const box = function (c, w, h) { return { x: c.x - w / 2, y: c.y - h / 2, w: w, h: h }; };
     return {
       stickR: R,
-      steer: { x: centre.steer.x, y: centre.steer.y, r: R, grab: grab },
       fire: { x: centre.fire.x, y: centre.fire.y, r: R, grab: grab },
       brake: box(centre.brake, 42, 42),
       rewind: box(centre.rewind, 44, 44),
@@ -546,15 +544,16 @@
       if (n > 3) text(ctx, 'READY', W / 2, my + 8, PAL.white, 4, 'center', PAL.ink);
       else text(ctx, String(n), W / 2, my - 6, [PAL.lime, PAL.lime, PAL.yellow, PAL.alarm][n], 8, 'center', PAL.ink);
       // how-to-fly reminder while the lights count down
-      const hy2 = Math.round(H * 0.62);
+      const hy2 = Math.round(H * (touch ? 0.56 : 0.62));
       if (touch) {
-        text(ctx, 'STEERING STICK: FLY THAT WAY', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
-        text(ctx, 'FIRE STICK: SHOOT THAT WAY', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
+        text(ctx, 'DRAG ANYWHERE: FLY THAT WAY', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
+        text(ctx, 'DRAG FARTHER: MORE POWER', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
+        text(ctx, 'FIRE STICK: SHOOT THAT WAY', W / 2, hy2 + 20, PAL.cyan, 1, 'center', PAL.ink);
       } else {
         text(ctx, 'ARROWS / WASD TO FLY - SPACE TO FIRE', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
       }
       text(ctx, g.royale ? 'LAST SHIP FLYING WINS' : g.combat ? 'WRECK THEM - FIRST TO ' + C.KILL_TARGET + ' KILLS' : 'FLY THROUGH THE GLOWING DONUT',
-        W / 2, hy2 + (touch ? 24 : 12), PAL.pink, 1, 'center', PAL.ink);
+        W / 2, hy2 + (touch ? 34 : 12), PAL.pink, 1, 'center', PAL.ink);
     } else if (g.msg) {
       const m = g.msg;
       const sc = Math.max(1, Math.min(m.scale, Math.floor((W - 12) / (m.text.length * 6))));
@@ -594,12 +593,59 @@
     text(ctx, str, c.x, below + 7 <= H - ins.b - 1 ? below : c.y - c.r - 12, col, 1, 'center', PAL.ink);
   }
 
+  /**
+   * The steering drag. A dashed ring marks how far full power is; a disc grows
+   * out from the starting point as the thumb moves away; and a power meter
+   * sits above it (below, near the top of the screen), filling up and flashing
+   * MAX when the drag reaches the ring.
+   */
+  function drawDrag(ctx, dr, W, H, ins, T) {
+    const pw = dr.power, full = pw >= 0.999, blink = Math.floor(T * 8) & 1;
+    const col = pw < 0.6 ? PAL.lime : pw < 0.8 ? PAL.yellow : PAL.orange;
+    const hot = blink ? PAL.white : PAL.orange;
+    const ex = dr.x + dr.dx, ey = dr.y + dr.dy;
+
+    ctx.globalAlpha = 0.25;
+    RR.disc(ctx, dr.x, dr.y, dr.dist, col); // the power so far
+    ctx.globalAlpha = full ? 1 : 0.55;
+    RR.ring(ctx, dr.x, dr.y, dr.max, full ? hot : PAL.silver, full ? 0 : 14, T * 2); // where full power is
+    ctx.globalAlpha = 1;
+    if (dr.dist > 2) {
+      RR.ring(ctx, dr.x, dr.y, dr.dist, col);
+      RR.line(ctx, dr.x, dr.y, ex, ey, PAL.white, 2); // the heading
+    }
+    RR.disc(ctx, dr.x, dr.y, 2, PAL.white); // the starting point
+    RR.disc(ctx, ex, ey, 5, col);
+    RR.ring(ctx, ex, ey, 5, PAL.white);
+
+    // the meter: ten segments, green to orange, well clear of the thumb
+    const n = 10, mw = n * 6 - 1 + 8, mh = 22;
+    const lit = pw <= 0 ? 0 : Math.max(1, Math.round(pw * n));
+    const mx = Math.round(clamp(dr.x - mw / 2, ins.l + 2, W - ins.r - mw - 2));
+    let my = Math.round(dr.y - dr.max - mh - 20);
+    if (my < ins.t + 2) my = Math.round(Math.min(dr.y + dr.max + 20, H - ins.b - mh - 2));
+    panel(ctx, mx, my, mw, mh, full ? hot : PAL.slate);
+    text(ctx, 'POWER', mx + 4, my + 3, PAL.silver);
+    text(ctx, full ? 'MAX' : Math.round(pw * 100) + '%', mx + mw - 4, my + 3, full ? hot : col, 1, 'right');
+    for (let i = 0; i < n; i++) {
+      ctx.fillStyle = i >= lit ? PAL.dusk : i < 6 ? PAL.lime : i < 8 ? PAL.yellow : PAL.orange;
+      ctx.fillRect(mx + 4 + i * 6, my + 13, 5, 6);
+    }
+    // what was drawn and where (the tests read this)
+    return { x: mx, y: my, w: mw, h: mh, lit: lit, of: n, full: full, segX: mx + 4, segY: my + 13, segStep: 6 };
+  }
+
   function drawTouch(g, ctx, W, H) {
     const L = RR.touchLayout(W, H, g.inset), t = RR.input.touch, p = g.player, ins = g.inset;
 
-    /* steering stick: fixed in place, the knob shows which way you're pushing */
-    drawStick(ctx, L.steer, t.stick, PAL.sky, PAL.silver);
-    if (!t.stick) stickLabel(ctx, L.steer, 'STEER', PAL.silver, H, ins);
+    /* steering: a drag from anywhere; until the first one, say so */
+    g.meter = t.drag ? drawDrag(ctx, t.drag, W, H, ins, g.t) : null;
+    if (t.drag) {
+      if (t.drag.power > 0) p.dragged = true;
+    } else if (!p.dragged && g.phase === 'race' && Math.floor(g.t * 2) & 1) {
+      text(ctx, 'DRAG ANYWHERE TO FLY', ins.l + 8, H - ins.b - 26, PAL.silver, 1, 'left', PAL.ink);
+      text(ctx, 'FARTHER = MORE POWER', ins.l + 8, H - ins.b - 16, PAL.silver, 1, 'left', PAL.ink);
+    }
 
     /* fire stick: push to aim and fire that way, hold the middle to fire ahead */
     const w = p.weapon || (g.combat ? 'blaster' : null);
@@ -631,7 +677,7 @@
     ctx.fillStyle = 'rgba(7,7,26,0.78)';
     ctx.fillRect(0, 0, W, H);
     text(ctx, 'MOVE CONTROLS', W / 2, top, PAL.white, 2, 'center', PAL.plum);
-    text(ctx, 'DRAG EACH ONE WHERE YOUR THUMBS LIKE IT', W / 2, top + 20, PAL.silver, 1, 'center', PAL.ink);
+    text(ctx, 'DRAG EACH ONE WHERE YOUR THUMB LIKES IT', W / 2, top + 20, PAL.silver, 1, 'center', PAL.ink);
     text(ctx, (g.orientation() === 'land' ? 'SIDEWAYS' : 'UPRIGHT') + ' LAYOUT, SAVED SEPARATELY', W / 2, top + 30, PAL.steel, 1, 'center', PAL.ink);
     const bw = 64;
     button(g, ctx, 'DONE', Math.round(W / 2 - bw - 4), top + 43, bw, 18, function () { g.closeControls(); }, PAL.lime);
@@ -640,8 +686,6 @@
     const held = {};
     for (const id in RR.input.pointers) { const d = RR.input.pointers[id].drag; if (d) held[d] = true; }
     const ring = function (c, n) { RR.ring(ctx, c.x, c.y, c.r, held[n] ? PAL.white : PAL.yellow, held[n] ? 0 : 12, g.t * 2); };
-    drawStick(ctx, L.steer, null, PAL.sky, PAL.silver); ring(L.steer, 'steer');
-    stickLabel(ctx, L.steer, 'STEER', PAL.yellow, H, ins);
     drawStick(ctx, L.fire, null, PAL.cyan, PAL.silver); ring(L.fire, 'fire');
     stickLabel(ctx, L.fire, 'AIM + FIRE', PAL.yellow, H, ins);
     panel(ctx, L.brake.x, L.brake.y, L.brake.w, L.brake.h, held.brake ? PAL.white : PAL.yellow);

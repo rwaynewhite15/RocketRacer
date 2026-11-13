@@ -5,15 +5,16 @@
  *   RR.input.hit[action]   -> true for the frame an action key went down
  *   RR.input.taps          -> pointer presses this frame, in game pixels
  *
- * Touch play uses two fixed thumb-sticks, which the player can move to suit
- * their hands (Pause > Move controls):
- *   steering stick  push the way you want to fly; the rocket turns to that
- *                   heading and burns
- *   fire stick      push it any way to aim and fire that way, whatever way
- *                   the rocket faces; hold it still in the middle to fire
- *                   straight ahead
- * plus a BRAKE button. A stick does not move with the thumb: touching on or
- * near it grabs it, and its knob goes as far as its rim.
+ * Touch play:
+ *   steering    touch anywhere that is not another control and drag. The
+ *               direction of the drag is where the rocket heads; how far you
+ *               drag from where you started is the engine power, rising to
+ *               full at DRAG_MAX. Past that the start point trails the thumb,
+ *               so easing back always lowers the power straight away.
+ *   fire stick  fixed in place (movable in Pause > Move controls). Push it
+ *               any way to aim and fire that way, whatever way the rocket
+ *               faces; hold it still in the middle to fire straight ahead.
+ *   BRAKE       a button.
  * ======================================================================== */
 (function () {
   'use strict';
@@ -22,7 +23,7 @@
   const I = (RR.input = {
     down: {}, hit: {}, taps: [],
     pointers: {}, // id -> { x, y, sx, sy, role } in game pixels (sx, sy = where it began)
-    touch: { stick: null, aimStick: null, aim: null, brake: false, fire: false },
+    touch: { drag: null, aimStick: null, aim: null, brake: false, fire: false },
     touchMode: false,
     typing: false, // true while an HTML text field has the keyboard
   });
@@ -127,16 +128,44 @@
   }
 
   const AIM_DEADZONE = 0.3; // fire stick pushed less than this: fire straight ahead
+  const DRAG_DEAD = 6; // game pixels a steering touch must move before it does anything, so a tap is not a burn
+  const DRAG_MAX = 56; // game pixels from the starting point for full power
+  I.DRAG_DEAD = DRAG_DEAD; I.DRAG_MAX = DRAG_MAX;
+
+  /**
+   * The steering drag for one finger: direction, and power 0..1 from how far
+   * it is from where it started. Beyond DRAG_MAX the start point is pulled
+   * along behind the thumb.
+   */
+  function dragState(p) {
+    let dx = p.x - p.sx, dy = p.y - p.sy, m = Math.hypot(dx, dy);
+    if (m > DRAG_MAX) {
+      const k = (m - DRAG_MAX) / m;
+      p.sx += dx * k; p.sy += dy * k;
+      dx = p.x - p.sx; dy = p.y - p.sy; m = DRAG_MAX;
+    }
+    return {
+      x: p.sx, y: p.sy, dx: dx, dy: dy, dist: m, max: DRAG_MAX, ang: Math.atan2(dy, dx),
+      power: m <= DRAG_DEAD ? 0 : (m - DRAG_DEAD) / (DRAG_MAX - DRAG_DEAD),
+    };
+  }
+
+  function onAny(x, y, rects) {
+    for (let i = 0; rects && i < rects.length; i++) if (inside(x, y, rects[i], 0)) return true;
+    return false;
+  }
 
   /**
    * Work out the touch controls for this frame. `L` is RR.touchLayout() while
-   * racing, or null when touch controls are not on screen. A finger keeps the
-   * role (steer / fire / brake) of wherever it first landed.
+   * racing, or null when touch controls are not on screen; `buttons` are the
+   * on-screen buttons (pause, zoom, do-over), which a steering drag must not
+   * start on. A finger keeps the role (steer / fire / brake) of wherever it
+   * first landed.
    */
-  I.updateTouch = function (L) {
+  I.updateTouch = function (L, buttons) {
     const t = I.touch;
     t.fire = t.brake = false;
-    t.stick = t.aimStick = t.aim = null;
+    t.drag = t.aimStick = t.aim = null;
     if (!L) {
       for (const id in I.pointers) I.pointers[id].role = 'menu';
       return;
@@ -146,10 +175,11 @@
       if (!p.role) {
         p.role = inside(p.sx, p.sy, L.brake, 6) ? 'brake'
           : near(p.sx, p.sy, L.fire) ? 'fire'
-          : near(p.sx, p.sy, L.steer) ? 'steer' : 'none';
+          : onAny(p.sx, p.sy, buttons) ? 'none'
+          : 'steer'; // anywhere else on the screen
       }
       if (p.role === 'brake') t.brake = true;
-      else if (p.role === 'steer' && !t.stick) t.stick = stickState(p, L.steer);
+      else if (p.role === 'steer' && !t.drag) t.drag = dragState(p);
       else if (p.role === 'fire' && !t.aimStick) {
         t.fire = true;
         t.aimStick = stickState(p, L.fire);
@@ -189,10 +219,11 @@
     if (d.down || t.brake) brake = 1;
     if (d.fire || t.fire) fire = true;
 
-    const st = t.stick;
-    if (st && st.mag > 0.24 && ship) {
-      turn += RR.clamp(RR.angDiff(st.ang, ship.angle) * 4.5, -1, 1);
-      thrust = 1;
+    // steering drag: head the way it points, with as much engine as it is long
+    const dr = t.drag;
+    if (dr && dr.power > 0 && ship) {
+      turn += RR.clamp(RR.angDiff(dr.ang, ship.angle) * 4.5, -1, 1);
+      thrust = Math.max(thrust, dr.power);
     }
 
     const p = pad();

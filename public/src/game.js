@@ -117,7 +117,7 @@
     cam: { x: 0, y: 0 }, shake: 0, flash: 0, msg: null, ui: [],
     best: {}, crt: true, newRecord: false,
     autoFull: true, wantFull: false, // full screen on phones (see G.fullscreen)
-    // touch controls the player has moved: { land|port: { steer|fire|brake|rewind: {x, y} } },
+    // touch controls the player has moved: { land|port: { fire|brake|rewind: {x, y} } },
     // as fractions of the screen so they survive other screen sizes (see RR.touchLayout)
     controls: {},
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
@@ -424,7 +424,7 @@
 
   /* ------------------------------------------------- moving the controls */
 
-  const CONTROL_NAMES = ['steer', 'fire', 'brake', 'rewind'];
+  const CONTROL_NAMES = ['fire', 'brake', 'rewind']; // (steering is a drag anywhere, so it has no spot to move)
 
   /** Keep only well-formed saved positions (fractions of the screen). */
   function cleanControls(raw) {
@@ -471,7 +471,7 @@
       if (p.drag === undefined) {
         p.drag = null;
         for (const n of CONTROL_NAMES) {
-          const c = L.centre[n], reach = n === 'steer' || n === 'fire' ? L[n].grab : 30;
+          const c = L.centre[n], reach = n === 'fire' ? L.fire.grab : 30;
           if (Math.hypot(p.sx - c.x, p.sy - c.y) <= reach) { p.drag = n; p.ox = c.x - p.sx; p.oy = c.y - p.sy; break; }
         }
       }
@@ -1812,7 +1812,7 @@
   /** Called once per animation frame with the real elapsed time. */
   G.frame = function (dt) {
     const g = this, I = RR.input;
-    I.updateTouch(g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null);
+    I.updateTouch(g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null, g.ui);
     if (g.state === 'layout') dragControls(g);
     if (!I.typing) { I.pollPad(); handleUI(g); }
     if (g.toast) { g.toast.t += dt; if (g.toast.t >= g.toast.dur) g.toast = null; }

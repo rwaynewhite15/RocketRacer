@@ -50,13 +50,13 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
 
 | | Keyboard | Phone / tablet |
 |---|---|---|
-| Fly | Arrow keys or WASD (turn, thrust, brake/reverse) | Steering stick: push it the way you want to go |
+| Fly | Arrow keys or WASD (turn, thrust, brake/reverse) | Touch anywhere and drag. The rocket heads the way you drag, and the farther you drag from where you started, the more engine power. A power meter appears by your thumb and fills to MAX (about a thumb's width of travel); ease back to throttle down, lift to coast |
 | Fire weapon | Space (or X / J): fires the way the rocket points | Fire stick: push it to aim and fire that way, or hold it in the middle to fire straight ahead. Blaster and missiles follow the aim; mines drop behind, EMP spreads all round |
 | Brake | Down / S | BRAKE button |
 | Do-over | E or Shift | DO-OVER button (appears while you hold one) |
 | Zoom | Z cycles normal / wide / close; + and - or the mouse wheel step through every level | ZOOM button |
 | Pause | P or Esc | II button |
-| Move the controls | | Pause > MOVE CONTROLS: drag the sticks and buttons where you like (kept separately for sideways and upright; RESET restores them) |
+| Move the controls | | Pause > MOVE CONTROLS: drag the fire stick and buttons where you like (kept separately for sideways and upright; RESET restores them). Steering needs no spot of its own: it starts wherever you touch |
 | Menu | Arrows, Enter | Tap |
 | Hangar | H on the menu; arrows pick a ship or stat and spend points, Enter closes | HANGAR button, then the arrows and - / + buttons |
 | Other | M mute, C CRT filter, F fullscreen, N pilot name, T world top 10 | FULLSCREEN, PILOT, TOP 10 buttons |
@@ -234,7 +234,7 @@ public/               the game (static)
   src/core.js         math, noise, palette, pixel helpers, bitmap font
   src/art.js          procedural sprites: ships, planets, asteroids, donuts
   src/audio.js        chip-synth sound effects and music
-  src/input.js        keyboard, touch sticks, gamepad
+  src/input.js        keyboard, touch (drag to steer, fire stick), gamepad
   src/net.js          leaderboard client
   src/tracks.js       course and arena definitions and builder
   src/game.js         physics, weapons, AI, laps, combat modes, hangar, game states
