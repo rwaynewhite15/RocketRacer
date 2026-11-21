@@ -42,27 +42,29 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
     ship you have unlocked.
   - Wins unlock better ships with higher ceilings: the Dart (2 wins), the Hammer (5) and the
     Phoenix (9). The starting Sparrow flies exactly like the rivals' ships.
-  - **The shop**: every finished event pays credits by place (100 for a win down to 30),
-    times 1.5 against Pilot rivals and 2 against Ace. In the hangar's NEXT RACE slot, spend
-    them on one powerup, at level 1, 2 or 3, to start your next Grand Prix with. It is paid
-    for when picked, the difference is charged or refunded if you change item or level, and
-    EMPTY gives everything back. It is used up when the race starts; fights leave it for the
-    next race.
+  - **Powerup upgrades** (the hangar's POWERUPS page): every finished event pays credits by
+    place (100 for a win down to 30), times 1.5 against Pilot rivals and 2 against Ace.
+    Credits buy upgrade points at 150 each. Like stat points, an upgrade point raises one
+    powerup a level, up to level 3, and can be taken back and put on another at any time.
+    Upgrades are kept for good and make every pick-up of that powerup stronger, in every
+    event; rivals stay at level 1. Points can only be bought while some powerup still has
+    room for them, so you never hold points you cannot spend.
 
-    | Credits (level 1 / 2 / 3) | | Level 1 / 2 / 3 gives |
-    |---|---|---|
-    | Nitro | 60 / 110 / 160 | a boost at GO lasting 2.6 / 3.9 / 5.2 s |
-    | Shield | 80 / 140 / 200 | shielded at GO for 7 / 10.5 / 14 s |
-    | Blaster | 60 / 110 / 160 | 10 / 20 / 30 shots in hand |
-    | Mine | 70 / 120 / 180 | 3 / 5 / 8 mines in hand |
-    | Missile | 90 / 160 / 240 | 2 / 3 / 5 missiles in hand |
-    | EMP | 100 / 180 / 260 | 1 / 2 / 3 EMPs in hand |
-    | Do-over | 150 / 270 / 390 | 1 / 2 / 3 do-overs ready |
+    | Powerup | Level 1 / 2 / 3 gives |
+    |---|---|
+    | Nitro | a boost lasting 2.6 / 3.9 / 5.2 s |
+    | Shield | a shield for 7 / 10.5 / 14 s |
+    | Repair | +50 / +75 / +100 hull |
+    | Blaster | 10 / 20 / 30 shots |
+    | Missile | 2 / 3 / 5 missiles |
+    | Mine | 3 / 5 / 8 mines |
+    | EMP | 1 / 2 / 3 EMPs |
+    | Do-over | 1 / 2 / 3 do-overs ready |
   - Progress is saved in the browser, like your records.
 - **Zoom** the world in or out in whole-pixel steps, so the pixel art stays sharp. The HUD
   keeps its size at every level, and your choice is remembered.
 - **World top 10** for each course: every row shows the pilot's rocket and the powerups they
-  used, with upgraded bought ones numbered; tap a row to see their whole setup.
+  used, with a small 2 or 3 by an upgraded one; tap a row to see their whole setup.
 - Hull damage, wrecks and respawns, lap and race records, an attract-mode race behind the menu.
 - All art is generated in code at start-up and all sound is synthesised, so there are no
   image or audio files to load.
@@ -79,7 +81,7 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
 | Pause | P or Esc | II button |
 | Move the controls | | Pause > MOVE CONTROLS: drag the fire stick and buttons where you like (kept separately for sideways and upright; RESET restores them). Steering needs no spot of its own: it starts wherever you touch |
 | Menu | Arrows, Enter | Tap |
-| Hangar | H on the menu; arrows pick a ship or stat and spend points, Enter closes | HANGAR button, then the arrows and - / + buttons |
+| Hangar | H on the menu; up/down move through the ship, its stats, BUY and the powerups (the page turns to POWERUPS past the stats), left/right pick a ship or spend and take back points, Enter closes | HANGAR button; SHIP and POWERUPS pages; arrows, BUY and - / + buttons |
 | Other | M mute, C CRT filter, F fullscreen, N pilot name, T world top 10 (arrows and Enter open a pilot's setup) | FULLSCREEN, PILOT, TOP 10 buttons (tap a pilot for their setup) |
 
 A gamepad also works (stick or d-pad to turn, A to thrust, B to brake, X to fire, Y or LB for
@@ -229,19 +231,19 @@ The next pipeline run (or `./deploy.sh`) moves traffic back to the newest revisi
 Leaderboard rows live in Firestore at `rocketracer/{track}/scores/{pid}`. Each player has an
 anonymous id generated in their browser and keeps one row per course, replaced only by a
 faster time. A row records the time, best lap, rival level, `place` (where the pilot finished
-in that race, 1 to 6) and `setup`: `{ ship, stats, items }`, the rocket flown, its five stat
-levels, how many of each powerup were picked up on the track and used (`items`), and what was
-bought in the hangar for that race (`bought`: item -> the level bought, 1 to 3). A track powerup counts as used when it takes
-effect: nitro, shield and repair on pick-up, a weapon at its first shot, a do-over when taken.
+in that race, 1 to 6) and `setup`: `{ ship, stats, items, levels }`, the rocket flown, its
+five stat levels, how many of each powerup were picked up and used (`items`), and the pilot's
+powerup upgrade levels (`levels`: item -> 2 or 3; level 1 is left out). A powerup counts as
+used when it takes effect: nitro, shield and repair on pick-up, a weapon at its first shot, a
+do-over when taken.
 The setup belongs to the record run, so a slower race leaves it alone. Rows from before either
 field existed have `null`.
 
-The top-10 screen shows each pilot's rocket and powerups in the row (a bought one first,
-with a small 2 or 3 beside it when it was upgraded, then the ones they used most; `+` when
-there were more), and your own row
-and rank underneath when you are not in the top 10. Tap a row (or pick it with the arrow keys
-and press Enter) for that pilot's card: the rocket, its stat levels (grey: the ship's own,
-yellow: points put in), what they bought, and every powerup they picked up and used.
+The top-10 screen shows each pilot's rocket and the powerups they used most in the row, with a
+small 2 or 3 beside one they had upgraded (`+` when there were more than three), and your own
+row and rank underneath when you are not in the top 10. Tap a row (or pick it with the arrow
+keys and press Enter) for that pilot's card: the rocket, its stat levels (grey: the ship's own,
+yellow: points put in), and every powerup used, numbered the same way.
 
 Configuration, all optional environment variables:
 

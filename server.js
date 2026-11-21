@@ -37,8 +37,8 @@ const MAX_RACE = 3600;
 
 /*
  * A time's setup: the rocket, its five stat levels, the powerups picked up
- * and used on the track (`items`, with counts), and any bought in the hangar
- * (`bought`, with the level bought: 1-3).
+ * and used on the track (`items`, with counts), and the pilot's powerup
+ * upgrade levels at the time (`levels`, 2 or 3; level 1 is left out).
  * It is only shown on the leaderboard, so it is checked for shape, not
  * against each ship's limits. Keep the lists in step with RR.HULLS, RR.STATS
  * and RR.ITEMS in public/src/game.js.
@@ -48,7 +48,7 @@ const STAT_COUNT = 5;
 const STAT_MAX = 10;
 const ITEMS = ['nitro', 'shield', 'repair', 'rewind', 'blaster', 'missile', 'mine', 'emp'];
 const ITEM_MAX = 99;
-const LEVEL_MAX = 3; // shop powerups come in levels 1-3
+const LEVEL_MAX = 3; // powerups are upgraded from level 1 to 3
 const RACERS = 6; // ships on the grid, so the worst finishing place
 const PID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const STORE_TIMEOUT_MS = 8000;
@@ -178,8 +178,8 @@ function setupError(s) {
   if (!SHIPS.includes(s.ship)) return 'Unknown ship';
   if (!Array.isArray(s.stats) || s.stats.length !== STAT_COUNT ||
     !s.stats.every((v) => Number.isInteger(v) && v >= 1 && v <= STAT_MAX)) return 'Bad stats';
-  // items: picked up on the track and used, item -> how many; bought: in the hangar for this race, item -> level
-  for (const [list, max] of [[s.items, ITEM_MAX], [s.bought, LEVEL_MAX]]) {
+  // items: picked up on the track and used, item -> how many; levels: upgrade levels, item -> 1-3
+  for (const [list, max] of [[s.items, ITEM_MAX], [s.levels, LEVEL_MAX]]) {
     if (list == null) continue;
     if (!isMap(list)) return 'Bad items';
     for (const k of Object.keys(list)) {
@@ -199,7 +199,9 @@ function cleanSetup(s) {
     for (const k of ITEMS) if (list && list[k] > 0) out[k] = list[k];
     return out;
   };
-  return { ship: s.ship, stats: s.stats.slice(), items: pick(s.items), bought: pick(s.bought) };
+  const levels = {};
+  for (const k of ITEMS) if (s.levels && s.levels[k] > 1) levels[k] = s.levels[k]; // level 1 is the default
+  return { ship: s.ship, stats: s.stats.slice(), items: pick(s.items), levels };
 }
 
 /** Give up on a slow backend call so a request never hangs on Firestore. */

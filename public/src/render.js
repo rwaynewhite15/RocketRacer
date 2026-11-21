@@ -783,7 +783,7 @@
     const mode = RR.MODES[g.modeIdx], fight = g.modeIdx !== 0;
 
     // small buttons under PRESS ENTER, wrapped onto as many lines as they need
-    const spare = g.pointsLeft(g.prog.ship), items = [];
+    const spare = g.pointsLeft(g.prog.ship) + g.prog.upts, items = []; // stat and upgrade points waiting to be spent
     items.push(['HANGAR' + (touch ? '' : ' (H)') + (spare > 0 ? ' +' + spare : ''), function () { g.openHangar(); },
       spare > 0 && Math.floor(T * 3) & 1 ? PAL.white : PAL.yellow]);
     if (net.online) {
@@ -877,7 +877,7 @@
    * finished in the race that set the time; below the list comes your own row
    * and world rank when you are not in the top 10.
    */
-  /* 3 x 5 digits, for the level of a bought powerup beside its icon */
+  /* 3 x 5 digits, for the level of an upgraded powerup beside its icon */
   const TINY = ['###1#1#1#1###', '.#.1##.1.#.1.#.1###', '##.1..#1.#.1#..1###', '##.1..#1.#.1..#1##.', '#.#1#.#1###1..#1..#',
     '###1#..1##.1..#1##.', '.##1#..1###1#.#1###', '###1..#1.#.1.#.1.#.', '###1#.#1###1#.#1###', '###1#.#1###1..#1##.'];
   /** Draw number `n` in the tiny digits with its top-left at (x, y); returns the width. */
@@ -908,26 +908,23 @@
 
   /**
    * A leaderboard row's setup in a few pixels: the rocket, small, then up to
-   * three powerup icons (+ when there were more). Bought powerups come first,
-   * with a small 2 or 3 beside an upgraded one; then the ones picked up on the
-   * track. Rows from before setups were recorded get a dash. Returns what it
-   * drew, for the tests.
+   * three of the powerups the pilot used, most used first (+ when there were
+   * more), with a small 2 or 3 beside one they had upgraded. Rows from before
+   * setups were recorded get a dash. Returns what it drew, for the tests.
    */
   function setupStrip(ctx, su, x, y) {
     const hull = su && hullOf(su.ship);
     if (!hull) { text(ctx, '-', x + 2, y, PAL.steel); return null; }
     ctx.drawImage(Art.shipMini(hull.design, 0), x, y - 2);
-    const all = usedList(su, 'bought').map(function (u) { return [u[0], u[1]]; }) // [item, level]
-      .concat(usedList(su).map(function (u) { return [u[0], 0]; })); // [item, 0]: picked up
-    const shown = all.slice(0, all.length > 3 ? 2 : 3), out = { ship: hull.id, bought: [], icons: [], more: all.length - shown.length };
+    const used = usedList(su), shown = used.slice(0, used.length > 3 ? 2 : 3), levels = su.levels || {};
+    const out = { ship: hull.id, icons: [], numbers: [], more: used.length - shown.length };
     let ix = x + 11;
     shown.forEach(function (u) {
       ctx.drawImage(Art.icons[u[0]], ix, y - 1);
       ix += 10;
-      if (!u[1]) { out.icons.push(u[0]); return; }
-      const drawn = u[1] > 1 ? tinyNum(ctx, u[1], ix - 1, y + 3, PAL.gold) : 0;
-      ix += drawn;
-      out.bought.push([u[0], drawn ? u[1] : 1]);
+      out.icons.push(u[0]);
+      const lv = levels[u[0]];
+      if (lv > 1) { ix += tinyNum(ctx, lv, ix - 1, y + 3, PAL.gold); out.numbers.push([u[0], lv]); }
     });
     if (out.more) text(ctx, '+', ix + 1, y, PAL.silver);
     return out;
@@ -1041,7 +1038,7 @@
     text(ctx, 'BEST LAP ' + fmt(e.lap), tx, y + 68, PAL.silver);
     const place = e.place >= 1 && e.place <= 6 ? ORD[e.place - 1] : '-';
     text(ctx, place + ' VS ' + ((RR.DIFFS[e.diff] && RR.DIFFS[e.diff].name) || '?') + ' RIVALS', tx, y + 78, DIFF_COL[e.diff] || PAL.silver);
-    const shown = { ship: hull ? hull.id : null, stats: null, items: [], bought: [] };
+    const shown = { ship: hull ? hull.id : null, stats: null, items: [], numbers: [] };
     g.cardShown = shown;
 
     if (!hull) {
@@ -1065,25 +1062,17 @@
         text(ctx, String(lv), bx + 56, ry, lv > base ? PAL.yellow : PAL.white);
       });
 
-      /* powerups: bought in the hangar, then picked up on the track */
-      const used = usedList(su), bought = usedList(su, 'bought');
-      text(ctx, 'BOUGHT', x + 14, y + 152, PAL.steel);
-      g.cardAt = [x + 60, y + 151]; // where the bought icons go (the tests look there)
-      if (!bought.length) text(ctx, 'NOTHING', x + 60, y + 152, PAL.lime);
-      bought.forEach(function (u, k) {
-        const bx = x + 60 + k * 80, lv = u[1] > 1 ? u[1] : 1;
-        ctx.drawImage(Art.icons[u[0]], bx, y + 151);
-        const lw = lv > 1 ? tinyNum(ctx, lv, bx + 9, y + 155, PAL.gold) : 0; // an upgraded one: its level
-        text(ctx, RR.ITEMS[u[0]].name, bx + 12 + lw, y + 152, PAL.gold);
-        shown.bought.push([u[0], lw ? lv : 1]);
-      });
-      text(ctx, 'PICKED UP AND USED', x + 14, y + 166, PAL.steel);
-      if (!used.length) text(ctx, bought.length ? 'NONE' : 'NONE - A CLEAN RUN', x + 14, y + 178, PAL.lime);
+      /* powerups used, with a small 2 or 3 beside an upgraded one */
+      const used = usedList(su), levels = su.levels || {};
+      text(ctx, 'POWERUPS USED', x + 14, y + 158, PAL.steel);
+      if (!used.length) text(ctx, 'NONE - A CLEAN RUN', x + 14, y + 172, PAL.lime);
       const colW = Math.floor((pw - 28) / 2);
       used.forEach(function (u, k) {
-        const cx = x + 14 + (k % 2) * colW, ry = y + 178 + Math.floor(k / 2) * 10, T = RR.ITEMS[u[0]];
+        const cx = x + 14 + (k % 2) * colW, ry = y + 171 + Math.floor(k / 2) * 11, T = RR.ITEMS[u[0]], lv = levels[u[0]];
         ctx.drawImage(Art.icons[u[0]], cx, ry - 1);
-        text(ctx, T.name, cx + 12, ry, T.color);
+        const lw = lv > 1 ? tinyNum(ctx, lv, cx + 9, ry + 3, PAL.gold) : 0;
+        if (lw) shown.numbers.push([u[0], lv]);
+        text(ctx, T.name, cx + 12 + lw, ry, T.color);
         text(ctx, 'X' + u[1], cx + colW - 8, ry, PAL.white, 1, 'right');
         shown.items.push(u);
       });
@@ -1100,7 +1089,7 @@
    * to that ship's ceiling; the dots past the end are out of its reach.
    */
   function drawHangar(g, ctx, W, H) {
-    const T = g.t, touch = RR.input.touchMode, ST = RR.STATS;
+    const T = g.t, touch = RR.input.touchMode, ST = RR.STATS, pr = g.prog, power = g.hangarPage === 'power';
     const i = g.hangarShip, h = RR.HULLS[i], open = g.shipUnlocked(i), left = g.pointsLeft(i);
     ctx.fillStyle = 'rgba(7,7,26,0.72)';
     ctx.fillRect(0, 0, W, H);
@@ -1109,71 +1098,82 @@
     panel(ctx, x, y, pw, ph, PAL.yellow);
     text(ctx, 'HANGAR', W / 2, y + 7, PAL.yellow, 2, 'center', PAL.plum);
     const pts = g.shipPoints(i), maxed = pts >= RR.shipRoom(i); // this ship's points: never more than it can use
-    text(ctx, 'WINS ' + g.prog.wins + '  POINTS ' + pts + (maxed ? ' MAX' : '') + '  CREDITS ' + g.prog.credits,
+    text(ctx, power ? 'CREDITS ' + pr.credits + '   UPGRADE POINTS ' + pr.upts
+      : 'WINS ' + pr.wins + '  POINTS ' + pts + (maxed ? ' MAX' : '') + '  CREDITS ' + pr.credits,
       W / 2, y + 25, PAL.silver, 1, 'center');
     const mark = function (ry, hh) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry, pw - 10, hh); };
 
-    /* the ship */
-    const sy = y + 38, sel = g.hangarRow === 0 && !touch;
-    if (sel) mark(sy - 3, 48);
-    const spr = Art.ship(h.design, 0);
-    if (!open) ctx.globalAlpha = 0.3;
-    ctx.drawImage(spr, x + 30, sy, spr.width * 2, spr.height * 2);
-    ctx.globalAlpha = 1;
-    text(ctx, h.name, x + 70, sy + 3, open ? PAL.white : PAL.steel, 2, 'left', PAL.ink);
-    text(ctx, h.blurb, x + 70, sy + 21, PAL.sky);
-    const need = h.wins - g.prog.wins;
-    text(ctx, open ? 'YOUR SHIP' : 'LOCKED - ' + need + ' MORE WIN' + (need > 1 ? 'S' : ''), x + 70, sy + 32, open ? PAL.lime : PAL.alarm);
-    const nud = sel ? Math.round(Math.sin(T * 8) * 1.5) : 0, acol = sel || touch ? PAL.yellow : PAL.steel;
-    text(ctx, '<', x + 14 - nud, sy + 14, acol, 2, 'center', PAL.ink);
-    text(ctx, '>', x + pw - 14 + nud, sy + 14, acol, 2, 'center', PAL.ink);
-    g.ui.push({ x: x, y: sy - 3, w: 28, h: 48, act: function () { g.hangarBrowse(-1); } });
-    g.ui.push({ x: x + pw - 28, y: sy - 3, w: 28, h: 48, act: function () { g.hangarBrowse(1); } });
+    /* two pages: the ship and its stats, and powerup upgrades */
+    const tw = 74;
+    button(g, ctx, 'SHIP', Math.round(W / 2 - tw - 3), y + 36, tw, 14, function () { g.hangarTab('ship'); }, power ? PAL.slate : PAL.yellow);
+    button(g, ctx, 'POWERUPS', Math.round(W / 2 + 3), y + 36, tw, 14, function () { g.hangarTab('power'); }, power ? PAL.yellow : PAL.slate);
 
-    /* its stats */
-    let ry = y + 92;
-    const bx = x + 70;
-    ST.forEach(function (st, k) {
-      const lv = g.statLevel(i, k), base = h.base[k], cap = h.cap[k], on = g.hangarRow === k + 1 && !touch;
-      if (on) mark(ry - 4, 14);
-      text(ctx, st.name, x + 10, ry, on ? PAL.yellow : PAL.silver);
-      for (let c = 0; c < 10; c++) {
-        if (c >= cap) { ctx.fillStyle = PAL.slate; ctx.fillRect(bx + c * 5 + 1, ry + 3, 2, 1); continue; }
-        ctx.fillStyle = c < base ? PAL.silver : c < lv ? PAL.yellow : PAL.dusk;
-        ctx.fillRect(bx + c * 5, ry, 4, 7);
+    if (!power) {
+      /* the ship */
+      const sy = y + 58, sel = g.hangarRow === 0 && !touch;
+      if (sel) mark(sy - 3, 48);
+      const spr = Art.ship(h.design, 0);
+      if (!open) ctx.globalAlpha = 0.3;
+      ctx.drawImage(spr, x + 30, sy, spr.width * 2, spr.height * 2);
+      ctx.globalAlpha = 1;
+      text(ctx, h.name, x + 70, sy + 3, open ? PAL.white : PAL.steel, 2, 'left', PAL.ink);
+      text(ctx, h.blurb, x + 70, sy + 21, PAL.sky);
+      const need = h.wins - pr.wins;
+      text(ctx, open ? 'YOUR SHIP' : 'LOCKED - ' + need + ' MORE WIN' + (need > 1 ? 'S' : ''), x + 70, sy + 32, open ? PAL.lime : PAL.alarm);
+      const nud = sel ? Math.round(Math.sin(T * 8) * 1.5) : 0, acol = sel || touch ? PAL.yellow : PAL.steel;
+      text(ctx, '<', x + 14 - nud, sy + 14, acol, 2, 'center', PAL.ink);
+      text(ctx, '>', x + pw - 14 + nud, sy + 14, acol, 2, 'center', PAL.ink);
+      g.ui.push({ x: x, y: sy - 3, w: 28, h: 48, act: function () { g.hangarBrowse(-1); } });
+      g.ui.push({ x: x + pw - 28, y: sy - 3, w: 28, h: 48, act: function () { g.hangarBrowse(1); } });
+
+      /* its stats */
+      let ry = y + 112;
+      const bx = x + 70;
+      ST.forEach(function (st, k) {
+        const lv = g.statLevel(i, k), base = h.base[k], cap = h.cap[k], on = g.hangarRow === k + 1 && !touch;
+        if (on) mark(ry - 4, 14);
+        text(ctx, st.name, x + 10, ry, on ? PAL.yellow : PAL.silver);
+        for (let c = 0; c < 10; c++) {
+          if (c >= cap) { ctx.fillStyle = PAL.slate; ctx.fillRect(bx + c * 5 + 1, ry + 3, 2, 1); continue; }
+          ctx.fillStyle = c < base ? PAL.silver : c < lv ? PAL.yellow : PAL.dusk;
+          ctx.fillRect(bx + c * 5, ry, 4, 7);
+        }
+        text(ctx, lv + '/' + cap, bx + 54, ry, lv >= cap ? PAL.lime : PAL.white);
+        const less = open && lv > base, more = open && left > 0 && lv < cap;
+        button(g, ctx, '-', x + pw - 52, ry - 4, 22, 14, function () { g.spend(i, k, -1); }, less ? PAL.white : PAL.slate);
+        button(g, ctx, '+', x + pw - 27, ry - 4, 22, 14, function () { g.spend(i, k, 1); }, more ? PAL.yellow : PAL.slate);
+        ry += 15;
+      });
+      text(ctx, open ? 'POINTS LEFT FOR THIS SHIP: ' + left : 'WIN RACES AND FIGHTS TO UNLOCK', W / 2, ry + 3,
+        open && left > 0 ? PAL.yellow : PAL.steel, 1, 'center');
+    } else {
+      /* powerup upgrades: credits buy points, points raise a powerup's level (1-3) */
+      const buyRow = ST.length + 1, by = y + 60, room = g.powerRoom(), full = pr.upts >= room;
+      if (g.hangarRow === buyRow && !touch) mark(by - 5, 17);
+      text(ctx, full ? (room ? 'POINTS FOR EVERY LEVEL LEFT' : 'EVERY POWERUP IS MAXED') : 'UPGRADE POINT', x + 10, by,
+        full ? PAL.lime : PAL.silver);
+      if (!full) {
+        button(g, ctx, 'BUY ' + RR.UPGRADE_PRICE + ' CR', x + pw - 98, by - 4, 88, 15, function () { g.buyUpgrade(); },
+          g.canBuyUpgrade() ? PAL.yellow : PAL.slate);
       }
-      text(ctx, lv + '/' + cap, bx + 54, ry, lv >= cap ? PAL.lime : PAL.white);
-      const less = open && lv > base, more = open && left > 0 && lv < cap;
-      button(g, ctx, '-', x + pw - 52, ry - 4, 22, 14, function () { g.spend(i, k, -1); }, less ? PAL.white : PAL.slate);
-      button(g, ctx, '+', x + pw - 27, ry - 4, 22, 14, function () { g.spend(i, k, 1); }, more ? PAL.yellow : PAL.slate);
-      ry += 15;
-    });
-    text(ctx, open ? 'POINTS LEFT FOR THIS SHIP: ' + left : 'WIN RACES AND FIGHTS TO UNLOCK', W / 2, ry + 1,
-      open && left > 0 ? PAL.yellow : PAL.steel, 1, 'center');
-
-    /* the shop: one powerup, at level 1-3, bought with credits to start the next Grand Prix with */
-    const pr = g.prog, kit = pr.kit, klv = pr.kitLv, shopRow = ST.length + 1;
-    const ly = y + 186, onItem = g.hangarRow === shopRow && !touch, onLv = g.hangarRow === shopRow + 1 && !touch;
-    if (onItem || onLv) mark(ly - 5, 17);
-    text(ctx, 'NEXT RACE', x + 10, ly, onItem || onLv ? PAL.yellow : PAL.silver);
-    const lw = 50, sx = x + 70, sw = pw - 80 - lw - 4, lx = sx + sw + 4, LVC = [PAL.silver, PAL.yellow, PAL.orange];
-    panel(ctx, sx, ly - 4, sw, 15, onItem ? PAL.white : kit ? PAL.gold : PAL.steel);
-    text(ctx, '<', sx + 6, ly, PAL.yellow, 1, 'center');
-    text(ctx, '>', sx + sw - 6, ly, PAL.yellow, 1, 'center');
-    if (kit) {
-      ctx.drawImage(Art.icons[kit], sx + 14, ly - 1);
-      text(ctx, RR.ITEMS[kit].name, sx + 26, ly, RR.ITEMS[kit].color);
-    } else text(ctx, 'EMPTY', sx + sw / 2, ly, PAL.steel, 1, 'center');
-    panel(ctx, lx, ly - 4, lw, 15, onLv ? PAL.white : LVC[klv - 1]);
-    text(ctx, '-', lx + 6, ly, PAL.yellow, 1, 'center');
-    text(ctx, '+', lx + lw - 6, ly, PAL.yellow, 1, 'center');
-    text(ctx, 'LV' + klv, lx + lw / 2, ly, LVC[klv - 1], 1, 'center');
-    text(ctx, kit ? RR.priceOf(kit, klv) + ' CR: ' + RR.shopDoes(kit, klv) : 'BUY A POWERUP FOR YOUR NEXT GRAND PRIX', W / 2, ly + 15,
-      kit ? PAL.gold : PAL.steel, 1, 'center');
-    g.ui.push({ x: sx, y: ly - 6, w: sw / 2, h: 19, label: 'SHOP <', act: function () { g.shopCycle(-1); } });
-    g.ui.push({ x: sx + sw / 2, y: ly - 6, w: sw / 2, h: 19, label: 'SHOP >', act: function () { g.shopCycle(1); } });
-    g.ui.push({ x: lx, y: ly - 6, w: lw / 2, h: 19, label: 'LEVEL -', act: function () { g.shopLevel(-1); } });
-    g.ui.push({ x: lx + lw / 2, y: ly - 6, w: lw / 2, h: 19, label: 'LEVEL +', act: function () { g.shopLevel(1); } });
+      g.powerShown = [];
+      RR.POWER.forEach(function (pw2, k) {
+        const id = pw2.id, lv = g.powerLevel(id), ry = y + 80 + k * 15, on = g.hangarRow === buyRow + 1 + k && !touch;
+        if (on) mark(ry - 4, 14);
+        ctx.drawImage(Art.icons[id], x + 10, ry - 1);
+        text(ctx, RR.ITEMS[id].name, x + 22, ry, on ? PAL.yellow : RR.ITEMS[id].color);
+        for (let c = 0; c < 3; c++) {
+          ctx.fillStyle = c === 0 ? PAL.silver : c < lv ? PAL.yellow : PAL.dusk;
+          ctx.fillRect(x + 70 + c * 7, ry, 6, 7);
+        }
+        text(ctx, RR.powerDoes(id, lv), x + 96, ry, lv > 1 ? PAL.yellow : PAL.white);
+        button(g, ctx, '-', x + pw - 52, ry - 4, 22, 14, function () { g.powerSpend(id, -1); }, lv > 1 ? PAL.white : PAL.slate);
+        button(g, ctx, '+', x + pw - 27, ry - 4, 22, 14, function () { g.powerSpend(id, 1); }, pr.upts > 0 && lv < 3 ? PAL.yellow : PAL.slate);
+        g.ui.push({ x: x + pw - 27, y: ry - 4, w: 22, h: 14, label: 'UP ' + id, act: function () { g.powerSpend(id, 1); } });
+        g.powerShown.push([id, lv]);
+      });
+      text(ctx, 'UPGRADES MAKE EVERY PICK-UP STRONGER', W / 2, y + 204, PAL.steel, 1, 'center');
+    }
 
     const bw = 96;
     button(g, ctx, touch ? 'DONE' : 'DONE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 23, bw, 17,

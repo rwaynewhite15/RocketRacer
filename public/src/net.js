@@ -59,9 +59,9 @@
 
   /**
    * entry: { name, pid, time, lap, diff, place, setup } — `place` is the finishing
-   * position in that race; `setup` is { ship, stats, items, bought }: the rocket
+   * position in that race; `setup` is { ship, stats, items, levels }: the rocket
    * flown, its five stat levels, how many of each powerup were picked up and
-   * used, and what was bought in the hangar for that race.
+   * used, and the pilot's powerup upgrade levels.
    */
   N.submit = function (track, entry) {
     N.result = null;
