@@ -686,7 +686,7 @@
 
   /* ------------------------------------------------- moving the controls */
 
-  const CONTROL_NAMES = ['fire', 'brake', 'defer']; // (steering is a drag anywhere, so it has no spot to move)
+  const CONTROL_NAMES = ['steer', 'fire', 'brake', 'defer']; // (steering by a drag anywhere else needs no spot)
 
   /** Keep only well-formed saved positions (fractions of the screen). */
   function cleanControls(raw) {
@@ -733,7 +733,7 @@
       if (p.drag === undefined) {
         p.drag = null;
         for (const n of CONTROL_NAMES) {
-          const c = L.centre[n], reach = n === 'fire' ? L.fire.grab : 30;
+          const c = L.centre[n], reach = n === 'fire' || n === 'steer' ? L[n].grab : 30;
           if (Math.hypot(p.sx - c.x, p.sy - c.y) <= reach) { p.drag = n; p.ox = c.x - p.sx; p.oy = c.y - p.sy; break; }
         }
       }

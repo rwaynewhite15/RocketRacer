@@ -73,6 +73,7 @@
     ins = ins || NO_INSET;
     const R = 34, grab = R + 24; // a thumb landing within `grab` of a stick's centre takes it
     const def = { fire: { x: W - ins.r - 66, y: H - ins.b - 66 } };
+    def.steer = { x: ins.l + 66, y: def.fire.y }; // the steering stick: bottom left, the fire stick's mirror image
     if (W - ins.l - ins.r < 360) { // narrow (upright phone): stack BRAKE and DEFER above the fire stick
       def.brake = { x: def.fire.x, y: def.fire.y - 80 };
       def.defer = { x: def.fire.x, y: def.brake.y - 54 };
@@ -81,7 +82,7 @@
       def.defer = { x: def.fire.x, y: def.fire.y - 74 };
     }
     const g = RR.game, saved = (g && g.controls && g.controls[W >= H ? 'land' : 'port']) || {};
-    const half = { fire: R + 2, brake: 21, defer: 22 }, centre = {};
+    const half = { steer: R + 2, fire: R + 2, brake: 21, defer: 22 }, centre = {};
     for (const n in def) {
       const sp = saved[n], h = half[n];
       centre[n] = {
@@ -92,6 +93,7 @@
     const box = function (c, w, h) { return { x: c.x - w / 2, y: c.y - h / 2, w: w, h: h }; };
     return {
       stickR: R,
+      steer: { x: centre.steer.x, y: centre.steer.y, r: R, grab: grab },
       fire: { x: centre.fire.x, y: centre.fire.y, r: R, grab: grab },
       brake: box(centre.brake, 42, 42),
       defer: box(centre.defer, 44, 44),
@@ -626,9 +628,11 @@
     const hot = blink ? PAL.white : PAL.orange;
     const ex = dr.x + dr.dx, ey = dr.y + dr.dy;
 
-    // no ring or disc round the touch: just where it began and the way it points
-    if (dr.dist > 2) RR.line(ctx, dr.x, dr.y, ex, ey, col, 2);
-    RR.disc(ctx, dr.x, dr.y, 2, PAL.white);
+    // no ring or disc round the touch: just where it began and the way it points (the stick's knob shows its own)
+    if (!dr.stick) {
+      if (dr.dist > 2) RR.line(ctx, dr.x, dr.y, ex, ey, col, 2);
+      RR.disc(ctx, dr.x, dr.y, 2, PAL.white);
+    }
 
     // the meter: ten segments, green to orange, well clear of the thumb
     const n = 10, mw = n * 6 - 1 + 8, mh = 22;
@@ -650,13 +654,17 @@
   function drawTouch(g, ctx, W, H) {
     const L = RR.touchLayout(W, H, g.inset), t = RR.input.touch, p = g.player, ins = g.inset;
 
-    /* steering: a drag from anywhere; until the first one, say so */
+    /* steering: the stick bottom left, or a drag from anywhere else; until the first, say so */
+    const steering = t.drag && t.drag.stick ? t.drag : null;
+    drawStick(ctx, L.steer, steering && steering.stick, PAL.lime, PAL.steel);
+    stickLabel(ctx, L.steer, 'FLY', steering ? PAL.white : PAL.silver, H, ins);
     g.meter = t.drag ? drawDrag(ctx, t.drag, W, H, ins, g.t) : null;
     if (t.drag) {
       if (t.drag.power > 0) p.dragged = true;
     } else if (!p.dragged && g.phase === 'race' && Math.floor(g.t * 2) & 1) {
-      text(ctx, 'DRAG ANYWHERE TO FLY', ins.l + 8, H - ins.b - 26, PAL.silver, 1, 'left', PAL.ink);
-      text(ctx, 'FARTHER = MORE POWER', ins.l + 8, H - ins.b - 16, PAL.silver, 1, 'left', PAL.ink);
+      const hy = L.steer.y - L.steer.r - 30;
+      text(ctx, 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
     }
 
     /* fire stick: the blaster fires while held (ahead, or the way it is pushed); missiles go on letting go */
@@ -702,6 +710,8 @@
     const held = {};
     for (const id in RR.input.pointers) { const d = RR.input.pointers[id].drag; if (d) held[d] = true; }
     const ring = function (c, n) { RR.ring(ctx, c.x, c.y, c.r, held[n] ? PAL.white : PAL.yellow, held[n] ? 0 : 12, g.t * 2); };
+    drawStick(ctx, L.steer, null, PAL.lime, PAL.silver); ring(L.steer, 'steer');
+    stickLabel(ctx, L.steer, 'FLY', PAL.yellow, H, ins);
     drawStick(ctx, L.fire, null, PAL.cyan, PAL.silver); ring(L.fire, 'fire');
     stickLabel(ctx, L.fire, 'AIM + FIRE', PAL.yellow, H, ins);
     panel(ctx, L.brake.x, L.brake.y, L.brake.w, L.brake.h, held.brake ? PAL.white : PAL.yellow);

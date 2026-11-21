@@ -6,7 +6,11 @@
  *   RR.input.taps          -> pointer presses this frame, in game pixels
  *
  * Touch play:
- *   steering    touch anywhere that is not another control and drag. The
+ *   steer stick fixed bottom left, the fire stick's mirror image (movable in
+ *               Pause > Move controls). The rocket heads the way it is
+ *               pushed; how far it is pushed is the engine power, full at
+ *               the rim, none in the middle STEER_DEAD.
+ *   steering    or touch anywhere that is not another control and drag. The
  *               direction of the drag is where the rocket heads; how far you
  *               drag from where you started is the engine power, rising to
  *               full at DRAG_MAX. Past that the start point trails the thumb,
@@ -193,6 +197,17 @@
   }
 
   const AIM_DEADZONE = 0.3; // fire stick pushed less than this: fire straight ahead
+  const STEER_DEAD = 0.15; // steering stick pushed less than this: no power
+  I.STEER_DEAD = STEER_DEAD;
+
+  /** The steering stick as a drag: the way it is pushed, and power from how far (`stick`: the knob). */
+  function stickDrag(p, c) {
+    const k = stickState(p, c);
+    return {
+      x: c.x, y: c.y, dx: k.dx, dy: k.dy, dist: k.mag * c.r, max: c.r, ang: k.ang, stick: k,
+      power: k.mag <= STEER_DEAD ? 0 : (k.mag - STEER_DEAD) / (1 - STEER_DEAD),
+    };
+  }
   const DRAG_DEAD = 6; // game pixels a steering touch must move before it does anything, so a tap is not a burn
   const DRAG_MAX = 56; // game pixels from the starting point for full power
   I.DRAG_DEAD = DRAG_DEAD; I.DRAG_MAX = DRAG_MAX;
@@ -240,11 +255,13 @@
       if (!p.role) {
         p.role = inside(p.sx, p.sy, L.brake, 6) ? 'brake'
           : near(p.sx, p.sy, L.fire) ? 'fire'
+          : near(p.sx, p.sy, L.steer) ? 'stick'
           : onAny(p.sx, p.sy, buttons) ? 'none'
           : 'steer'; // anywhere else on the screen
       }
-      if (p.role === 'steer' || p.role === 'fire' || p.role === 'brake') I.controlAt = performance.now();
+      if (p.role === 'steer' || p.role === 'stick' || p.role === 'fire' || p.role === 'brake') I.controlAt = performance.now();
       if (p.role === 'brake') t.brake = true;
+      else if (p.role === 'stick' && !t.drag) t.drag = stickDrag(p, L.steer);
       else if (p.role === 'steer' && !t.drag) t.drag = dragState(p);
       else if (p.role === 'fire' && !t.aimStick) {
         t.fire = true;
