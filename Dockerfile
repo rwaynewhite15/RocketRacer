@@ -9,11 +9,12 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
-COPY server.js ./
+COPY server.js mp-server.js ./
 COPY lib ./lib
 COPY public ./public
 
 # Drop root. Cloud Run tells us the port through $PORT (8080 by default).
+# The online-play service runs the same image with `node mp-server.js`.
 USER node
 EXPOSE 8080
 CMD ["node", "server.js"]

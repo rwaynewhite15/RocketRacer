@@ -11,6 +11,9 @@
 # What it creates:
 #   - the staging service (rocketracer-staging): same project, own URL, own
 #     leaderboard collection, built from the code in this checkout
+#   - online play: a service of its own beside each of the two (rocketracer-mp,
+#     rocketracer-mp-staging), same image, started with `node mp-server.js`;
+#     the game services are pointed at them (MP_URL)
 #   - an Artifact Registry repo for the pipeline's container images
 #   - two deploy accounts GitHub Actions can act as, with no stored keys
 #     (Workload Identity Federation):
@@ -20,7 +23,9 @@
 #                             can only push images and roll out staging
 #
 # Options (environment variables): PROJECT, REGION, SERVICE, STAGING_SERVICE,
-# GITHUB_REPO (owner/name; read from the git remote if unset), BRANCH, AR_REPO.
+# MP_SERVICE, STAGING_MP_SERVICE, MP_MIN_INSTANCES (production online play,
+# default 1: no cold starts), GITHUB_REPO (owner/name; read from the git
+# remote if unset), BRANCH, AR_REPO.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -28,6 +33,9 @@ PROJECT="${PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}"
 REGION="${REGION:-us-central1}"
 SERVICE="${SERVICE:-rocketracer}"
 STAGING_SERVICE="${STAGING_SERVICE:-${SERVICE}-staging}"
+MP_SERVICE="${MP_SERVICE:-${SERVICE}-mp}"
+STAGING_MP_SERVICE="${STAGING_MP_SERVICE:-${SERVICE}-mp-staging}"
+MP_MIN_INSTANCES="${MP_MIN_INSTANCES:-1}"
 AR_REPO="${AR_REPO:-rocketracer}"
 BRANCH="${BRANCH:-main}"
 GITHUB_REPO="${GITHUB_REPO:-$(git remote get-url origin 2>/dev/null | sed -E 's#^(git@github.com:|https://github.com/)##; s#\.git$##' || true)}"
@@ -120,14 +128,43 @@ setup_deployer production "${PROD_DEPLOYER}" "${SERVICE}" roles/artifactregistry
 setup_deployer staging "${STG_DEPLOYER}" "${STAGING_SERVICE}" roles/artifactregistry.writer "${STG_POOL}" \
   "assertion.repository == '${GITHUB_REPO}'"
 
+# setup_mp <online-play service> <game service> <APP_ENV> <leaderboard collection> <min instances> <deployer>
+# Online play gets a service of its own: one instance holding every room
+# (rooms live in memory), CPU always on for the 120 Hz race loop, WebSocket
+# connections up to an hour. The game service is told where it is.
+setup_mp() {
+  local mp="$1" web="$2" env="$3" coll="$4" min="$5" deployer="$6" url ws
+  echo "==> Online play: ${mp}"
+  if exists svc describe "${mp}"; then
+    echo "    already exists"
+  else
+    gcloud run deploy "${mp}" --source . --project "${PROJECT}" --region "${REGION}" \
+      --command node --args mp-server.js --allow-unauthenticated \
+      --timeout 3600 --session-affinity --concurrency 1000 --min-instances "${min}" --max-instances 1 \
+      --cpu 2 --memory 1Gi --no-cpu-throttling \
+      --set-env-vars "STORE=firestore,APP_ENV=${env},LEADERBOARD_COLLECTION=${coll},COMMIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo setup)" \
+      --quiet
+  fi
+  svc add-iam-policy-binding "${mp}" --member "serviceAccount:$(sa_email "${deployer}")" --role roles/run.developer --quiet >/dev/null
+  url="$(svc describe "${mp}" --format='value(status.url)')"
+  ws="${url/https:/wss:}/ws"
+  svc update "${web}" --update-env-vars "MP_URL=${ws}" --quiet >/dev/null
+  echo "    ${web} sends its players to ${ws}"
+}
+
 provider_name() { echo "projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/$1/providers/rocketracer-repo"; }
 sa_email() { echo "$1@${PROJECT}.iam.gserviceaccount.com"; }
+
+# staging's online play may sleep when nobody plays (min 0); production keeps one warm
+setup_mp "${STAGING_MP_SERVICE}" "${STAGING_SERVICE}" staging "${STAGING_COLLECTION:-rocketracer-staging}" 0 "${STG_DEPLOYER}"
+setup_mp "${MP_SERVICE}" "${SERVICE}" production "${LEADERBOARD_COLLECTION:-rocketracer}" "${MP_MIN_INSTANCES}" "${PROD_DEPLOYER}"
 
 cat <<EOF
 
 Done.
   Production: $(svc describe "${SERVICE}" --format='value(status.url)')
   Staging:    $(svc describe "${STAGING_SERVICE}" --format='value(status.url)')
+  Online play: $(svc describe "${MP_SERVICE}" --format='value(status.url)') (staging: $(svc describe "${STAGING_MP_SERVICE}" --format='value(status.url)'))
 
 Add these six variables to the GitHub repo
 (Settings > Secrets and variables > Actions > Variables tab > New repository variable):
@@ -148,5 +185,8 @@ Or, with the GitHub CLI signed in:
   gh variable set STAGING_WIF_PROVIDER --repo ${GITHUB_REPO} --body '$(provider_name "${STG_POOL}")'
   gh variable set STAGING_DEPLOYER_SA  --repo ${GITHUB_REPO} --body '$(sa_email "${STG_DEPLOYER}")'
 
-(Only if you changed the names: CLOUD_RUN_SERVICE='${SERVICE}', STAGING_SERVICE='${STAGING_SERVICE}', AR_REPO='${AR_REPO}'.)
+(Only if you changed the names: CLOUD_RUN_SERVICE='${SERVICE}', STAGING_SERVICE='${STAGING_SERVICE}', AR_REPO='${AR_REPO}',
+ MP_SERVICE='${MP_SERVICE}', STAGING_MP_SERVICE='${STAGING_MP_SERVICE}'.)
+
+Already set up before online play existed? Running this again is safe: it only adds what is missing.
 EOF

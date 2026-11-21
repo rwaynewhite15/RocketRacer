@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "STORE=memory node server.js",
+    "dev": "MP=embedded STORE=memory node server.js",
     "test": "node --test \"test/*.test.js\""
   },
   "engines": {

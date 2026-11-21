@@ -10,6 +10,11 @@ name: CI/CD
 # The usual flow: feature branch -> pull request into dev (staging updates
 # itself) -> once it plays right, pull request from dev into main (release).
 #
+# Online play is a second service per environment (rocketracer-mp-staging and
+# rocketracer-mp), from the same image. It is rolled out first, so new game
+# pages find a server that speaks their version; until tools/setup-cicd.sh has
+# created it, it is skipped and the game simply has no ONLINE button.
+#
 # Staging and production are two Cloud Run services in one project. The image
 # is built once, proven on staging, and that exact image is what production
 # gets. Each rollout is: deploy a revision with NO traffic -> smoke-test it ->
@@ -67,15 +72,18 @@ jobs:
       - name: API and game tests
         run: npm test
 
-      - name: Build the container and check that it boots
+      - name: Build the container and check that it boots (the game, and online play)
         run: |
           docker build -t rocketracer:ci .
           docker run -d --name rr -p 8080:8080 -e STORE=memory rocketracer:ci
-          for i in $(seq 1 20); do curl -fsS localhost:8080/api/health && break; sleep 1; done
+          docker run -d --name rrmp -p 8081:8080 -e STORE=memory rocketracer:ci node mp-server.js
+          for i in $(seq 1 20); do curl -fsS localhost:8080/api/health && curl -fsS localhost:8081/api/health && break; sleep 1; done
           curl -fsS localhost:8080/api/health | jq -e '.ok == true'
           curl -fsS localhost:8080/ | grep -q 'Rocket Racer'
-          docker logs rr
-          docker rm -f rr
+          curl -fsS localhost:8081/api/health | jq -e '.mp == true'
+          node tools/mp-smoke.js ws://localhost:8081/ws
+          docker logs rr; docker logs rrmp
+          docker rm -f rr rrmp
 
   staging:
     name: Deploy to staging
@@ -96,6 +104,7 @@ jobs:
       image: ${{ steps.build.outputs.image }}
     env:
       SERVICE: ${{ vars.STAGING_SERVICE || 'rocketracer-staging' }}
+      MP_SERVICE: ${{ vars.STAGING_MP_SERVICE || 'rocketracer-mp-staging' }}
       AR_REPO: ${{ vars.AR_REPO || 'rocketracer' }}
     steps:
       - uses: actions/checkout@v7
@@ -125,6 +134,13 @@ jobs:
           # refer to it by digest from here on: a digest cannot be moved to different contents later
           echo "image=$(docker inspect --format='{{index .RepoDigests 0}}' "$TAGGED")" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/setup-node@v7 # for the online-play smoke test
+        with:
+          node-version: 22
+
+      - name: Roll out online play to staging
+        run: tools/ci-deploy.sh "$MP_SERVICE" "${{ steps.build.outputs.image }}" staging mp
+
       - name: Roll out to staging
         id: rollout
         run: tools/ci-deploy.sh "$SERVICE" "${{ steps.build.outputs.image }}" staging
@@ -148,6 +164,7 @@ jobs:
       url: ${{ steps.rollout.outputs.url }}
     env:
       SERVICE: ${{ vars.CLOUD_RUN_SERVICE || 'rocketracer' }}
+      MP_SERVICE: ${{ vars.MP_SERVICE || 'rocketracer-mp' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -165,6 +182,13 @@ jobs:
           service_account: ${{ vars.DEPLOYER_SA || secrets.DEPLOYER_SA }}
 
       - uses: google-github-actions/setup-gcloud@v3
+
+      - uses: actions/setup-node@v7 # for the online-play smoke test
+        with:
+          node-version: 22
+
+      - name: Roll out online play (the image staging just proved)
+        run: tools/ci-deploy.sh "$MP_SERVICE" "${{ needs.staging.outputs.image }}" production mp
 
       - name: Roll out the image staging just proved
         id: rollout
