@@ -171,6 +171,33 @@
     if (!shipCache[key]) shipCache[key] = sprite(SHIPS[design].rows, Art.TEAMS[team]);
     return shipCache[key];
   };
+  /**
+   * The ship at half size (8 x 11), for a leaderboard row. Each 2 x 2 block
+   * keeps its most common colour, preferring paint over the dark outline, so
+   * the little rocket keeps its colours instead of turning to noise.
+   */
+  Art.shipMini = function (design, team) {
+    const key = 'm' + design + ':' + team;
+    if (shipCache[key]) return shipCache[key];
+    const src = SHIPS[design].rows, h = src.length, w = src[0].length, rows = [];
+    for (let y = 0; y < h; y += 2) {
+      let line = '';
+      for (let x = 0; x < w; x += 2) {
+        const n = {};
+        for (let dy = 0; dy < 2 && y + dy < h; dy++) {
+          for (let dx = 0; dx < 2 && x + dx < w; dx++) {
+            const ch = src[y + dy][x + dx];
+            if (ch !== '.') n[ch] = (n[ch] || 0) + (ch === 'k' ? 0.5 : 1);
+          }
+        }
+        let best = '.', most = 0;
+        for (const ch in n) if (n[ch] > most) { most = n[ch]; best = ch; }
+        line += best;
+      }
+      rows.push(line);
+    }
+    return (shipCache[key] = sprite(rows, Art.TEAMS[team]));
+  };
   Art.shipWhite = function (design) {
     const key = 'w' + design;
     if (!shipCache[key]) shipCache[key] = Art.tint(Art.ship(design, 0), '#ffffff');
@@ -278,16 +305,16 @@
       '...ee....',
       '....e....',
     ],
-    rewind: [ // the "rewind" double arrow: light on top, violet below
-      '....c...c',
-      '...cc..cc',
-      '..ccc.ccc',
-      '.cccccccc',
+    defer: [ // "skip ahead": two arrows on to a bar (the next gate), light on top, violet below
+      '........w',
+      'c...c...w',
+      'cc..cc..w',
+      'ccc.ccc.w',
       'wwwwwwwww',
-      '.VVVVVVVV',
-      '..VVV.VVV',
-      '...VV..VV',
-      '....V...V',
+      'VVV.VVV.w',
+      'VV..VV..w',
+      'V...V...w',
+      '........w',
     ],
   };
 
@@ -705,7 +732,7 @@
     Object.keys(ICONS).forEach(function (k) {
       Art.icons[k] = sprite(ICONS[k]);
       const power = k === 'nitro' || k === 'shield' || k === 'repair';
-      Art.pickups[k] = k === 'rewind'
+      Art.pickups[k] = k === 'defer'
         ? pickupSprite(Art.icons[k], '#e6c0ff', '#a855f7', '#1d0f3d')
         : power
           ? pickupSprite(Art.icons[k], '#c8f58a', '#38b764', '#0f2a1c')

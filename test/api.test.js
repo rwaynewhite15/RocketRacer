@@ -4,7 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
-const { createApp, cleanName, validateScore } = require('../server');
+const { createApp, cleanName, validateScore, cleanSetup, onlineRecorder } = require('../server');
 const { memoryStore } = require('../lib/store');
 
 function start() {
@@ -127,6 +127,98 @@ test('rows carry the finishing place, and a pilot can look up their own row and 
     assert.deepStrictEqual([r.rank, r.best.place, r.scores[0].place], [1, null, null]);
     assert.strictEqual(JSON.stringify(r).includes('pilot-'), false, 'ids never come back');
   } finally { server.close(); }
+});
+
+test('each time keeps the setup it was set with: rocket, stat levels and powerups used', async () => {
+  const { server, base } = await start();
+  try {
+    const setup = { ship: 'dart', stats: [6, 7, 5, 3, 4], items: { nitro: 2, missile: 1, mine: 0 }, levels: { missile: 3, emp: 1, nitro: 0 } };
+    let r = await (await post(base, run({ pid: 'pilot-setup001', name: 'ZIP', time: 76, setup }))).json();
+    const stored = { ship: 'dart', stats: [6, 7, 5, 3, 4], items: { nitro: 2, missile: 1 }, levels: { missile: 3 } }; // zero counts and level 1 dropped
+    assert.deepStrictEqual(r.best.setup, stored);
+    assert.deepStrictEqual(r.scores[0].setup, stored);
+    assert.deepStrictEqual((await board(base, 'lunar', 'pilot-setup001')).me.setup, stored, 'in your own row too');
+    assert.deepStrictEqual((await board(base, 'lunar')).scores[0].setup, stored, 'and for everyone else');
+
+    // the setup belongs to the record run: a slower race does not change it, a faster one does
+    const other = { ship: 'phoenix', stats: [9, 9, 9, 9, 9], items: { shield: 3 }, levels: { shield: 2 } };
+    r = await (await post(base, run({ pid: 'pilot-setup001', name: 'ZIP', time: 85, setup: other }))).json();
+    assert.deepStrictEqual([r.improved, r.best.setup], [false, stored]);
+    r = await (await post(base, run({ pid: 'pilot-setup001', name: 'ZIP', time: 74, setup: other }))).json();
+    assert.deepStrictEqual([r.improved, r.best.setup], [true, other]);
+
+    // a clean run (no powerups) keeps an empty list; a page from before setups sends none: null
+    r = await (await post(base, run({ pid: 'pilot-setup002', name: 'CLEAN', time: 77, setup: { ship: 'sparrow', stats: [3, 3, 3, 3, 3] } }))).json();
+    assert.deepStrictEqual(r.best.setup, { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: {}, levels: {} });
+    r = await (await post(base, run({ pid: 'pilot-setup003', name: 'OLD', time: 78 }))).json();
+    assert.strictEqual(r.best.setup, null);
+    assert.deepStrictEqual((await board(base, 'lunar')).scores.map((e) => e.name), ['ZIP', 'CLEAN', 'OLD']);
+
+  } finally { server.close(); }
+});
+
+test('setups that are not a known rocket, five stat levels and known powerup counts are turned away', async () => {
+  const { server, base } = await start(); // its own server: this is more posts than the rate limit allows one test
+  try {
+    const bad = [
+      'dart', [], { ship: 'xwing', stats: [3, 3, 3, 3, 3] }, { ship: 'dart' }, { ship: 'dart', stats: [3, 3, 3, 3] },
+      { ship: 'dart', stats: [3, 3, 3, 3, 11] }, { ship: 'dart', stats: [3, 3, 3, 3, 0] }, { ship: 'dart', stats: [3, 3, 3, 3, 2.5] },
+      { ship: 'dart', stats: [3, 3, 3, 3, '3'] }, { ship: 'dart', stats: [3, 3, 3, 3, 3], items: [1] },
+      { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { laser: 1 } }, { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { nitro: -1 } },
+      { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { nitro: 100 } }, { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { nitro: 1.5 } },
+      { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { constructor: 1 } },
+      { ship: 'dart', stats: [3, 3, 3, 3, 3], levels: [1] }, { ship: 'dart', stats: [3, 3, 3, 3, 3], levels: { laser: 2 } },
+      { ship: 'dart', stats: [3, 3, 3, 3, 3], levels: { missile: -1 } }, { ship: 'dart', stats: [3, 3, 3, 3, 3], levels: { missile: 4 } },
+    ];
+    for (const b of bad) assert.strictEqual((await post(base, run({ pid: 'pilot-setup009', setup: b }))).status, 400, JSON.stringify(b));
+    const proto = '{"track":"lunar","pid":"pilot-setup009","name":"X","time":75.5,"lap":24.2,"diff":1,"place":2,' +
+      '"setup":{"ship":"dart","stats":[3,3,3,3,3],"items":{"__proto__":{"nitro":1}}}}';
+    assert.strictEqual((await post(base, proto, true)).status, 400, '__proto__ is not an item');
+    assert.strictEqual((await board(base, 'lunar', 'pilot-setup009')).me, null, 'none of them was stored');
+    assert.deepStrictEqual(cleanSetup({ ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2, defer: 0, rewind: 1 }, levels: { nitro: 1, emp: 2 } }),
+      { ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2 }, levels: { emp: 2 } });
+  } finally { server.close(); }
+});
+
+test('online races timed by the multiplayer server are stored with the same checks, marked online', async () => {
+  const store = memoryStore(), logs = [];
+  const record = onlineRecorder(store, (m) => logs.push(m));
+  await record({ track: 'lunar', pid: 'pilot-online01', name: 'Zed', time: 75.5, lap: 24.2, diff: 2, place: 1,
+    setup: { ship: 'dart', stats: [5, 5, 5, 3, 3], items: { nitro: 1 }, levels: { missile: 3 } } });
+  const top = await store.top('lunar', 10);
+  assert.strictEqual(top.length, 1);
+  assert.deepStrictEqual([top[0].name, top[0].online, top[0].setup.levels], ['ZED', true, { missile: 3 }]);
+  assert.strictEqual(await record({ track: 'lunar', pid: 'pilot-online02', name: 'Fast', time: 5, lap: 1, diff: 1 }), null);
+  assert.match(logs[0], /refused/);
+  assert.strictEqual((await store.top('lunar', 10)).length, 1, 'an impossible time is not stored');
+  // times posted by players themselves are not marked online
+  const { server, base } = await start();
+  try {
+    const r = await (await post(base, run({ pid: 'pilot-offline1', name: 'Off', time: 76 }))).json();
+    assert.strictEqual(r.best.online, false);
+  } finally { server.close(); }
+});
+
+test('the page may connect only to itself, and to online play when it is a separate service', async () => {
+  const keep = process.env.MP_URL;
+  try {
+    delete process.env.MP_URL;
+    let { server, base } = await start();
+    let csp = (await fetch(base + '/')).headers.get('content-security-policy');
+    server.close();
+    assert.match(csp, /connect-src 'self';/);
+    process.env.MP_URL = 'wss://rocketracer-mp-staging-abc-uc.a.run.app/ws';
+    ({ server, base } = await start());
+    csp = (await fetch(base + '/')).headers.get('content-security-policy');
+    assert.match(csp, /connect-src 'self' wss:\/\/rocketracer-mp-staging-abc-uc\.a\.run\.app;/);
+    assert.match((await fetch(base + '/api/health')).headers.get('content-security-policy'), /wss:\/\/rocketracer-mp-staging/, 'on every response');
+    server.close();
+    process.env.MP_URL = 'javascript:alert(1)';
+    ({ server, base } = await start());
+    csp = (await fetch(base + '/')).headers.get('content-security-policy');
+    server.close();
+    assert.match(csp, /connect-src 'self';/, 'anything but a ws(s) address is ignored');
+  } finally { if (keep === undefined) delete process.env.MP_URL; else process.env.MP_URL = keep; }
 });
 
 test('rate-limits a flood of submissions', async () => {

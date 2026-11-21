@@ -12,6 +12,21 @@ body {
   overscroll-behavior: none;
 }
 
+/*
+ * iOS 26 Home Screen app: with the status bar see-through (black-translucent
+ * and viewport-fit=cover), WebKit lays the page out one status bar short
+ * (62 pt on an iPhone 17 Pro) and draws nothing below that, so the bottom of
+ * the game was cut off. It only does so while the page is no taller than the
+ * short screen (WebKit bug 301108), so make the page at least screen-tall.
+ * The min() keeps it from growing past the screen where the top inset is 0
+ * (WebKit bug 316008). Elsewhere this changes nothing.
+ */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  html {
+    min-height: min(100lvh, calc(100% + env(safe-area-inset-top, 0px)));
+  }
+}
+
 body {
   -webkit-user-select: none;
   user-select: none;
@@ -41,6 +56,11 @@ body {
 
 #screen {
   pointer-events: none;
+}
+
+/* The HUD takes the keyboard focus (iPad Safari only sends keys to a focused element); no focus ring. */
+#hud:focus {
+  outline: none;
 }
 
 /* CRT glass: one dark line per game-pixel row, plus a soft vignette. */
@@ -91,7 +111,7 @@ noscript {
 }
 
 /* Pilot-name dialog: plain HTML so phones can bring up their keyboard. */
-#namebox {
+#namebox, #codebox {
   position: fixed;
   left: 50%;
   top: 22%;
@@ -109,17 +129,17 @@ noscript {
   text-align: center;
 }
 
-#namebox[hidden] {
+#namebox[hidden], #codebox[hidden] {
   display: none;
 }
 
-#namebox label {
+#namebox label, #codebox label {
   display: block;
   margin-bottom: 10px;
   color: #ffcd75;
 }
 
-#namebox input {
+#namebox input, #codebox input {
   box-sizing: border-box;
   width: 100%;
   padding: 10px 8px;
@@ -137,11 +157,11 @@ noscript {
   user-select: text;
 }
 
-#namebox input:focus {
+#namebox input:focus, #codebox input:focus {
   border-color: #ffcd75;
 }
 
-#namebox p {
+#namebox p, #codebox p {
   margin: 10px 0 14px;
   color: #94b0c2;
   font-size: 12px;
@@ -149,12 +169,12 @@ noscript {
   letter-spacing: 0.02em;
 }
 
-#namebox .row {
+#namebox .row, #codebox .row {
   display: flex;
   gap: 10px;
 }
 
-#namebox button {
+#namebox button, #codebox button {
   flex: 1;
   min-height: 44px;
   padding: 8px;
@@ -167,11 +187,11 @@ noscript {
   touch-action: manipulation;
 }
 
-#namebox button[type="button"] {
+#namebox button[type="button"], #codebox button[type="button"] {
   border-color: #566c86;
   color: #94b0c2;
 }
 
-#namebox button:active {
+#namebox button:active, #codebox button:active {
   background: #333c57;
 }

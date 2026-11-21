@@ -8,6 +8,8 @@
  *   GET  /api/scores?track=   top 10 race times for a course (+ your own row,
  *                             when the X-Pilot-Id header carries your id)
  *   POST /api/scores          submit a finished race
+ *   GET  /api/config          { mp }: where online play is (null when it is off)
+ *   (WebSocket /ws)           online play, when this process serves it too (MP=embedded)
  *
  * (No /healthz: Cloud Run's front end keeps paths ending in "z" for itself.)
  *
@@ -19,6 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const { createStore } = require('./lib/store');
+const { cleanName } = require('./lib/names');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const TOP_N = 10;
@@ -34,6 +37,21 @@ const TRACKS = {
   gauntlet: { laps: 3, minLap: 25, minRace: 78 },
 };
 const MAX_RACE = 3600;
+
+/*
+ * A time's setup: the rocket, its five stat levels, the powerups picked up
+ * and used on the track (`items`, with counts), and the pilot's powerup
+ * upgrade levels at the time (`levels`, 2 or 3; level 1 is left out).
+ * It is only shown on the leaderboard, so it is checked for shape, not
+ * against each ship's limits. Keep the lists in step with RR.HULLS, RR.STATS
+ * and RR.ITEMS in public/src/game.js.
+ */
+const SHIPS = ['sparrow', 'dart', 'hammer', 'phoenix'];
+const STAT_COUNT = 5;
+const STAT_MAX = 10;
+const ITEMS = ['nitro', 'shield', 'repair', 'defer', 'blaster', 'missile', 'mine', 'emp'];
+const ITEM_MAX = 99;
+const LEVEL_MAX = 3; // powerups are upgraded from level 1 to 3
 const RACERS = 6; // ships on the grid, so the worst finishing place
 const PID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const STORE_TIMEOUT_MS = 8000;
@@ -50,12 +68,29 @@ const MIME = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-const SECURITY_HEADERS = {
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
-  'Content-Security-Policy':
-    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'",
-};
+/**
+ * Headers on every response. The page may only load and connect to its own
+ * address, plus, when online play runs as a separate service (MP_URL), that
+ * service's WebSocket address: without it the browser refuses to connect.
+ */
+const headerCache = new Map();
+function securityHeaders() {
+  const mp = process.env.MP_URL || '';
+  if (!headerCache.has(mp)) {
+    let extra = '';
+    try {
+      const u = new URL(mp);
+      if (u.protocol === 'wss:' || u.protocol === 'ws:') extra = ' ' + u.protocol + '//' + u.host;
+    } catch (e) { /* not set, or not a URL: same origin only */ }
+    headerCache.set(mp, {
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy':
+        "default-src 'self'; connect-src 'self'" + extra + "; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'",
+    });
+  }
+  return headerCache.get(mp);
+}
 
 /* ------------------------------------------------------------- static */
 
@@ -90,7 +125,7 @@ function serveStatic(files, req, res, pathname) {
     // unchanged file costs one tiny 304.
     'Cache-Control': 'no-cache',
     Vary: 'Accept-Encoding',
-  }, SECURITY_HEADERS);
+  }, securityHeaders());
   if (req.headers['if-none-match'] === f.etag) { res.writeHead(304, headers); return res.end(); }
   let body = f.buf;
   if (f.gz && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
@@ -107,7 +142,7 @@ function serveStatic(files, req, res, pathname) {
 function send(res, status, type, body) {
   res.writeHead(status, Object.assign({
     'Content-Type': type, 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-store',
-  }, SECURITY_HEADERS));
+  }, securityHeaders()));
   res.end(body);
 }
 
@@ -131,11 +166,6 @@ function readBody(req, limit) {
   });
 }
 
-/** Pilot names use the game's bitmap font: A-Z, 0-9 and a little punctuation. */
-function cleanName(raw) {
-  const s = String(raw == null ? '' : raw).toUpperCase().replace(/[^A-Z0-9 _.!-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 10).trim();
-  return s || 'PILOT';
-}
 
 function validateScore(body) {
   if (!body || typeof body !== 'object') return 'Expected a JSON object';
@@ -151,7 +181,42 @@ function validateScore(body) {
   if (![0, 1, 2].includes(body.diff)) return 'Bad difficulty';
   // finishing place in that race; optional so a page loaded before this existed can still post
   if (body.place != null && !(Number.isInteger(body.place) && body.place >= 1 && body.place <= RACERS)) return 'Bad place';
+  // the rocket and powerups behind the time; optional, as pages from before it existed do not send one
+  if (body.setup != null) return setupError(body.setup);
   return null;
+}
+
+const isMap = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+function setupError(s) {
+  if (!isMap(s)) return 'Bad setup';
+  if (!SHIPS.includes(s.ship)) return 'Unknown ship';
+  if (!Array.isArray(s.stats) || s.stats.length !== STAT_COUNT ||
+    !s.stats.every((v) => Number.isInteger(v) && v >= 1 && v <= STAT_MAX)) return 'Bad stats';
+  // items: picked up on the track and used, item -> how many; levels: upgrade levels, item -> 1-3
+  for (const [list, max] of [[s.items, ITEM_MAX], [s.levels, LEVEL_MAX]]) {
+    if (list == null) continue;
+    if (!isMap(list)) return 'Bad items';
+    for (const k of Object.keys(list)) {
+      if (!ITEMS.includes(k)) return 'Unknown item';
+      const v = list[k];
+      if (!Number.isInteger(v) || v < 0 || v > max) return 'Bad item count';
+    }
+  }
+  return null;
+}
+
+/** A setup that passed setupError, reduced to exactly what is stored (unused items dropped). */
+function cleanSetup(s) {
+  if (s == null) return null;
+  const pick = (list) => {
+    const out = {};
+    for (const k of ITEMS) if (list && list[k] > 0) out[k] = list[k];
+    return out;
+  };
+  const levels = {};
+  for (const k of ITEMS) if (s.levels && s.levels[k] > 1) levels[k] = s.levels[k]; // level 1 is the default
+  return { ship: s.ship, stats: s.stats.slice(), items: pick(s.items), levels };
 }
 
 /** Give up on a slow backend call so a request never hangs on Firestore. */
@@ -182,6 +247,41 @@ function clientIp(req) {
   return xff.length ? xff[xff.length - 1] : req.socket.remoteAddress || 'unknown';
 }
 
+/** A leaderboard row from a checked submission. `online`: timed by the multiplayer server itself. */
+function makeEntry(body, online) {
+  return {
+    name: cleanName(body.name),
+    // truncate to hundredths, the way the in-game clock shows times
+    time: Math.floor(body.time * 100 + 1e-6) / 100,
+    lap: Math.floor(body.lap * 100 + 1e-6) / 100,
+    diff: body.diff,
+    place: body.place == null ? null : body.place,
+    setup: cleanSetup(body.setup),
+    online: !!online,
+    at: Date.now(),
+  };
+}
+
+/**
+ * How the multiplayer server records an online race: the same checks as a
+ * posted time, marked `online` (the server timed it, so it is trustworthy).
+ */
+function onlineRecorder(store, log) {
+  log = log || console.error;
+  return function (body) {
+    const err = validateScore(body);
+    if (err) { log('online result refused: ' + err); return Promise.resolve(null); }
+    return withTimeout(store.submit(body.track, body.pid, makeEntry(body, true)), STORE_TIMEOUT_MS)
+      .catch((e) => { log('online result not stored: ' + (e && e.message || e)); return null; });
+  };
+}
+
+/** Where the game finds online play: MP_URL (a separate service), this server's /ws, or nowhere. */
+function mpUrl(env) {
+  if (env.MP_URL) return env.MP_URL;
+  return env.MP === 'embedded' ? '/ws' : null;
+}
+
 function createApp(store) {
   // In production the files never change, so read them once. In development
   // re-read on every request so edits show up on refresh.
@@ -200,6 +300,7 @@ function createApp(store) {
   }
 
   async function api(req, res, url) {
+    if (url.pathname === '/api/config') return json(res, 200, { mp: mpUrl(process.env) });
     if (url.pathname === '/api/health') {
       // `env` and `version` say which deployment answered: handy for staging and for "is my change live?"
       return json(res, 200, {
@@ -226,15 +327,7 @@ function createApp(store) {
       }
       const err = validateScore(body);
       if (err) return json(res, 400, { error: err });
-      const entry = {
-        name: cleanName(body.name),
-        // truncate to hundredths, the way the in-game clock shows times
-        time: Math.floor(body.time * 100 + 1e-6) / 100,
-        lap: Math.floor(body.lap * 100 + 1e-6) / 100,
-        diff: body.diff,
-        place: body.place == null ? null : body.place,
-        at: Date.now(),
-      };
+      const entry = makeEntry(body, false);
       const out = await withTimeout(store.submit(body.track, body.pid, entry), STORE_TIMEOUT_MS);
       cache.delete(body.track);
       return json(res, 200, { track: body.track, rank: out.rank, improved: out.improved, best: out.best, scores: await top(body.track) });
@@ -266,15 +359,21 @@ function decodeURIComponentSafe(s) {
   try { return decodeURIComponent(s); } catch (e) { return s; }
 }
 
-module.exports = { createApp, cleanName, validateScore, TRACKS };
+module.exports = { createApp, cleanName, validateScore, cleanSetup, onlineRecorder, mpUrl, TRACKS, SHIPS, ITEMS };
 
 if (require.main === module) {
   const store = createStore();
   const port = parseInt(process.env.PORT || '8080', 10);
   const server = http.createServer(createApp(store));
+  // MP=embedded: serve online play from this process too (local development; see mp-server.js for Cloud Run)
+  const hub = process.env.MP === 'embedded'
+    ? require('./lib/mp').attachMultiplayer(server, { post: onlineRecorder(store), log: console.error }) : null;
   server.listen(port, () => {
-    console.log('Rocket Racer listening on port ' + port + ' (leaderboard store: ' + store.kind + ')');
+    console.log('Rocket Racer listening on port ' + port + ' (leaderboard store: ' + store.kind + (hub ? ', online play on /ws' : '') + ')');
   });
   // Cloud Run sends SIGTERM before stopping an instance: finish in-flight requests.
-  process.on('SIGTERM', () => server.close(() => process.exit(0)));
+  process.on('SIGTERM', () => {
+    if (hub) hub.shutdown('update');
+    server.close(() => process.exit(0));
+  });
 }
