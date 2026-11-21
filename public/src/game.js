@@ -538,6 +538,14 @@
     g.state = 'play';
   };
 
+  /** Online: a bot flies ship `s` while its player is away (on), or hands it back when they return (off). */
+  G.botTakeover = function (s, on) {
+    if (on) { if (!s.ai) { s.ai = makeAI(DIFFS[this.diffIdx] || DIFFS[1]); s.botFlown = !s.finished; } return; }
+    if (s.finished || !s.human) return; // a finished ship stays on autopilot
+    s.ai = null;
+    s.netInput = { turn: 0, thrust: 0, brake: 0, fire: false, aim: null, stick: false };
+  };
+
   G.begin = function () {
     if (RR.input.touchMode && this.autoFull) this.wantFull = true;
     RR.audio.sfx('confirm');

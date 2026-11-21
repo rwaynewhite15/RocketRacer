@@ -4,7 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
-const { createApp, cleanName, validateScore, cleanSetup } = require('../server');
+const { createApp, cleanName, validateScore, cleanSetup, onlineRecorder } = require('../server');
 const { memoryStore } = require('../lib/store');
 
 function start() {
@@ -177,6 +177,25 @@ test('setups that are not a known rocket, five stat levels and known powerup cou
     assert.strictEqual((await board(base, 'lunar', 'pilot-setup009')).me, null, 'none of them was stored');
     assert.deepStrictEqual(cleanSetup({ ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2, rewind: 0 }, levels: { nitro: 1, emp: 2 } }),
       { ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2 }, levels: { emp: 2 } });
+  } finally { server.close(); }
+});
+
+test('online races timed by the multiplayer server are stored with the same checks, marked online', async () => {
+  const store = memoryStore(), logs = [];
+  const record = onlineRecorder(store, (m) => logs.push(m));
+  await record({ track: 'lunar', pid: 'pilot-online01', name: 'Zed', time: 75.5, lap: 24.2, diff: 2, place: 1,
+    setup: { ship: 'dart', stats: [5, 5, 5, 3, 3], items: { nitro: 1 }, levels: { missile: 3 } } });
+  const top = await store.top('lunar', 10);
+  assert.strictEqual(top.length, 1);
+  assert.deepStrictEqual([top[0].name, top[0].online, top[0].setup.levels], ['ZED', true, { missile: 3 }]);
+  assert.strictEqual(await record({ track: 'lunar', pid: 'pilot-online02', name: 'Fast', time: 5, lap: 1, diff: 1 }), null);
+  assert.match(logs[0], /refused/);
+  assert.strictEqual((await store.top('lunar', 10)).length, 1, 'an impossible time is not stored');
+  // times posted by players themselves are not marked online
+  const { server, base } = await start();
+  try {
+    const r = await (await post(base, run({ pid: 'pilot-offline1', name: 'Off', time: 76 }))).json();
+    assert.strictEqual(r.best.online, false);
   } finally { server.close(); }
 });
 

@@ -8,6 +8,8 @@
  *   GET  /api/scores?track=   top 10 race times for a course (+ your own row,
  *                             when the X-Pilot-Id header carries your id)
  *   POST /api/scores          submit a finished race
+ *   GET  /api/config          { mp }: where online play is (null when it is off)
+ *   (WebSocket /ws)           online play, when this process serves it too (MP=embedded)
  *
  * (No /healthz: Cloud Run's front end keeps paths ending in "z" for itself.)
  *
@@ -19,6 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const { createStore } = require('./lib/store');
+const { cleanName } = require('./lib/names');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const TOP_N = 10;
@@ -146,11 +149,6 @@ function readBody(req, limit) {
   });
 }
 
-/** Pilot names use the game's bitmap font: A-Z, 0-9 and a little punctuation. */
-function cleanName(raw) {
-  const s = String(raw == null ? '' : raw).toUpperCase().replace(/[^A-Z0-9 _.!-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 10).trim();
-  return s || 'PILOT';
-}
 
 function validateScore(body) {
   if (!body || typeof body !== 'object') return 'Expected a JSON object';
@@ -232,6 +230,41 @@ function clientIp(req) {
   return xff.length ? xff[xff.length - 1] : req.socket.remoteAddress || 'unknown';
 }
 
+/** A leaderboard row from a checked submission. `online`: timed by the multiplayer server itself. */
+function makeEntry(body, online) {
+  return {
+    name: cleanName(body.name),
+    // truncate to hundredths, the way the in-game clock shows times
+    time: Math.floor(body.time * 100 + 1e-6) / 100,
+    lap: Math.floor(body.lap * 100 + 1e-6) / 100,
+    diff: body.diff,
+    place: body.place == null ? null : body.place,
+    setup: cleanSetup(body.setup),
+    online: !!online,
+    at: Date.now(),
+  };
+}
+
+/**
+ * How the multiplayer server records an online race: the same checks as a
+ * posted time, marked `online` (the server timed it, so it is trustworthy).
+ */
+function onlineRecorder(store, log) {
+  log = log || console.error;
+  return function (body) {
+    const err = validateScore(body);
+    if (err) { log('online result refused: ' + err); return Promise.resolve(null); }
+    return withTimeout(store.submit(body.track, body.pid, makeEntry(body, true)), STORE_TIMEOUT_MS)
+      .catch((e) => { log('online result not stored: ' + (e && e.message || e)); return null; });
+  };
+}
+
+/** Where the game finds online play: MP_URL (a separate service), this server's /ws, or nowhere. */
+function mpUrl(env) {
+  if (env.MP_URL) return env.MP_URL;
+  return env.MP === 'embedded' ? '/ws' : null;
+}
+
 function createApp(store) {
   // In production the files never change, so read them once. In development
   // re-read on every request so edits show up on refresh.
@@ -250,6 +283,7 @@ function createApp(store) {
   }
 
   async function api(req, res, url) {
+    if (url.pathname === '/api/config') return json(res, 200, { mp: mpUrl(process.env) });
     if (url.pathname === '/api/health') {
       // `env` and `version` say which deployment answered: handy for staging and for "is my change live?"
       return json(res, 200, {
@@ -276,16 +310,7 @@ function createApp(store) {
       }
       const err = validateScore(body);
       if (err) return json(res, 400, { error: err });
-      const entry = {
-        name: cleanName(body.name),
-        // truncate to hundredths, the way the in-game clock shows times
-        time: Math.floor(body.time * 100 + 1e-6) / 100,
-        lap: Math.floor(body.lap * 100 + 1e-6) / 100,
-        diff: body.diff,
-        place: body.place == null ? null : body.place,
-        setup: cleanSetup(body.setup),
-        at: Date.now(),
-      };
+      const entry = makeEntry(body, false);
       const out = await withTimeout(store.submit(body.track, body.pid, entry), STORE_TIMEOUT_MS);
       cache.delete(body.track);
       return json(res, 200, { track: body.track, rank: out.rank, improved: out.improved, best: out.best, scores: await top(body.track) });
@@ -317,15 +342,21 @@ function decodeURIComponentSafe(s) {
   try { return decodeURIComponent(s); } catch (e) { return s; }
 }
 
-module.exports = { createApp, cleanName, validateScore, cleanSetup, TRACKS, SHIPS, ITEMS };
+module.exports = { createApp, cleanName, validateScore, cleanSetup, onlineRecorder, mpUrl, TRACKS, SHIPS, ITEMS };
 
 if (require.main === module) {
   const store = createStore();
   const port = parseInt(process.env.PORT || '8080', 10);
   const server = http.createServer(createApp(store));
+  // MP=embedded: serve online play from this process too (local development; see mp-server.js for Cloud Run)
+  const hub = process.env.MP === 'embedded'
+    ? require('./lib/mp').attachMultiplayer(server, { post: onlineRecorder(store), log: console.error }) : null;
   server.listen(port, () => {
-    console.log('Rocket Racer listening on port ' + port + ' (leaderboard store: ' + store.kind + ')');
+    console.log('Rocket Racer listening on port ' + port + ' (leaderboard store: ' + store.kind + (hub ? ', online play on /ws' : '') + ')');
   });
   // Cloud Run sends SIGTERM before stopping an instance: finish in-flight requests.
-  process.on('SIGTERM', () => server.close(() => process.exit(0)));
+  process.on('SIGTERM', () => {
+    if (hub) hub.shutdown('update');
+    server.close(() => process.exit(0));
+  });
 }
