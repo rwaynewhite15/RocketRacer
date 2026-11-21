@@ -62,7 +62,7 @@
 
   /**
    * Touch controls with a place on screen, in game pixels: the fire stick,
-   * BRAKE, and the DO-OVER button (shown only while one is held). Steering has
+   * BRAKE, and the DEFER button (shown only while a gate deferral is held). Steering has
    * no place: it is a drag that can start anywhere else (see input.js). Each
    * control has a standard spot; the player can move them (Pause > Move
    * controls). Moved spots are kept as fractions of the screen, separately for
@@ -73,15 +73,16 @@
     ins = ins || NO_INSET;
     const R = 34, grab = R + 24; // a thumb landing within `grab` of a stick's centre takes it
     const def = { fire: { x: W - ins.r - 66, y: H - ins.b - 66 } };
-    if (W - ins.l - ins.r < 360) { // narrow (upright phone): stack BRAKE and DO-OVER above the fire stick
+    def.steer = { x: ins.l + 66, y: def.fire.y }; // the steering stick: bottom left, the fire stick's mirror image
+    if (W - ins.l - ins.r < 360) { // narrow (upright phone): stack BRAKE and DEFER above the fire stick
       def.brake = { x: def.fire.x, y: def.fire.y - 80 };
-      def.rewind = { x: def.fire.x, y: def.brake.y - 54 };
+      def.defer = { x: def.fire.x, y: def.brake.y - 54 };
     } else {
       def.brake = { x: def.fire.x - 82, y: H - ins.b - 31 };
-      def.rewind = { x: def.fire.x, y: def.fire.y - 74 };
+      def.defer = { x: def.fire.x, y: def.fire.y - 74 };
     }
     const g = RR.game, saved = (g && g.controls && g.controls[W >= H ? 'land' : 'port']) || {};
-    const half = { fire: R + 2, brake: 21, rewind: 22 }, centre = {};
+    const half = { steer: R + 2, fire: R + 2, brake: 21, defer: 22 }, centre = {};
     for (const n in def) {
       const sp = saved[n], h = half[n];
       centre[n] = {
@@ -92,9 +93,10 @@
     const box = function (c, w, h) { return { x: c.x - w / 2, y: c.y - h / 2, w: w, h: h }; };
     return {
       stickR: R,
+      steer: { x: centre.steer.x, y: centre.steer.y, r: R, grab: grab },
       fire: { x: centre.fire.x, y: centre.fire.y, r: R, grab: grab },
       brake: box(centre.brake, 42, 42),
-      rewind: box(centre.rewind, 44, 44),
+      defer: box(centre.defer, 44, 44),
       centre: centre,
     };
   };
@@ -115,37 +117,31 @@
     }
   }
 
-  /** The player's ghost during a do-over: dotted path still to unwind, echoes, a ringed silhouette. */
-  function drawRewindGhost(g, ctx, s, cx, cy, W, H) {
-    const r = s.rw, pts = r.pts, n = pts.length, f = r.f;
-    ctx.fillStyle = PAL.violet;
-    for (let i = Math.ceil(f); i < n; i++) {
-      const x = Math.round(pts[i].x - cx), y = Math.round(pts[i].y - cy);
-      if (x > -4 && y > -4 && x < W + 4 && y < H + 4) ctx.fillRect(x - 1, y - 1, 2, 2);
-    }
-    for (let e = 3; e >= 1; e--) { // echoes trailing back towards the present
-      const at = RR.pathAt(pts, Math.min(n - 1, f + e * 1.8));
-      ctx.globalAlpha = 0.14 * (4 - e);
-      RR.drawRot(ctx, s.ghost, at.x - cx, at.y - cy, at.angle + Math.PI / 2);
-    }
-    glow(ctx, s.x - cx, s.y - cy, 16, '#a98bff'); // (resets the alpha)
-    ctx.globalAlpha = 0.9;
-    RR.drawRot(ctx, s.ghost, s.x - cx, s.y - cy, s.angle + Math.PI / 2);
-    ctx.globalAlpha = 1;
-    RR.ring(ctx, s.x - cx, s.y - cy, 15, PAL.cyan, 8, -g.t * 12);
-  }
+  const TAG_HOLD = 2; // seconds a human pilot's name stays over their ship
+  RR.TAG_HOLD = TAG_HOLD;
 
-  /** Worn-tape look for the whole world while rewinding: torn bands, violet wash, scanlines. */
-  function drawRewindOverlay(g, ctx, W, H) {
-    for (let i = 0; i < 5; i++) {
-      const y = Math.floor(Math.random() * H), h = 1 + Math.floor(Math.random() * 5);
-      const dx = Math.round((Math.random() - 0.5) * 18);
-      ctx.drawImage(ctx.canvas, 0, y, W, h, dx, y, W, h);
+  /** A ship flown by a person: online, any player's (even while a bot stands in); offline, yours. */
+  function humanPilot(g, s) { return g.online ? !!s.human : s === g.player; }
+
+  /**
+   * Names over human pilots' ships, on the HUD layer so they stay readable at
+   * every zoom: everyone's through the countdown and the first TAG_HOLD
+   * seconds of the race, then a pilot's for TAG_HOLD seconds each time their
+   * ship comes into view. `g.tagsShown` lists them, for the tests.
+   */
+  function drawTags(g, ctx) {
+    g.tagsShown = [];
+    if (g.demo || g.state !== 'play' || !g.view) return;
+    const start = g.phase !== 'race' || g.raceTime < TAG_HOLD, z = g.zoomScale;
+    for (const s of g.ships) {
+      if (!s.inView || !humanPilot(g, s)) continue;
+      const left = start ? TAG_HOLD : (s.tagUntil || 0) - g.t;
+      if (left <= 0) continue;
+      g.tagsShown.push(!g.online && s === g.player ? g.name : s.name);
+      if (left < 0.3 && Math.floor(g.t * 16) & 1) continue; // blinks out
+      const x = Math.round((s.x - g.view.cx) * z), y = Math.round((s.y - g.view.cy - 14) * z) - 10;
+      text(ctx, !g.online && s === g.player ? g.name : s.name, x, y, s.colors.i, 1, 'center', PAL.ink); // (offline, your ship is "YOU")
     }
-    ctx.fillStyle = 'rgba(110,70,255,0.16)';
-    ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
-    for (let y = Math.floor(g.t * 40) % 3; y < H; y += 3) ctx.fillRect(0, y, W, 1);
   }
 
   function drawWorld(g, ctx, W, H) {
@@ -154,6 +150,7 @@
     const shy = g.shake > 0.4 ? (Math.random() - 0.5) * 2 * g.shake : 0;
     const cx = Math.round(g.cam.x - W / 2 + shx), cy = Math.round(g.cam.y - H / 2 + shy);
     const vis = function (x, y, pad) { return x > -pad && y > -pad && x < W + pad && y < H + pad; };
+    g.view = { cx: cx, cy: cy }; // where the world layer looks, for the name tags on the HUD
 
     /* deep space: nebula and three parallax star layers */
     ctx.fillStyle = PAL.void;
@@ -235,18 +232,16 @@
       if (!pk.on) continue;
       const sx = Math.round(pk.x - cx), sy = Math.round(pk.y - cy + Math.sin(g.t * 3 + pk.ph) * 2);
       if (!vis(sx, sy, 20)) continue;
-      glow(ctx, sx, sy, 17, pk.kind === 'W' ? '#e5404f' : pk.type === 'rewind' ? '#a855f7' : '#38b764');
+      glow(ctx, sx, sy, 17, pk.kind === 'W' ? '#e5404f' : pk.type === 'defer' ? '#a855f7' : '#38b764');
       ctx.drawImage(Art.pickups[pk.type], sx - 8, sy - 8);
     }
 
-    /* while holding a do-over: a faint ghost where it would put you back */
-    if (!g.demo && p.rewind > 0 && !p.rw && p.dead <= 0 && !g.playerDone && p.hist.length > 10) {
-      const t = p.hist[0], sx = t.x - cx, sy = t.y - cy;
-      if (vis(sx, sy, 24)) {
-        ctx.globalAlpha = 0.3 + 0.12 * Math.sin(g.t * 6);
-        RR.drawRot(ctx, p.ghost, sx, sy, t.angle + Math.PI / 2);
-        ctx.globalAlpha = 1;
-        RR.ring(ctx, sx, sy, 15, PAL.violet, 8, g.t * 5);
+    /* while holding a gate deferral: the gate it would defer, ringed in violet */
+    if (!g.demo && g.state === 'play' && g.canDefer(p)) {
+      const cp = tr.cps[p.nextCp], sx = cp.x - cx, sy = cp.y - cy;
+      if (vis(sx, sy, Art.DONUT_RC + 40)) {
+        RR.ring(ctx, sx, sy, Art.DONUT_RC + 22, PAL.violet, 10, g.t * 3);
+        RR.ring(ctx, sx, sy, Art.DONUT_RC + 25, '#5b21b6', 10, -g.t * 3);
       }
     }
 
@@ -286,10 +281,14 @@
     }
 
     /* ships */
+    const tagging = !g.demo && g.state === 'play';
     for (const s of g.ships) {
-      if (s.rw) { drawRewindGhost(g, ctx, s, cx, cy, W, H); continue; }
-      if (s.dead > 0) continue;
       const sx = s.x - cx, sy = s.y - cy;
+      // a human pilot's name goes up for TAG_HOLD seconds as their ship comes into view (see drawTags)
+      const inView = s.dead <= 0 && !s.gone && vis(sx, sy, -6);
+      if (inView && !s.inView && tagging && s !== p && humanPilot(g, s)) s.tagUntil = g.t + TAG_HOLD;
+      s.inView = inView;
+      if (s.dead > 0) continue;
       if (!vis(sx, sy, 30)) continue;
       if (s.invuln > 0 && Math.floor(g.t * 16) & 1) continue;
       if (s.thrusting > 0.05) {
@@ -313,7 +312,7 @@
 
     /* where the fire stick is aiming */
     g.aimShown = null;
-    if (!g.demo && g.state === 'play' && !p.rw && p.dead <= 0) drawAim(g, ctx, p, cx, cy);
+    if (!g.demo && g.state === 'play' && p.dead <= 0) drawAim(g, ctx, p, cx, cy);
 
     drawParts(g, ctx, cx, cy, W, H, 1);
 
@@ -387,7 +386,6 @@
       }
     }
 
-    if (p.rw) drawRewindOverlay(g, ctx, W, H);
     if (g.flash > 0) {
       ctx.fillStyle = 'rgba(255,255,255,' + Math.min(0.6, g.flash).toFixed(3) + ')';
       ctx.fillRect(0, 0, W, H);
@@ -418,7 +416,7 @@
     }
     for (let i = g.ships.length - 1; i >= 0; i--) {
       const s = g.ships[i];
-      if (s.dead > 0 && !s.rw) continue;
+      if (s.dead > 0) continue;
       const x = Math.round(mx + s.x * mm.s + mm.ox), y = Math.round(my + s.y * mm.s + mm.oy);
       if (i === 0) { ctx.fillStyle = PAL.white; ctx.fillRect(x - 2, y - 2, 5, 5); }
       ctx.fillStyle = s.colors.a;
@@ -473,7 +471,7 @@
     /* hull + speed */
     const hx = L, hy = touch ? Tp + 38 : B - 28;
     panel(ctx, hx, hy, 104, 28);
-    const hull = p.dead > 0 && !p.rw ? 0 : p.hp / p.maxHp;
+    const hull = p.dead > 0 ? 0 : p.hp / p.maxHp;
     const low = hull < 0.3 && Math.floor(T * 8) & 1;
     text(ctx, 'HULL', hx + 6, hy + 5, low ? PAL.alarm : PAL.silver);
     bar(ctx, hx + 33, hy + 5, 13, hull, hull > 0.55 ? PAL.lime : hull > 0.3 ? PAL.yellow : PAL.alarm);
@@ -493,14 +491,15 @@
 
     /* weapon slot (keyboard play; on touch the FIRE button shows it) */
     if (!touch) {
-      const rx = Rr - 72, ry = B - 34, held = p.rewind > 0;
-      if (!g.combat) { // no do-overs in a fight
-        panel(ctx, rx, ry, 34, 34, held ? (Math.floor(T * 4) & 1 ? PAL.white : PAL.violet) : PAL.slate);
-        if (!held) ctx.globalAlpha = 0.3;
-        ctx.drawImage(Art.icons.rewind, rx + 8, ry + 4, 18, 18);
+      const rx = Rr - 72, ry = B - 34, held = p.defer > 0, ready = g.canDefer(p);
+      if (!g.combat) { // no gates to defer in a fight
+        // blinks while it can be used; steady (and dim) while the next gate is the line, which can't be deferred
+        panel(ctx, rx, ry, 34, 34, ready ? (Math.floor(T * 4) & 1 ? PAL.white : PAL.violet) : held ? PAL.violet : PAL.slate);
+        if (!ready) ctx.globalAlpha = held ? 0.55 : 0.3;
+        ctx.drawImage(Art.icons.defer, rx + 8, ry + 4, 18, 18);
         ctx.globalAlpha = 1;
         text(ctx, 'E', rx + 17, ry + 25, held ? PAL.white : PAL.steel, 1, 'center');
-        if (held) text(ctx, 'DO-OVER', rx + 33, ry - 10, PAL.violet, 1, 'right', PAL.ink);
+        if (held) text(ctx, p.defer > 1 ? 'DEFER X' + p.defer : 'DEFER', rx + 33, ry - 10, PAL.violet, 1, 'right', PAL.ink);
       }
       const wx = Rr - 34, wy = B - 34;
       panel(ctx, wx, wy, 34, 34, p.weapon ? RR.ITEMS[p.weapon].color : g.combat ? PAL.cyan : PAL.slate);
@@ -532,11 +531,7 @@
 
     /* big centre messages */
     const my = Math.round(H * (narrow ? 0.3 : 0.24));
-    if (p.rw) {
-      const sc = W < 300 ? 2 : 3;
-      if (Math.floor(T * 8) & 1) text(ctx, '<< REWIND <<', W / 2, my, PAL.violet, sc, 'center', PAL.ink);
-      text(ctx, '-' + (p.rw.span * (1 - p.rw.u)).toFixed(1) + 'S', W / 2, my + sc * 9 + 4, PAL.cyan, 2, 'center', PAL.ink);
-    } else if (g.phase === 'countdown') {
+    if (g.phase === 'countdown') {
       const n = Math.ceil(g.count);
       if (n > 3) text(ctx, 'READY', W / 2, my + 8, PAL.white, 4, 'center', PAL.ink);
       else text(ctx, String(n), W / 2, my - 6, [PAL.lime, PAL.lime, PAL.yellow, PAL.alarm][n], 8, 'center', PAL.ink);
@@ -561,7 +556,7 @@
       else if (p.out) text(ctx, g.combat ? 'ARENA WALL - TURN BACK!' : 'RETURN TO THE COURSE!', W / 2, H * 0.64, PAL.alarm, 1, 'center', PAL.ink);
       else if (p.wrong > 1.1) text(ctx, 'WRONG WAY!', W / 2, H * 0.64, PAL.alarm, 2, 'center', PAL.ink);
     }
-    if (p.dead > 0 && !p.rw && !p.gone && g.state === 'play') text(ctx, 'RESPAWNING', W / 2, H * 0.5, PAL.silver, 1, 'center', PAL.ink);
+    if (p.dead > 0 && !p.gone && g.state === 'play') text(ctx, 'RESPAWNING', W / 2, H * 0.5, PAL.silver, 1, 'center', PAL.ink);
 
     if (touch && g.state === 'play') {
       const by = narrow ? cy + 40 : Tp + mm.h + 8;
@@ -633,9 +628,11 @@
     const hot = blink ? PAL.white : PAL.orange;
     const ex = dr.x + dr.dx, ey = dr.y + dr.dy;
 
-    // no ring or disc round the touch: just where it began and the way it points
-    if (dr.dist > 2) RR.line(ctx, dr.x, dr.y, ex, ey, col, 2);
-    RR.disc(ctx, dr.x, dr.y, 2, PAL.white);
+    // no ring or disc round the touch: just where it began and the way it points (the stick's knob shows its own)
+    if (!dr.stick) {
+      if (dr.dist > 2) RR.line(ctx, dr.x, dr.y, ex, ey, col, 2);
+      RR.disc(ctx, dr.x, dr.y, 2, PAL.white);
+    }
 
     // the meter: ten segments, green to orange, well clear of the thumb
     const n = 10, mw = n * 6 - 1 + 8, mh = 22;
@@ -657,13 +654,17 @@
   function drawTouch(g, ctx, W, H) {
     const L = RR.touchLayout(W, H, g.inset), t = RR.input.touch, p = g.player, ins = g.inset;
 
-    /* steering: a drag from anywhere; until the first one, say so */
+    /* steering: the stick bottom left, or a drag from anywhere else; until the first, say so */
+    const steering = t.drag && t.drag.stick ? t.drag : null;
+    drawStick(ctx, L.steer, steering && steering.stick, PAL.lime, PAL.steel);
+    stickLabel(ctx, L.steer, 'FLY', steering ? PAL.white : PAL.silver, H, ins);
     g.meter = t.drag ? drawDrag(ctx, t.drag, W, H, ins, g.t) : null;
     if (t.drag) {
       if (t.drag.power > 0) p.dragged = true;
     } else if (!p.dragged && g.phase === 'race' && Math.floor(g.t * 2) & 1) {
-      text(ctx, 'DRAG ANYWHERE TO FLY', ins.l + 8, H - ins.b - 26, PAL.silver, 1, 'left', PAL.ink);
-      text(ctx, 'FARTHER = MORE POWER', ins.l + 8, H - ins.b - 16, PAL.silver, 1, 'left', PAL.ink);
+      const hy = L.steer.y - L.steer.r - 30;
+      text(ctx, 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
     }
 
     /* fire stick: the blaster fires while held (ahead, or the way it is pushed); missiles go on letting go */
@@ -682,12 +683,15 @@
     key(L.brake, t.brake, PAL.steel);
     text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.silver, 1, 'center');
 
-    if (p.rewind > 0 && !p.rw) {
-      const r = L.rewind;
-      panel(ctx, r.x, r.y, r.w, r.h, Math.floor(g.t * 4) & 1 ? PAL.white : PAL.violet);
-      ctx.drawImage(Art.icons.rewind, r.x + 13, r.y + 6, 18, 18);
-      text(ctx, 'DO-OVER', r.x + r.w / 2, r.y + 31, PAL.violet, 1, 'center');
-      g.ui.push({ x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8, act: function () { g.tryRewind(); } });
+    if (p.defer > 0 && !g.combat) {
+      const r = L.defer, ready = g.canDefer(p); // (not while the next gate is the line: a tap says so)
+      panel(ctx, r.x, r.y, r.w, r.h, ready && Math.floor(g.t * 4) & 1 ? PAL.white : PAL.violet);
+      if (!ready) ctx.globalAlpha = 0.55;
+      ctx.drawImage(Art.icons.defer, r.x + 13, r.y + 6, 18, 18);
+      ctx.globalAlpha = 1;
+      text(ctx, 'DEFER', r.x + r.w / 2, r.y + 31, PAL.violet, 1, 'center');
+      if (p.defer > 1) text(ctx, 'X' + p.defer, r.x + r.w - 2, r.y + 2, PAL.white, 1, 'right', PAL.ink);
+      g.ui.push({ x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8, label: 'DEFER', act: function () { g.tryDefer(); } });
     }
   }
 
@@ -706,25 +710,22 @@
     const held = {};
     for (const id in RR.input.pointers) { const d = RR.input.pointers[id].drag; if (d) held[d] = true; }
     const ring = function (c, n) { RR.ring(ctx, c.x, c.y, c.r, held[n] ? PAL.white : PAL.yellow, held[n] ? 0 : 12, g.t * 2); };
+    drawStick(ctx, L.steer, null, PAL.lime, PAL.silver); ring(L.steer, 'steer');
+    stickLabel(ctx, L.steer, 'FLY', PAL.yellow, H, ins);
     drawStick(ctx, L.fire, null, PAL.cyan, PAL.silver); ring(L.fire, 'fire');
     stickLabel(ctx, L.fire, 'AIM + FIRE', PAL.yellow, H, ins);
     panel(ctx, L.brake.x, L.brake.y, L.brake.w, L.brake.h, held.brake ? PAL.white : PAL.yellow);
     text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.yellow, 1, 'center');
-    const r = L.rewind;
-    panel(ctx, r.x, r.y, r.w, r.h, held.rewind ? PAL.white : PAL.yellow);
-    ctx.drawImage(Art.icons.rewind, r.x + 13, r.y + 6, 18, 18);
-    text(ctx, 'DO-OVER', r.x + r.w / 2, r.y + 31, PAL.yellow, 1, 'center');
+    const r = L.defer;
+    panel(ctx, r.x, r.y, r.w, r.h, held.defer ? PAL.white : PAL.yellow);
+    ctx.drawImage(Art.icons.defer, r.x + 13, r.y + 6, 18, 18);
+    text(ctx, 'DEFER', r.x + r.w / 2, r.y + 31, PAL.yellow, 1, 'center');
   }
 
   /* ------------------------------------------------------------ overlays */
 
   let logoA = null, logoB = null;
   const DIFF_TAG = ['R', 'P', 'A'], DIFF_COL = [PAL.lime, PAL.yellow, PAL.alarm];
-
-  function canFullscreen() {
-    const d = document;
-    return !!(d.fullscreenEnabled || d.webkitFullscreenEnabled);
-  }
 
   function drawTitle(g, ctx, W, H) {
     const T = g.t, touch = RR.input.touchMode, net = RR.net, ins = g.inset;
@@ -782,14 +783,15 @@
     const mode = RR.MODES[g.modeIdx], fight = g.modeIdx !== 0;
 
     // small buttons under PRESS ENTER, wrapped onto as many lines as they need
-    const spare = g.pointsLeft(g.prog.ship), items = [];
+    const spare = g.pointsLeft(g.prog.ship) + g.prog.upts, items = []; // stat and upgrade points waiting to be spent
     items.push(['HANGAR' + (touch ? '' : ' (H)') + (spare > 0 ? ' +' + spare : ''), function () { g.openHangar(); },
       spare > 0 && Math.floor(T * 3) & 1 ? PAL.white : PAL.yellow]);
+    if (RR.mp.available()) items.push(['ONLINE' + (touch ? '' : ' (O)'), function () { RR.mp.open(); }, PAL.lime]);
     if (net.online) {
       items.push(['PILOT ' + g.name + (touch ? '' : ' (N)'), function () { g.editName(); }, PAL.cyan]);
       if (!fight) items.push(['TOP 10' + (touch ? '' : ' (T)'), function () { g.showBoard(); }, PAL.pink]);
     }
-    if (touch && canFullscreen()) items.push([g.isFullscreen() ? 'EXIT FULL' : 'FULLSCREEN', function () { g.fullscreen(); }, PAL.silver]);
+    if (touch && g.canFullscreen()) items.push([g.isFullscreen() ? 'EXIT FULL' : 'FULLSCREEN', function () { g.fullscreen(); }, PAL.silver]);
     const lines = [[]];
     let lineW = 0;
     items.forEach(function (it) {
@@ -857,16 +859,16 @@
     if (touch) {
       let ty = fy - 16;
       if (tall && y + 30 < ty) { text(ctx, 'TIP: TURN YOUR PHONE SIDEWAYS', W / 2, ty, PAL.yellow, 1, 'center', PAL.ink); ty -= 12; }
-      if (g.homeScreenTip() && y + 30 < ty) { // iPhones can't go full screen from a web page
+      if (g.homeScreenTip() && y + 30 < ty) { // iPhones and iPads: full screen comes from the home screen
         text(ctx, 'FULL SCREEN: SHARE > ADD TO HOME SCREEN', W / 2, ty, PAL.cyan, 1, 'center', PAL.ink);
       }
       text(ctx, fight ? 'WIN EVENTS TO EARN STAT POINTS' : 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, fight ? 'AND UNLOCK BETTER SHIPS' : 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
     } else if (W >= 440) {
-      text(ctx, 'ARROWS / WASD  FLY    SPACE  FIRE    E  DO-OVER    P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'ARROWS / WASD  FLY    SPACE  FIRE    E  DEFER GATE    P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, 'H  HANGAR    Z OR WHEEL  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     } else {
-      text(ctx, 'ARROWS/WASD FLY - SPACE FIRE - E REWIND', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'ARROWS/WASD FLY - SPACE FIRE - E DEFER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, 'H HANGAR - Z ZOOM - P PAUSE - M MUTE', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     }
   }
@@ -876,25 +878,96 @@
    * finished in the race that set the time; below the list comes your own row
    * and world rank when you are not in the top 10.
    */
+  /* 3 x 5 digits, for the level of an upgraded powerup beside its icon */
+  const TINY = ['###1#1#1#1###', '.#.1##.1.#.1.#.1###', '##.1..#1.#.1#..1###', '##.1..#1.#.1..#1##.', '#.#1#.#1###1..#1..#',
+    '###1#..1##.1..#1##.', '.##1#..1###1#.#1###', '###1..#1.#.1.#.1.#.', '###1#.#1###1#.#1###', '###1#.#1###1..#1##.'];
+  /** Draw number `n` in the tiny digits with its top-left at (x, y); returns the width. */
+  function tinyNum(ctx, n, x, y, col) {
+    const str = String(n);
+    for (let c = 0; c < str.length; c++) {
+      const rows = TINY[+str[c]].split('1');
+      for (let r = 0; r < 5; r++) {
+        for (let k = 0; k < 3; k++) {
+          if (rows[r][k] !== '#') continue;
+          ctx.fillStyle = PAL.ink; ctx.fillRect(x + c * 4 + k + 1, y + r + 1, 1, 1);
+          ctx.fillStyle = col; ctx.fillRect(x + c * 4 + k, y + r, 1, 1);
+        }
+      }
+    }
+    return str.length * 4;
+  }
+
+  const hullOf = function (id) { return RR.HULLS.filter(function (h) { return h.id === id; })[0] || null; };
+
+  /** Powerups in one of a setup's lists, most first: [[type, count], ...] in RR.ITEMS order on ties. */
+  function usedList(su, which) {
+    const order = Object.keys(RR.ITEMS), items = (su && su[which || 'items']) || {};
+    return order.filter(function (k) { return items[k] > 0; })
+      .map(function (k) { return [k, items[k]]; })
+      .sort(function (a, b) { return b[1] - a[1] || order.indexOf(a[0]) - order.indexOf(b[0]); });
+  }
+
+  /**
+   * A leaderboard row's setup in a few pixels: the rocket, small, then up to
+   * three of the powerups the pilot used, most used first (+ when there were
+   * more), with a small 2 or 3 beside one they had upgraded. Rows from before
+   * setups were recorded get a dash. Returns what it drew, for the tests.
+   */
+  function setupStrip(ctx, su, x, y) {
+    const hull = su && hullOf(su.ship);
+    if (!hull) { text(ctx, '-', x + 2, y, PAL.steel); return null; }
+    ctx.drawImage(Art.shipMini(hull.design, 0), x, y - 2);
+    const used = usedList(su), shown = used.slice(0, used.length > 3 ? 2 : 3), levels = su.levels || {};
+    const out = { ship: hull.id, icons: [], numbers: [], more: used.length - shown.length };
+    let ix = x + 11;
+    shown.forEach(function (u) {
+      ctx.drawImage(Art.icons[u[0]], ix, y - 1);
+      ix += 10;
+      out.icons.push(u[0]);
+      const lv = levels[u[0]];
+      if (lv > 1) { ix += tinyNum(ctx, lv, ix - 1, y + 3, PAL.gold); out.numbers.push([u[0], lv]); }
+    });
+    if (out.more) text(ctx, '+', ix + 1, y, PAL.silver);
+    return out;
+  }
+
+  /**
+   * World top 10 for the selected course. Each row shows the pilot's rocket
+   * and powerups; tap a row (or pick it with the arrows and press Enter) for
+   * that pilot's card.
+   */
   function drawBoard(g, ctx, W, H) {
+    if (g.boardCard) { drawCard(g, ctx, W, H); return; }
     const def = RR.TRACKS[g.trackIdx], net = RR.net, list = net.boards[def.id], mine = net.me[def.id], rec = g.best[def.id];
+    const touch = RR.input.touchMode;
     ctx.fillStyle = 'rgba(7,7,26,0.72)';
     ctx.fillRect(0, 0, W, H);
-    const pw = Math.min(W - 8, 240), ph = 206;
+    const pw = Math.min(W - 8, 240), ph = 232, rowH = 12;
     const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
-    const cPlace = x + pw - 92, cDiff = x + pw - 62, cTime = x + pw - 10;
+    const cSetup = x + 94, cPlace = x + pw - 92, cDiff = x + pw - 62, cTime = x + pw - 10;
     panel(ctx, x, y, pw, ph, PAL.pink);
     text(ctx, 'WORLD TOP 10', W / 2, y + 7, PAL.pink, 2, 'center', PAL.plum);
     text(ctx, def.name, W / 2, y + 25, PAL.sky, 1, 'center');
 
+    const rows = (g.boardRows = []); // what the arrows can pick, in order
     const row = function (ry, rank, e, col) {
+      const n = rows.length, r = { e: e, rank: rank };
+      rows.push(r);
+      if (g.boardSel === n && !touch) { // picked with the arrows
+        ctx.fillStyle = PAL.white;
+        ctx.fillRect(x + 5, ry - 3, pw - 10, 1); ctx.fillRect(x + 5, ry + rowH - 4, pw - 10, 1);
+        ctx.fillRect(x + 5, ry - 3, 1, rowH); ctx.fillRect(x + pw - 6, ry - 3, 1, rowH);
+      }
       text(ctx, String(rank), x + 22, ry, col, 1, 'right');
       text(ctx, e.name, x + 30, ry, col);
+      r.strip = setupStrip(ctx, e.setup, cSetup, ry);
+      r.at = [cSetup, ry];
       // finishing place in that race; older rows were saved without one
       if (e.place >= 1 && e.place <= 6) text(ctx, ORD[e.place - 1], cPlace, ry, col === PAL.yellow ? col : PLACE_COL[e.place - 1]);
       else text(ctx, '-', cPlace + 6, ry, PAL.steel);
       text(ctx, DIFF_TAG[e.diff] || '', cDiff, ry, DIFF_COL[e.diff] || PAL.steel);
       text(ctx, fmt(e.time), cTime, ry, col, 1, 'right');
+      g.ui.push({ x: x + 5, y: ry - 3, w: pw - 10, h: rowH, label: 'PILOT ' + rank, act: function () { g.boardSel = n; g.openCard(r); } });
     };
     const isMine = function (e) {
       if (mine) return e.name === mine.name && e.time === mine.time;
@@ -910,30 +983,105 @@
     } else {
       text(ctx, '#', x + 22, y + 37, PAL.steel, 1, 'right');
       text(ctx, 'PILOT', x + 30, y + 37, PAL.steel);
+      text(ctx, 'SETUP', cSetup, y + 37, PAL.steel);
       text(ctx, 'RACE', cPlace - 3, y + 37, PAL.steel);
       text(ctx, 'TIME', cTime, y + 37, PAL.steel, 1, 'right');
       let shown = false;
       for (let i = 0; i < list.length && i < 10; i++) {
         const e = list[i], me = isMine(e);
-        if (me) { shown = true; ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry - 2, pw - 10, 11); }
+        if (me) { shown = true; ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry - 3, pw - 10, rowH); }
         row(ry, i + 1, e, me ? PAL.yellow : i === 0 ? PAL.gold : PAL.white);
-        ry += 11;
+        ry += rowH;
       }
       // your own standing, when it is not already highlighted above
-      const my = y + 161;
+      const my = y + 175;
       if (mine && !shown) {
-        RR.line(ctx, x + 8, my - 5, x + pw - 9, my - 5, PAL.steel, 3);
+        RR.line(ctx, x + 8, my - 6, x + pw - 9, my - 6, PAL.steel, 3);
         ctx.fillStyle = 'rgba(255,205,117,0.16)';
-        ctx.fillRect(x + 5, my - 2, pw - 10, 11);
+        ctx.fillRect(x + 5, my - 3, pw - 10, rowH);
         row(my, mine.rank > 999 ? '999+' : mine.rank, mine, PAL.yellow);
       } else if (mine === null) {
         text(ctx, 'FINISH A RACE HERE TO JOIN THE BOARD', W / 2, my, PAL.steel, 1, 'center');
       }
+      text(ctx, touch ? 'TAP A PILOT TO SEE THEIR ROCKET' : 'ARROWS + ENTER: SEE A PILOT\'S ROCKET', W / 2, y + ph - 34, PAL.sky, 1, 'center');
     }
-    text(ctx, 'R ROOKIE  P PILOT  A ACE', W / 2, y + ph - 34, PAL.steel, 1, 'center');
+    if (g.boardSel >= rows.length) g.boardSel = -1;
+    text(ctx, 'R ROOKIE  P PILOT  A ACE', W / 2, y + ph - 45, PAL.steel, 1, 'center');
     const bw = 90;
-    button(g, ctx, RR.input.touchMode ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 23, bw, 17,
+    button(g, ctx, touch ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
       function () { g.closeBoard(); }, PAL.lime);
+  }
+
+  /**
+   * One pilot's card from the leaderboard: the rocket they flew, its stat
+   * levels (grey: the ship's own, yellow: points they put in), and every
+   * powerup they used on the way to that time.
+   */
+  function drawCard(g, ctx, W, H) {
+    const c = g.boardCard, e = c.e, su = e.setup, hull = su && hullOf(su.ship), def = RR.TRACKS[g.trackIdx];
+    const touch = RR.input.touchMode;
+    ctx.fillStyle = 'rgba(7,7,26,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W - 8, 240), ph = 244;
+    const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
+    panel(ctx, x, y, pw, ph, PAL.pink);
+    text(ctx, e.name, W / 2, y + 7, c.rank === 1 ? PAL.gold : PAL.white, 2, 'center', PAL.plum);
+    text(ctx, '#' + c.rank + ' ON ' + def.name, W / 2, y + 25, PAL.sky, 1, 'center');
+
+    /* the rocket and the race */
+    const tx = hull ? x + 56 : x + 14;
+    if (hull) {
+      const spr = Art.ship(hull.design, 0);
+      ctx.drawImage(spr, x + 14, y + 38, spr.width * 2, spr.height * 2);
+      text(ctx, hull.name, tx, y + 40, PAL.white, 2, 'left', PAL.ink);
+    }
+    text(ctx, 'TIME ' + fmt(e.time), tx, y + 58, PAL.white);
+    text(ctx, 'BEST LAP ' + fmt(e.lap), tx, y + 68, PAL.silver);
+    const place = e.place >= 1 && e.place <= 6 ? ORD[e.place - 1] : '-';
+    text(ctx, place + ' VS ' + ((RR.DIFFS[e.diff] && RR.DIFFS[e.diff].name) || '?') + ' RIVALS', tx, y + 78, DIFF_COL[e.diff] || PAL.silver);
+    const shown = { ship: hull ? hull.id : null, stats: null, items: [], numbers: [] };
+    g.cardShown = shown;
+
+    if (!hull) {
+      text(ctx, 'NO SETUP ON RECORD', W / 2, y + 118, PAL.silver, 1, 'center');
+      text(ctx, 'THIS TIME WAS SET BEFORE THE', W / 2, y + 134, PAL.steel, 1, 'center');
+      text(ctx, 'LEADERBOARD SAVED ROCKETS', W / 2, y + 144, PAL.steel, 1, 'center');
+    } else {
+      /* stats */
+      const tuned = su.stats.reduce(function (a, lv, k) { return a + Math.max(0, lv - hull.base[k]); }, 0);
+      text(ctx, 'STATS', x + 14, y + 88, PAL.steel);
+      text(ctx, tuned ? '+' + tuned + ' POINTS PUT IN' : 'STOCK', x + pw - 14, y + 88, tuned ? PAL.yellow : PAL.steel, 1, 'right');
+      shown.stats = su.stats.slice();
+      RR.STATS.forEach(function (st, k) {
+        const ry = y + 98 + k * 10, lv = su.stats[k], base = hull.base[k], cap = hull.cap[k], bx = x + 86;
+        text(ctx, st.name, x + 14, ry, PAL.silver);
+        for (let n = 0; n < 10; n++) {
+          if (n >= cap) { ctx.fillStyle = PAL.slate; ctx.fillRect(bx + n * 5 + 1, ry + 3, 2, 1); continue; }
+          ctx.fillStyle = n < Math.min(base, lv) ? PAL.silver : n < lv ? PAL.yellow : PAL.dusk;
+          ctx.fillRect(bx + n * 5, ry, 4, 7);
+        }
+        text(ctx, String(lv), bx + 56, ry, lv > base ? PAL.yellow : PAL.white);
+      });
+
+      /* powerups used, with a small 2 or 3 beside an upgraded one */
+      const used = usedList(su), levels = su.levels || {};
+      text(ctx, 'POWERUPS USED', x + 14, y + 158, PAL.steel);
+      if (!used.length) text(ctx, 'NONE - A CLEAN RUN', x + 14, y + 172, PAL.lime);
+      const colW = Math.floor((pw - 28) / 2);
+      used.forEach(function (u, k) {
+        const cx = x + 14 + (k % 2) * colW, ry = y + 171 + Math.floor(k / 2) * 11, T = RR.ITEMS[u[0]], lv = levels[u[0]];
+        ctx.drawImage(Art.icons[u[0]], cx, ry - 1);
+        const lw = lv > 1 ? tinyNum(ctx, lv, cx + 9, ry + 3, PAL.gold) : 0;
+        if (lw) shown.numbers.push([u[0], lv]);
+        text(ctx, T.name, cx + 12 + lw, ry, T.color);
+        text(ctx, 'X' + u[1], cx + colW - 8, ry, PAL.white, 1, 'right');
+        shown.items.push(u);
+      });
+    }
+
+    const bw = 90;
+    button(g, ctx, touch ? 'BACK' : 'BACK (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
+      function () { g.closeCard(); }, PAL.lime);
   }
 
   /**
@@ -942,58 +1090,202 @@
    * to that ship's ceiling; the dots past the end are out of its reach.
    */
   function drawHangar(g, ctx, W, H) {
-    const T = g.t, touch = RR.input.touchMode, ST = RR.STATS;
+    const T = g.t, touch = RR.input.touchMode, ST = RR.STATS, pr = g.prog, power = g.hangarPage === 'power';
     const i = g.hangarShip, h = RR.HULLS[i], open = g.shipUnlocked(i), left = g.pointsLeft(i);
     ctx.fillStyle = 'rgba(7,7,26,0.72)';
     ctx.fillRect(0, 0, W, H);
-    const pw = Math.min(W - 8, 250), ph = 216;
+    const pw = Math.min(W - 8, 250), ph = 250;
     const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
     panel(ctx, x, y, pw, ph, PAL.yellow);
     text(ctx, 'HANGAR', W / 2, y + 7, PAL.yellow, 2, 'center', PAL.plum);
-    text(ctx, 'WINS ' + g.prog.wins + '    STAT POINTS ' + g.prog.points, W / 2, y + 25, PAL.silver, 1, 'center');
+    const pts = g.shipPoints(i), maxed = pts >= RR.shipRoom(i); // this ship's points: never more than it can use
+    text(ctx, power ? 'CREDITS ' + pr.credits + '   UPGRADE POINTS ' + pr.upts
+      : 'WINS ' + pr.wins + '  POINTS ' + pts + (maxed ? ' MAX' : '') + '  CREDITS ' + pr.credits,
+      W / 2, y + 25, PAL.silver, 1, 'center');
     const mark = function (ry, hh) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry, pw - 10, hh); };
 
-    /* the ship */
-    const sy = y + 38, sel = g.hangarRow === 0 && !touch;
-    if (sel) mark(sy - 3, 48);
-    const spr = Art.ship(h.design, 0);
-    if (!open) ctx.globalAlpha = 0.3;
-    ctx.drawImage(spr, x + 30, sy, spr.width * 2, spr.height * 2);
-    ctx.globalAlpha = 1;
-    text(ctx, h.name, x + 70, sy + 3, open ? PAL.white : PAL.steel, 2, 'left', PAL.ink);
-    text(ctx, h.blurb, x + 70, sy + 21, PAL.sky);
-    const need = h.wins - g.prog.wins;
-    text(ctx, open ? 'YOUR SHIP' : 'LOCKED - ' + need + ' MORE WIN' + (need > 1 ? 'S' : ''), x + 70, sy + 32, open ? PAL.lime : PAL.alarm);
-    const nud = sel ? Math.round(Math.sin(T * 8) * 1.5) : 0, acol = sel || touch ? PAL.yellow : PAL.steel;
-    text(ctx, '<', x + 14 - nud, sy + 14, acol, 2, 'center', PAL.ink);
-    text(ctx, '>', x + pw - 14 + nud, sy + 14, acol, 2, 'center', PAL.ink);
-    g.ui.push({ x: x, y: sy - 3, w: 28, h: 48, act: function () { g.hangarBrowse(-1); } });
-    g.ui.push({ x: x + pw - 28, y: sy - 3, w: 28, h: 48, act: function () { g.hangarBrowse(1); } });
+    /* two pages: the ship and its stats, and powerup upgrades */
+    const tw = 74;
+    button(g, ctx, 'SHIP', Math.round(W / 2 - tw - 3), y + 36, tw, 14, function () { g.hangarTab('ship'); }, power ? PAL.slate : PAL.yellow);
+    button(g, ctx, 'POWERUPS', Math.round(W / 2 + 3), y + 36, tw, 14, function () { g.hangarTab('power'); }, power ? PAL.yellow : PAL.slate);
 
-    /* its stats */
-    let ry = y + 92;
-    const bx = x + 70;
-    ST.forEach(function (st, k) {
-      const lv = g.statLevel(i, k), base = h.base[k], cap = h.cap[k], on = g.hangarRow === k + 1 && !touch;
-      if (on) mark(ry - 4, 15);
-      text(ctx, st.name, x + 10, ry, on ? PAL.yellow : PAL.silver);
-      for (let c = 0; c < 10; c++) {
-        if (c >= cap) { ctx.fillStyle = PAL.slate; ctx.fillRect(bx + c * 5 + 1, ry + 3, 2, 1); continue; }
-        ctx.fillStyle = c < base ? PAL.silver : c < lv ? PAL.yellow : PAL.dusk;
-        ctx.fillRect(bx + c * 5, ry, 4, 7);
+    if (!power) {
+      /* the ship */
+      const sy = y + 58, sel = g.hangarRow === 0 && !touch;
+      if (sel) mark(sy - 3, 48);
+      const spr = Art.ship(h.design, 0);
+      if (!open) ctx.globalAlpha = 0.3;
+      ctx.drawImage(spr, x + 30, sy, spr.width * 2, spr.height * 2);
+      ctx.globalAlpha = 1;
+      text(ctx, h.name, x + 70, sy + 3, open ? PAL.white : PAL.steel, 2, 'left', PAL.ink);
+      text(ctx, h.blurb, x + 70, sy + 21, PAL.sky);
+      const need = h.wins - pr.wins;
+      text(ctx, open ? 'YOUR SHIP' : 'LOCKED - ' + need + ' MORE WIN' + (need > 1 ? 'S' : ''), x + 70, sy + 32, open ? PAL.lime : PAL.alarm);
+      const nud = sel ? Math.round(Math.sin(T * 8) * 1.5) : 0, acol = sel || touch ? PAL.yellow : PAL.steel;
+      text(ctx, '<', x + 14 - nud, sy + 14, acol, 2, 'center', PAL.ink);
+      text(ctx, '>', x + pw - 14 + nud, sy + 14, acol, 2, 'center', PAL.ink);
+      g.ui.push({ x: x, y: sy - 3, w: 28, h: 48, act: function () { g.hangarBrowse(-1); } });
+      g.ui.push({ x: x + pw - 28, y: sy - 3, w: 28, h: 48, act: function () { g.hangarBrowse(1); } });
+
+      /* its stats */
+      let ry = y + 112;
+      const bx = x + 70;
+      ST.forEach(function (st, k) {
+        const lv = g.statLevel(i, k), base = h.base[k], cap = h.cap[k], on = g.hangarRow === k + 1 && !touch;
+        if (on) mark(ry - 4, 14);
+        text(ctx, st.name, x + 10, ry, on ? PAL.yellow : PAL.silver);
+        for (let c = 0; c < 10; c++) {
+          if (c >= cap) { ctx.fillStyle = PAL.slate; ctx.fillRect(bx + c * 5 + 1, ry + 3, 2, 1); continue; }
+          ctx.fillStyle = c < base ? PAL.silver : c < lv ? PAL.yellow : PAL.dusk;
+          ctx.fillRect(bx + c * 5, ry, 4, 7);
+        }
+        text(ctx, lv + '/' + cap, bx + 54, ry, lv >= cap ? PAL.lime : PAL.white);
+        const less = open && lv > base, more = open && left > 0 && lv < cap;
+        button(g, ctx, '-', x + pw - 52, ry - 4, 22, 14, function () { g.spend(i, k, -1); }, less ? PAL.white : PAL.slate);
+        button(g, ctx, '+', x + pw - 27, ry - 4, 22, 14, function () { g.spend(i, k, 1); }, more ? PAL.yellow : PAL.slate);
+        ry += 15;
+      });
+      text(ctx, open ? 'POINTS LEFT FOR THIS SHIP: ' + left : 'WIN RACES AND FIGHTS TO UNLOCK', W / 2, ry + 3,
+        open && left > 0 ? PAL.yellow : PAL.steel, 1, 'center');
+    } else {
+      /* powerup upgrades: credits buy points, points raise a powerup's level (1-3) */
+      const buyRow = ST.length + 1, by = y + 60, room = g.powerRoom(), full = pr.upts >= room;
+      if (g.hangarRow === buyRow && !touch) mark(by - 5, 17);
+      text(ctx, full ? (room ? 'POINTS FOR EVERY LEVEL LEFT' : 'EVERY POWERUP IS MAXED') : 'UPGRADE POINT', x + 10, by,
+        full ? PAL.lime : PAL.silver);
+      if (!full) {
+        button(g, ctx, 'BUY ' + RR.UPGRADE_PRICE + ' CR', x + pw - 98, by - 4, 88, 15, function () { g.buyUpgrade(); },
+          g.canBuyUpgrade() ? PAL.yellow : PAL.slate);
       }
-      text(ctx, lv + '/' + cap, bx + 54, ry, lv >= cap ? PAL.lime : PAL.white);
-      const less = open && lv > base, more = open && left > 0 && lv < cap;
-      button(g, ctx, '-', x + pw - 52, ry - 4, 22, 15, function () { g.spend(i, k, -1); }, less ? PAL.white : PAL.slate);
-      button(g, ctx, '+', x + pw - 27, ry - 4, 22, 15, function () { g.spend(i, k, 1); }, more ? PAL.yellow : PAL.slate);
-      ry += 17;
-    });
-    text(ctx, open ? 'POINTS LEFT FOR THIS SHIP: ' + left : 'WIN RACES AND FIGHTS TO UNLOCK', W / 2, ry + 1,
-      open && left > 0 ? PAL.yellow : PAL.steel, 1, 'center');
+      g.powerShown = [];
+      RR.POWER.forEach(function (pw2, k) {
+        const id = pw2.id, lv = g.powerLevel(id), ry = y + 80 + k * 15, on = g.hangarRow === buyRow + 1 + k && !touch;
+        if (on) mark(ry - 4, 14);
+        ctx.drawImage(Art.icons[id], x + 10, ry - 1);
+        text(ctx, RR.ITEMS[id].name, x + 22, ry, on ? PAL.yellow : RR.ITEMS[id].color);
+        for (let c = 0; c < 3; c++) {
+          ctx.fillStyle = c === 0 ? PAL.silver : c < lv ? PAL.yellow : PAL.dusk;
+          ctx.fillRect(x + 70 + c * 7, ry, 6, 7);
+        }
+        text(ctx, RR.powerDoes(id, lv), x + 96, ry, lv > 1 ? PAL.yellow : PAL.white);
+        button(g, ctx, '-', x + pw - 52, ry - 4, 22, 14, function () { g.powerSpend(id, -1); }, lv > 1 ? PAL.white : PAL.slate);
+        button(g, ctx, '+', x + pw - 27, ry - 4, 22, 14, function () { g.powerSpend(id, 1); }, pr.upts > 0 && lv < 3 ? PAL.yellow : PAL.slate);
+        g.ui.push({ x: x + pw - 27, y: ry - 4, w: 22, h: 14, label: 'UP ' + id, act: function () { g.powerSpend(id, 1); } });
+        g.powerShown.push([id, lv]);
+      });
+      text(ctx, 'UPGRADES MAKE EVERY PICK-UP STRONGER', W / 2, y + 204, PAL.steel, 1, 'center');
+    }
 
     const bw = 96;
     button(g, ctx, touch ? 'DONE' : 'DONE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 23, bw, 17,
       function () { g.closeHangar(); }, PAL.lime);
+  }
+
+  /* -------------------------------------------------------------- online */
+
+  const modeName = function (mode) { return (RR.MODES.find(function (m) { return m.id === mode; }) || RR.MODES[0]).name; };
+  const placeName = function (mode, track) { const list = mode === 'race' ? RR.TRACKS : RR.ARENAS; return (list[track] || list[0]).name; };
+
+  /** The ONLINE screen: find or make a room, then wait in its lobby until everyone is READY. */
+  function drawOnline(g, ctx, W, H) {
+    const M = RR.mp, touch = RR.input.touchMode, room = M.room, T = g.t;
+    ctx.fillStyle = 'rgba(7,7,26,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W - 8, 250), ph = 232;
+    const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
+    panel(ctx, x, y, pw, ph, PAL.lime);
+    text(ctx, 'ONLINE', W / 2, y + 7, PAL.lime, 2, 'center', PAL.plum);
+    const status = M.error || M.notice || (M.status === 'connecting' ? 'CONNECTING...' : M.status === 'online' ? '' : M.status === 'lost' ? 'CONNECTION LOST' : '');
+    if (status) text(ctx, status, W / 2, y + 25, M.error ? PAL.alarm : PAL.silver, 1, 'center');
+    const bw = Math.min(150, pw - 40), bx = Math.round(W / 2 - bw / 2);
+
+    if (!room) {
+      const mode = RR.MODES[g.modeIdx].id, track = mode === 'race' ? g.trackIdx : g.arenaIdx;
+      text(ctx, modeName(mode) + ' - ' + placeName(mode, track), W / 2, y + 44, PAL.white, 1, 'center');
+      text(ctx, RR.DIFFS[g.diffIdx].name + ' BOTS IN EMPTY SEATS', W / 2, y + 56, PAL.steel, 1, 'center');
+      button(g, ctx, touch ? 'QUICK MATCH' : 'QUICK MATCH (ENTER)', bx, y + 74, bw, 20, function () { M.quick(); }, PAL.lime);
+      button(g, ctx, 'CREATE ROOM', bx, y + 100, bw, 20, function () { M.create(); }, PAL.yellow);
+      button(g, ctx, 'JOIN ROOM', bx, y + 126, bw, 20, function () { M.askCode(); }, PAL.cyan);
+      text(ctx, 'QUICK MATCH: RACE ANYONE IN A ROOM', W / 2, y + 156, PAL.steel, 1, 'center');
+      text(ctx, 'CREATE ROOM: A CODE FOR YOUR FRIENDS', W / 2, y + 167, PAL.steel, 1, 'center');
+      text(ctx, 'PICK THE MODE AND COURSE ON THE MENU', W / 2, y + 178, PAL.steel, 1, 'center');
+    } else {
+      // the room: its code, what it races, who is in it
+      if (room.priv) {
+        text(ctx, 'ROOM ' + room.code, W / 2, y + 38, PAL.gold, 2, 'center', PAL.plum);
+        text(ctx, 'FRIENDS JOIN WITH THIS CODE', W / 2, y + 56, PAL.steel, 1, 'center');
+      } else text(ctx, 'QUICK MATCH', W / 2, y + 42, PAL.gold, 2, 'center', PAL.plum);
+      text(ctx, modeName(room.mode) + ' - ' + placeName(room.mode, room.track), W / 2, y + 68, PAL.white, 1, 'center');
+      const shown = [];
+      for (let k = 0; k < 6; k++) {
+        const h = room.humans[k], ry = y + 82 + k * 12;
+        if (!h) { text(ctx, (k + 1) + '  ' + 'BOT (' + RR.DIFFS[room.diff].name + ')', x + 24, ry, PAL.slate); continue; }
+        const you = k === M.you;
+        if (you) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 8, ry - 2, pw - 16, 11); }
+        text(ctx, String(k + 1), x + 24, ry, you ? PAL.yellow : PAL.silver);
+        ctx.drawImage(Art.shipMini(h.design, h.team), x + 36, ry - 2);
+        text(ctx, h.name + (you ? ' (YOU)' : ''), x + 50, ry, you ? PAL.yellow : PAL.white);
+        const tag = !h.connected ? 'AWAY' : h.waiting ? 'NEXT RACE' : h.ready ? 'READY' : '...';
+        text(ctx, tag, x + pw - 14, ry, h.ready ? PAL.lime : !h.connected ? PAL.alarm : PAL.steel, 1, 'right');
+        shown.push([h.name, tag]);
+      }
+      g.onlineShown = shown;
+      const racing = room.state !== 'lobby';
+      text(ctx, room.state === 'race' ? 'A RACE IS ON - YOU ARE IN THE NEXT ONE' : racing ? 'NEXT RACE IN A MOMENT' : 'STARTS WHEN EVERYONE IS READY',
+        W / 2, y + 158, room.state === 'race' ? PAL.orange : PAL.steel, 1, 'center');
+      const ready = M.isReady();
+      if (!racing) {
+        button(g, ctx, ready ? 'NOT READY' : touch ? 'READY' : 'READY (ENTER)', bx, y + 172, bw, 20, function () { M.ready(!ready); },
+          ready ? PAL.steel : Math.floor(T * 2) & 1 ? PAL.white : PAL.lime);
+      }
+    }
+    const lw = 80;
+    button(g, ctx, touch ? 'BACK' : 'BACK (ESC)', Math.round(W / 2 - lw / 2), y + ph - 23, lw, 17, function () { M.leave(); }, PAL.orange);
+  }
+
+  /** Over an online race: the connection, and the menu (the race goes on behind it). */
+  function drawOnlineRace(g, ctx, W, H) {
+    const M = RR.mp, touch = RR.input.touchMode;
+    if (M.notice || M.status === 'lost') text(ctx, M.notice || 'CONNECTION LOST', W / 2, H * 0.3, PAL.alarm, 1, 'center', PAL.ink);
+    if (!touch && g.state === 'play') text(ctx, M.rtt + ' MS', W - 6 - g.inset.r, H - 10 - g.inset.b, M.rtt > 150 ? PAL.orange : PAL.steel, 1, 'right', PAL.ink);
+    if (!g.mpMenu || g.state !== 'play') return;
+    ctx.fillStyle = 'rgba(7,7,26,0.6)';
+    ctx.fillRect(0, 0, W, H);
+    const y = Math.round(H / 2 - 50), bw = 140, bx = Math.round(W / 2 - bw / 2);
+    text(ctx, 'ONLINE', W / 2, y, PAL.white, 3, 'center', PAL.plum);
+    text(ctx, 'THE RACE GOES ON', W / 2, y + 26, PAL.silver, 1, 'center', PAL.ink);
+    button(g, ctx, touch ? 'BACK TO THE RACE' : 'BACK TO THE RACE (P)', bx, y + 42, bw, 20, function () { g.mpMenu = false; }, PAL.lime);
+    const snd = (RR.audio.muted ? 'SOUND OFF' : 'SOUND ON') + (touch ? '' : '  (M)');
+    button(g, ctx, snd, bx, y + 66, bw, 20, function () { g.toggleSound(); }, RR.audio.muted ? PAL.steel : PAL.lime);
+    button(g, ctx, touch ? 'LEAVE THE ROOM' : 'LEAVE THE ROOM (Q)', bx, y + 90, bw, 20, function () { M.leave(); }, PAL.orange);
+  }
+
+  /** The results of an online race or fight, then back to the room. */
+  function drawOnlineResults(g, ctx, W, H) {
+    const M = RR.mp, list = M.results || [], touch = RR.input.touchMode, fight = g.combat;
+    ctx.fillStyle = 'rgba(7,7,26,0.6)';
+    ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W - 8, 240), ph = 64 + list.length * 12 + 44;
+    const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
+    const mine = list.find(function (r) { return r.you; });
+    panel(ctx, x, y, pw, ph, mine ? PLACE_COL[mine.place - 1] : PAL.white);
+    text(ctx, mine ? ORD[mine.place - 1] + ' PLACE' : 'RESULTS', W / 2, y + 7, mine ? PLACE_COL[mine.place - 1] : PAL.white, 2, 'center', PAL.plum);
+    text(ctx, fight ? 'KILLS  DEATHS' : 'TIME', x + pw - 12, y + 30, PAL.steel, 1, 'right');
+    list.forEach(function (r, k) {
+      const ry = y + 42 + k * 12, col = r.you ? PAL.yellow : r.human ? PAL.white : PAL.silver;
+      if (r.you) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 6, ry - 2, pw - 12, 11); }
+      text(ctx, ORD[r.place - 1] || String(r.place), x + 12, ry, PLACE_COL[r.place - 1] || PAL.silver);
+      text(ctx, r.name + (r.human ? '' : ' (BOT)'), x + 40, ry, col);
+      text(ctx, fight ? r.kills + '      ' + r.deaths : r.time != null ? fmt(r.time) : 'DNF', x + pw - 12, ry, col, 1, 'right');
+    });
+    const rw = M.reward, by = y + 46 + list.length * 12;
+    if (rw) {
+      text(ctx, (rw.pts ? '+' + rw.pts + ' STAT POINT' + (rw.pts > 1 ? 'S' : '') + '  ' : rw.capped ? 'STAT POINTS MAXED  ' : '') + '+' + rw.credits + ' CREDITS',
+        W / 2, by, rw.pts ? PAL.yellow : PAL.gold, 1, 'center');
+    }
+    const bw = Math.floor((pw - 30) / 2);
+    button(g, ctx, touch ? 'NEXT RACE' : 'NEXT RACE (ENTER)', x + 10, y + ph - 26, bw, 19, function () { M.backToRoom(); }, PAL.lime);
+    button(g, ctx, 'LEAVE', x + 20 + bw, y + ph - 26, bw, 19, function () { M.leave(); }, PAL.orange);
   }
 
   function drawPause(g, ctx, W, H) {
@@ -1054,8 +1346,8 @@
     if (rw) {
       const fresh = rw.unlocked.length && Math.floor(T) & 1;
       text(ctx, fresh ? 'NEW SHIP IN THE HANGAR: ' + rw.unlocked.join(' ')
-        : rw.pts ? '+' + rw.pts + ' STAT POINT' + (rw.pts > 1 ? 'S' : '') + ' FOR THE HANGAR' : 'TOP 3 EARNS STAT POINTS',
-        W / 2, ry + 24, fresh ? PAL.lime : rw.pts ? PAL.yellow : PAL.steel, 1, 'center');
+        : (rw.pts ? '+' + rw.pts + ' STAT POINT' + (rw.pts > 1 ? 'S' : '') + '  ' : rw.capped ? 'STAT POINTS MAXED  ' : '') + '+' + rw.credits + ' CREDITS',
+        W / 2, ry + 24, fresh ? PAL.lime : rw.pts ? PAL.yellow : PAL.gold, 1, 'center');
     }
     if (net.online && !g.combat) {
       const r = net.result;
@@ -1090,10 +1382,14 @@
     if (g.state === 'title') drawTitle(g, ctx, W, H);
     else if (g.state === 'board') drawBoard(g, ctx, W, H);
     else if (g.state === 'hangar') drawHangar(g, ctx, W, H);
+    else if (g.state === 'online') drawOnline(g, ctx, W, H);
     else {
+      drawTags(g, ctx);
       drawHUD(g, ctx, W, H);
       if (RR.input.touchMode && g.state === 'play') drawTouch(g, ctx, W, H);
+      if (g.online) drawOnlineRace(g, ctx, W, H);
       if (g.state === 'paused') drawPause(g, ctx, W, H);
+      else if (g.state === 'mpresults') drawOnlineResults(g, ctx, W, H);
       else if (g.state === 'layout') drawLayout(g, ctx, W, H);
       else if (g.state === 'results') drawResults(g, ctx, W, H);
     }

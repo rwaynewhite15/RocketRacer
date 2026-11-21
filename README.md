@@ -1,11 +1,12 @@
 # Rocket Racer
 
-A 2D rocket racing game in crisp, high-definition 8-bit style. Race five AI rivals around
-planets and through asteroid fields, threading giant donut checkpoints, grabbing power-ups
-and firing weapons along the way.
+A 2D rocket racing game in crisp, high-definition 8-bit style. Race five AI rivals, or your
+friends online, around planets and through asteroid fields, threading giant donut checkpoints,
+grabbing power-ups and firing weapons along the way.
 
 It runs in any modern browser, plays well on phones, and ships with a small Google Cloud
-backend: one Cloud Run service serves the game and a global leaderboard stored in Firestore.
+backend: one Cloud Run service serves the game and a global leaderboard stored in Firestore,
+and a second runs online multiplayer over WebSockets.
 
 ## The game
 
@@ -15,11 +16,11 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
   at the screen edge points to it. The checkered donut is start/finish. Three laps.
 - **Planets** are solid and pull on your rocket. **Asteroids** drift, bounce and can be shot.
 - **Power-ups** (green capsules, used instantly): Nitro, Shield, Repair.
-- **Do-over** (rare violet capsule, kept until you use it): rewinds your ship 3 seconds. You
-  fly the way back as a ghost along the path you just took, then carry on from there with the
-  hull, lap and gate progress you had then, and 2 seconds of protection. It also undoes a
-  wreck. The race clock and your rivals keep going, so it costs time. While you hold one, a
-  faint ghost marks where it would put you. Rivals can't use it.
+- **Gate deferral** (rare violet capsule, kept until you use it): marks the gate you are
+  heading for as passed, so you go straight on to the next one. Your rocket stays where it is
+  and the race clock isn't touched. While you hold one, a violet ring marks the gate it would
+  defer. The start/finish line can't be deferred: every lap is still flown over the line (with
+  the line next, the button dims, and pressing it says FLY THE LINE). Rivals can't use it.
 - **Weapons** (red crates, one slot): Blaster, homing Missile, Mine, EMP shockwave.
 - **Rivals** in three skill levels: Rookie, Pilot, Ace. They pick up and use items too.
 - **Three events**, chosen on the menu:
@@ -37,11 +38,34 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
     against Pilot rivals and two more against Ace.
   - Points raise a ship's stats up to that ship's ceiling. Every ship can spend all the
     points you have earned, and points can be taken back and moved at any time.
+  - No point is ever unspendable: each ship sees only as many points as it has room for
+    (Sparrow 15, Dart 19, Hammer 20, Phoenix 25), and points stop at the room of the best
+    ship you have unlocked.
   - Wins unlock better ships with higher ceilings: the Dart (2 wins), the Hammer (5) and the
     Phoenix (9). The starting Sparrow flies exactly like the rivals' ships.
+  - **Powerup upgrades** (the hangar's POWERUPS page): every finished event pays credits by
+    place (100 for a win down to 30), times 1.5 against Pilot rivals and 2 against Ace.
+    Credits buy upgrade points at 150 each. Like stat points, an upgrade point raises one
+    powerup a level, up to level 3, and can be taken back and put on another at any time.
+    Upgrades are kept for good and make every pick-up of that powerup stronger, in every
+    event; rivals stay at level 1. Points can only be bought while some powerup still has
+    room for them, so you never hold points you cannot spend.
+
+    | Powerup | Level 1 / 2 / 3 gives |
+    |---|---|
+    | Nitro | a boost lasting 2.6 / 3.9 / 5.2 s |
+    | Shield | a shield for 7 / 10.5 / 14 s |
+    | Repair | +50 / +75 / +100 hull |
+    | Blaster | 10 / 20 / 30 shots |
+    | Missile | 2 / 3 / 5 missiles |
+    | Mine | 3 / 5 / 8 mines |
+    | EMP | 1 / 2 / 3 EMPs |
+    | Gate deferral | 1 / 2 / 3 gates |
   - Progress is saved in the browser, like your records.
 - **Zoom** the world in or out in whole-pixel steps, so the pixel art stays sharp. The HUD
   keeps its size at every level, and your choice is remembered.
+- **World top 10** for each course: every row shows the pilot's rocket and the powerups they
+  used, with a small 2 or 3 by an upgraded one; tap a row to see their whole setup.
 - Hull damage, wrecks and respawns, lap and race records, an attract-mode race behind the menu.
 - All art is generated in code at start-up and all sound is synthesised, so there are no
   image or audio files to load.
@@ -50,35 +74,89 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
 
 | | Keyboard | Phone / tablet |
 |---|---|---|
-| Fly | Arrow keys or WASD (turn, thrust, brake/reverse) | Touch anywhere and drag. The rocket heads the way you drag, and the farther you drag from where you started, the more engine power. A power meter appears by your thumb and fills to MAX (about a thumb's width of travel); ease back to throttle down, lift to coast |
+| Fly | Arrow keys or WASD (turn, thrust, brake/reverse) | The FLY stick, bottom left (the fire stick's mirror image): the rocket heads the way you push it, and the farther you push, the more engine power (full at the rim). Or touch anywhere else and drag: the rocket heads the way you drag, and the farther you drag from where you started, the more power. A power meter shows the power (above the stick, or by your thumb) and fills to MAX; ease back to throttle down, lift to coast |
 | Fire weapon | Space (or X / J): fires the way the rocket points; hold it for the blaster's automatic fire | Fire stick. Blaster: automatic, firing all the time you hold the stick, straight ahead until you drag it, then the way you drag. Missiles: hold the stick, drag the way to fire (a faint dashed line shows the aim and corner marks show the rival it will lock onto), and let go to launch; a quick tap launches straight ahead. Mines drop behind and EMP spreads all round as soon as you touch the stick |
 | Brake | Down / S | BRAKE button |
-| Do-over | E or Shift | DO-OVER button (appears while you hold one) |
+| Gate deferral | E or Shift | DEFER button (appears while you hold one) |
 | Zoom | Z cycles normal / wide / close; + and - or the mouse wheel step through every level | ZOOM button |
 | Pause | P or Esc | II button |
-| Move the controls | | Pause > MOVE CONTROLS: drag the fire stick and buttons where you like (kept separately for sideways and upright; RESET restores them). Steering needs no spot of its own: it starts wherever you touch |
+| Move the controls | | Pause > MOVE CONTROLS: drag the FLY and fire sticks and the buttons where you like (kept separately for sideways and upright; RESET restores them) |
 | Menu | Arrows, Enter | Tap |
-| Hangar | H on the menu; arrows pick a ship or stat and spend points, Enter closes | HANGAR button, then the arrows and - / + buttons |
-| Other | M mute, C CRT filter, F fullscreen, N pilot name, T world top 10 | FULLSCREEN, PILOT, TOP 10 buttons |
+| Hangar | H on the menu; up/down move through the ship, its stats, BUY and the powerups (the page turns to POWERUPS past the stats), left/right pick a ship or spend and take back points, Enter closes | HANGAR button; SHIP and POWERUPS pages; arrows, BUY and - / + buttons |
+| Online | O on the menu; Enter for Quick Match, then READY; Esc leaves. In a race P opens a menu (the race goes on) | ONLINE button, then QUICK MATCH, CREATE ROOM or JOIN ROOM, and READY; the II button opens the menu |
+| Other | M mute, C CRT filter, F fullscreen, N pilot name, T world top 10 (arrows and Enter open a pilot's setup) | FULLSCREEN, PILOT, TOP 10 buttons (tap a pilot for their setup) |
 
 A gamepad also works (stick or d-pad to turn, A to thrust, B to brake, X to fire, Y or LB for
-a do-over, Back to zoom, Start to pause).
+a gate deferral, Back to zoom, Start to pause).
+
+Keys and touch work together, for example on an iPad with a keyboard: drag to steer and press
+Space to fire, or steer with the arrows and use the fire stick. Playing with keys alone clears
+the touch controls off the screen once your thumbs have been off them for 10 seconds; touch
+anywhere to bring them back. A held turn key overrides a drag's steering. (iPad keyboards often
+have no Esc key: P pauses. If the keys do nothing at first, tap the game once: Safari on iPad
+only sends keys to a page that has been touched since it opened.)
 
 On phones the game uses larger pixels, keeps the HUD clear of notches, and can be added to
 the home screen as a full-screen app. Landscape gives the best view.
 
+On iPhones and iPads the game does not use the browser's full screen: iPhones have none for web
+pages, and on an iPad a downward swipe (which steering makes all the time) drops out of it, which
+a page cannot switch off. Use Share > Add to Home Screen instead; the game then opens in its own
+window, with no browser bars and no swipe-to-exit. The title screen says so, and F says so on an
+iPad keyboard.
+
+iOS 26 lays a Home Screen app out one status bar short (and draws nothing below that) while the
+page is no taller than that short screen, which cut off the bottom of the game. `style.css`
+makes the page at least screen-tall in an installed app, capped at the screen so it never
+scrolls, and the game refits whenever the window's size changes, even without a resize event.
+
+## Online multiplayer
+
+ONLINE on the menu (when the game's server says online play is available):
+
+- **Quick Match** joins anyone's room for the mode on the menu (Grand Prix, Dogfight or Battle
+  Royale), or opens one. **Create room** gives a four-letter code for friends; **Join room** takes
+  one. Up to six pilots; bots take the empty seats. The race starts when everyone is READY.
+- Each pilot flies their own rocket from the hangar: hull, stat levels and powerup upgrades.
+- Results pay credits and stat points as offline. Grand Prix times the player flew themselves go
+  to the world top 10, marked online (the server timed them).
+- A dropped connection reconnects and gets the same ship back; a bot flies it meanwhile.
+- Every human pilot's name shows over their rocket on the grid and for the first 2 seconds of
+  the race, and again for 2 seconds whenever their rocket comes into view (bots are never
+  named). Offline, your own name shows at the start.
+
+How it works:
+
+- **The server is the authority.** It runs the very same game engine as the browser
+  (`lib/engine.js` loads `core.js`, `art.js`, `tracks.js` and `game.js` headless, one isolated
+  copy per room) at 120 steps a second. Players send only their controls (60 a second); the
+  server sends the world back 20 times a second, with sounds and explosions as timed events.
+  Nobody can cheat on positions, hits or times.
+- **WebSockets** (TCP): Cloud Run has no UDP, and at 20 updates a second with smoothing on the
+  client, TCP is fine for this game. Inputs (8 bytes) and snapshots (about 630 bytes, so about
+  13 KB/s per player) are binary (`public/src/proto.js`); lobby messages are JSON.
+- **On each screen** (`public/src/mp.js`) the player's own ship flies at once from their
+  controls (prediction); each snapshot puts it where the server says and replays the controls
+  the server has not used yet (reconciliation). Everyone else is drawn 100 ms in the past,
+  smoothly between two snapshots (interpolation). A ping keeps the clocks in step.
+- **No Kubernetes.** A room costs the server about 7 ms of CPU a second and a few MB, so one
+  Cloud Run instance holds many rooms. All rooms live on that one instance (`--max-instances 1`)
+  so friends always meet. When that is not enough: more CPUs, then more services, each its own
+  shard, with a room list in Firestore.
+
 ## Run it locally
 
-Needs Node.js 20 or newer.
+Needs Node.js 22 or newer.
 
 ```bash
 npm install
-npm run dev        # http://localhost:8080, leaderboard kept in memory
+npm run dev        # http://localhost:8080, leaderboard in memory, online play on /ws (try two browser windows)
 npm test           # API tests, plus browser tests of the game if Playwright is installed
 ```
 
 The browser tests drive the real game in headless Chromium (AI races on every course, zoom,
-do-over, the hangar, dogfights and battle royales in every arena). They need `npm install --no-save playwright && npx playwright install chromium`
+gate deferral, the hangar, dogfights and battle royales in every arena, and two players racing
+online against the multiplayer server, also on a slow network). They need `npm install --no-save playwright && npx playwright install chromium`
 and are skipped without it.
 
 The game itself is static. Opening `public/index.html` straight from disk also works; it
@@ -157,12 +235,22 @@ After the first `./deploy.sh`:
 PROJECT=your-project-id ./tools/setup-cicd.sh
 ```
 
-It creates the staging service (a few minutes: it builds from your checkout), the image repo and
-the two deploy accounts, then prints six values. Add them under Settings > Secrets and variables
+It creates the staging service (a few minutes: it builds from your checkout), the online-play
+services (`rocketracer-mp-staging` and `rocketracer-mp`), the image repo and the two deploy
+accounts, then prints six values. Add them under Settings > Secrets and variables
 > Actions, on the **Variables** tab (the Secrets tab works too): `GCP_PROJECT_ID`, `GCP_REGION`,
 `WIF_PROVIDER`, `DEPLOYER_SA`, `STAGING_WIF_PROVIDER`, `STAGING_DEPLOYER_SA`. Then re-run the
 workflow or merge to `main`. Each deploy job checks these first and names any that are missing
 or malformed.
+
+**Set up before online play existed?** Run the same command once more (it only adds what is
+missing): it creates the two online-play services and points the game at them (`MP_URL`). Until
+then the pipeline skips online play and the game shows no ONLINE button. The online-play
+services run with: one instance (`--max-instances 1`: every room is in its memory),
+`--min-instances 1` in production (no cold starts; `MP_MIN_INSTANCES=0` to save money) and 0 on
+staging, CPU always on for the race loop (`--no-cpu-throttling`), `--timeout 3600` (WebSocket
+connections last up to an hour; the game reconnects), `--session-affinity`, 2 CPUs and 1 GiB.
+Production's always-on instance costs about as much as a small always-on VM.
 
 Worth switching on in GitHub:
 
@@ -202,14 +290,28 @@ The next pipeline run (or `./deploy.sh`) moves traffic back to the newest revisi
 |---|---|
 | `GET /` | the game, from `public/` |
 | `GET /api/health` | `{ ok, store, env, version }`: which environment and commit answered |
+| `GET /api/config` | `{ mp }`: where online play is (`MP_URL`, or `/ws` with `MP=embedded`), or `null` |
+| online-play service: `GET /api/health`, WebSocket `/ws` | `mp-server.js` (see Online multiplayer). Online times are stored with `online: true` |
 | `GET /api/scores?track=lunar` | top 10 race times for a course. With an `X-Pilot-Id` header it also returns `me`: that player's own row and world rank |
-| `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff, place }` |
+| `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff, place, setup }` |
 
 Leaderboard rows live in Firestore at `rocketracer/{track}/scores/{pid}`. Each player has an
 anonymous id generated in their browser and keeps one row per course, replaced only by a
-faster time. A row records the time, best lap, rival level and `place`: where the pilot finished
-in that race (1 to 6). The top-10 screen shows it, and shows your own row and rank underneath
-when you are not in the top 10.
+faster time. A row records the time, best lap, rival level, `place` (where the pilot finished
+in that race, 1 to 6) and `setup`: `{ ship, stats, items, levels }`, the rocket flown, its
+five stat levels, how many of each powerup were picked up and used (`items`), and the pilot's
+powerup upgrade levels (`levels`: item -> 2 or 3; level 1 is left out). A powerup counts as
+used when it takes effect: nitro, shield and repair on pick-up, a weapon at its first shot, a
+gate deferral when a gate is deferred. (Rows from before the deferral replaced the do-over may
+still list `rewind`; the game no longer shows it.)
+The setup belongs to the record run, so a slower race leaves it alone. Rows from before either
+field existed have `null`.
+
+The top-10 screen shows each pilot's rocket and the powerups they used most in the row, with a
+small 2 or 3 beside one they had upgraded (`+` when there were more than three), and your own
+row and rank underneath when you are not in the top 10. Tap a row (or pick it with the arrow
+keys and press Enter) for that pilot's card: the rocket, its stat levels (grey: the ship's own,
+yellow: points put in), and every powerup used, numbered the same way.
 
 Configuration, all optional environment variables:
 
@@ -236,17 +338,26 @@ public/               the game (static)
   src/audio.js        chip-synth sound effects and music
   src/input.js        keyboard, touch (drag to steer, fire stick), gamepad
   src/net.js          leaderboard client
+  src/proto.js        the online message format (shared with the server)
+  src/mp.js           online play: connection, prediction, interpolation, lobby
   src/tracks.js       course and arena definitions and builder
   src/game.js         physics, weapons, AI, laps, combat modes, hangar, game states
   src/render.js       world, HUD, menus
   src/main.js         the two canvas layers (zooming world, fixed-size HUD) and main loop
-server.js             static files + leaderboard API
+server.js             static files + leaderboard API (+ online play with MP=embedded)
+mp-server.js          the online-play service: rooms over WebSockets
+lib/mp.js             rooms, matchmaking, the race loop, snapshots
+lib/engine.js         the game engine run headless, one copy per room
 lib/store.js          Firestore and in-memory leaderboard storage
 test/api.test.js      API tests
 test/game.test.js     browser tests of the game (Playwright)
+test/engine.test.js   the headless engine
+test/mp.test.js       the multiplayer server with real WebSocket clients
+test/online.test.js   two browsers racing online
 .github/workflows/    CI/CD pipeline
 Dockerfile, deploy.sh Cloud Run packaging and first deployment (STAGING=1 for the staging copy)
 tools/setup-cicd.sh   one-time setup: staging service and keyless deploy access
 tools/ci-deploy.sh    one safe rollout: no-traffic revision, smoke test, switch traffic
+tools/mp-smoke.js     smoke test for online play: a real room over the WebSocket
 tools/make-icons.js   regenerates the app icons from the game art
 ```

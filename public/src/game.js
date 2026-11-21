@@ -22,8 +22,6 @@
     MISSILE_SPEED: 560, MISSILE_TURN: 3.4, MISSILE_LIFE: 4.5, MISSILE_DMG: 34,
     MINE_DMG: 30, MINE_LIFE: 45,
     EMP_RANGE: 240, EMP_TIME: 2.4,
-    // do-over: the ship is sampled HIST_DT apart and the last REWIND_SPAN seconds are kept
-    REWIND_SPAN: 3, HIST_DT: 0.05, REWIND_DUR: 0.9, REWIND_MIN: 0.5, REWIND_INVULN: 2,
     // combat modes
     CANNON_COOL: 0.2, KILL_CREDIT: 5, // built-in blaster; seconds a hit still counts towards a kill
     KILL_TARGET: 5, DOGFIGHT_TIME: 180,
@@ -39,12 +37,12 @@
     missile: { name: 'MISSILE', color: PAL.orange, ammo: 2 },
     mine: { name: 'MINE', color: PAL.alarm, ammo: 3 },
     emp: { name: 'EMP', color: PAL.violet, ammo: 1 },
-    rewind: { name: 'DO-OVER', color: PAL.violet },
+    defer: { name: 'DEFERRAL', color: PAL.violet }, // gate deferral: the gate ahead counts as passed
   });
   const ROLL = {
-    P: [['nitro', 38], ['shield', 26], ['repair', 22], ['rewind', 14]],
+    P: [['nitro', 38], ['shield', 26], ['repair', 22], ['defer', 14]],
     W: [['blaster', 35], ['missile', 30], ['mine', 20], ['emp', 15]],
-    // combat modes: every ship already has a cannon, and there are no do-overs
+    // combat modes: every ship already has a cannon, and there are no gates to defer
     CP: [['nitro', 30], ['shield', 35], ['repair', 35]],
     CW: [['missile', 45], ['mine', 25], ['emp', 30]],
   };
@@ -61,6 +59,39 @@
    * points can raise each stat as far as its `cap` - better ships, unlocked by
    * winning, have higher ceilings.
    */
+  /*
+   * Powerup upgrades, handled like stat points. Credits buy upgrade points
+   * (UPGRADE_PRICE each). A point raises one powerup a level, up to level 3,
+   * and can be taken back and put on another at any time. Upgrades are kept
+   * for good and make every pick-up of that powerup stronger, in every event
+   * (rivals stay at level 1). Points can only be bought while some powerup
+   * still has room for them, so none are ever unspendable.
+   * `lv` is what each level gives.
+   */
+  const POWER = (RR.POWER = [
+    { id: 'nitro', lv: [1, 1.5, 2] }, // boost length, times the usual
+    { id: 'shield', lv: [1, 1.5, 2] }, // shield length, times the usual
+    { id: 'repair', lv: [50, 75, 100] }, // hull put back
+    { id: 'blaster', lv: [10, 20, 30] }, // shots
+    { id: 'missile', lv: [2, 3, 5] },
+    { id: 'mine', lv: [3, 5, 8] },
+    { id: 'emp', lv: [1, 2, 3] },
+    { id: 'defer', lv: [1, 2, 3] }, // gate deferrals held
+  ]);
+  const UPGRADE_PRICE = (RR.UPGRADE_PRICE = 150), POWER_MAX = 3;
+  const powerOf = function (id) { return POWER.filter(function (p) { return p.id === id; })[0] || null; };
+  /** What powerup `id` gives at level `lv`, in a few words. */
+  RR.powerDoes = function (id, lv) {
+    const k = powerOf(id).lv[lv - 1], n = function (x) { return String(+x.toFixed(1)); };
+    if (id === 'nitro') return 'BOOST ' + n(C.NITRO_TIME * k) + 'S';
+    if (id === 'shield') return 'SHIELD ' + n(C.SHIELD_TIME * k) + 'S';
+    if (id === 'repair') return '+' + k + ' HULL';
+    if (id === 'defer') return k + (k === 1 ? ' GATE' : ' GATES');
+    const unit = { blaster: ['SHOT', 'SHOTS'], missile: ['MISSILE', 'MISSILES'], mine: ['MINE', 'MINES'], emp: ['EMP', 'EMPS'] }[id];
+    return k + ' ' + unit[k === 1 ? 0 : 1];
+  };
+  const PAY = [100, 70, 50, 40, 30, 30], PAY_MULT = [1, 1.5, 2]; // credits by finishing place, times the rival level
+
   const STAT_MID = 3;
   const STATS = (RR.STATS = [
     { name: 'ACCEL', step: 0.04 },
@@ -84,6 +115,17 @@
     { name: 'VEGA', team: 4, design: 1 },
     { name: 'ORION', team: 5, design: 2 },
   ];
+
+  /*
+   * No stat point is ever unspendable. Each ship sees only as many points as
+   * it has room for (the gap between its own levels and its ceilings: 15 for
+   * the Sparrow up to 25 for the Phoenix), and points stop at the room of the
+   * best ship you have unlocked, so none pile up for a ship you cannot fly.
+   */
+  const room = (RR.shipRoom = function (i) {
+    const h = HULLS[i];
+    return h.cap.reduce(function (a, c, k) { return a + c - h.base[k]; }, 0);
+  });
 
   const DIFFS = (RR.DIFFS = [
     { name: 'ROOKIE', speed: 0.83, spread: 0.05, aggro: 0.45, rubber: 0.07, dmg: 0.7 },
@@ -110,14 +152,15 @@
     demo: true, trackIdx: 0, diffIdx: 1, menuRow: 0,
     modeIdx: 0, arenaIdx: 0, mode: 'race', combat: false, royale: false,
     zone: null, over: false, feed: [], spec: null, reward: null,
-    prog: { wins: 0, points: 0, ship: 0, up: {} }, // unlocks and upgrades
+    prog: { wins: 0, points: 0, ship: 0, up: {}, credits: 0, upts: 0, pup: {} }, // unlocks, stat upgrades, credits, powerup upgrade points and levels
+    hangarPage: 'ship',
     hangarRow: 0, hangarShip: 0,
     ships: [], order: [], rocks: [], pickups: [], shots: [], mines: [], waves: [],
     parts: [], rings: [], texts: [],
     cam: { x: 0, y: 0 }, shake: 0, flash: 0, msg: null, ui: [],
     best: {}, crt: true, newRecord: false,
     autoFull: true, wantFull: false, // full screen on phones (see G.fullscreen)
-    // touch controls the player has moved: { land|port: { fire|brake|rewind: {x, y} } },
+    // touch controls the player has moved: { land|port: { fire|brake|defer: {x, y} } },
     // as fractions of the screen so they survive other screen sizes (see RR.touchLayout)
     controls: {},
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
@@ -168,13 +211,25 @@
   /* ------------------------------------------------------------- hangar */
 
   function count(v) { return Number.isInteger(v) && v > 0 ? v : 0; }
+  const RENAMED = { defer: 'rewind' }; // the gate deferral took the do-over's place: its upgrades and button spot carry over
 
   /** Saved progress is only trusted as far as the rules allow. */
   function loadProgress(p) {
     const pr = G.prog;
     if (!p || typeof p !== 'object') return;
     pr.wins = count(p.wins);
-    pr.points = count(p.points);
+    pr.points = Math.min(count(p.points), G.pointCap()); // (the wins, just above, set the cap)
+    pr.credits = count(p.credits);
+    // powerup levels 1-3 (only those above 1 are kept), and no more unspent points than they have room for
+    pr.pup = {};
+    let levelsLeft = 0;
+    POWER.forEach(function (pw) {
+      const v = p.pup && (pw.id in p.pup ? p.pup[pw.id] : p.pup[RENAMED[pw.id]]);
+      const lv = Number.isInteger(v) ? clamp(v, 1, POWER_MAX) : 1;
+      if (lv > 1) pr.pup[pw.id] = lv;
+      levelsLeft += POWER_MAX - lv;
+    });
+    pr.upts = Math.min(count(p.upts), levelsLeft);
     HULLS.forEach(function (h, i) {
       const saved = p.up && p.up[h.id], up = upgrades(i);
       let spent = 0;
@@ -182,7 +237,7 @@
         up[k] = Math.min(count(Array.isArray(saved) ? saved[k] : 0), h.cap[k] - h.base[k]);
         spent += up[k];
       }
-      if (spent > pr.points) up.fill(0);
+      if (spent > Math.min(pr.points, room(i))) up.fill(0);
     });
     pr.ship = p.ship >= 0 && p.ship < HULLS.length && pr.wins >= HULLS[p.ship].wins ? p.ship : 0;
   }
@@ -193,10 +248,18 @@
     return G.prog.up[id] || (G.prog.up[id] = STATS.map(function () { return 0; }));
   }
   G.shipUnlocked = function (i) { return this.prog.wins >= HULLS[i].wins; };
+  /** The most stat points you can hold: what the roomiest unlocked ship can use. */
+  G.pointCap = function () {
+    let m = 0;
+    for (let i = 0; i < HULLS.length; i++) if (this.shipUnlocked(i)) m = Math.max(m, room(i));
+    return m;
+  };
+  /** The points ship `i` can use: all you have, up to its room. */
+  G.shipPoints = function (i) { return Math.min(this.prog.points, room(i)); };
   G.statLevel = function (i, k) { return HULLS[i].base[k] + upgrades(i)[k]; };
-  /** Every ship can spend every point you have earned, so a new ship never starts from nothing. */
+  /** Every ship can spend every point you have earned (up to its room), so a new ship never starts from nothing. */
   G.pointsLeft = function (i) {
-    return this.prog.points - upgrades(i).reduce(function (a, b) { return a + b; }, 0);
+    return this.shipPoints(i) - upgrades(i).reduce(function (a, b) { return a + b; }, 0);
   };
   /** Put a point into stat `k` of ship `i` (d = 1) or take one back (d = -1). */
   G.spend = function (i, k, d) {
@@ -208,19 +271,53 @@
     save();
     return true;
   };
+  G.powerLevel = function (id) { return this.prog.pup[id] || 1; };
+  /** Upgrade levels still to take, across every powerup. */
+  G.powerRoom = function () {
+    const g = this;
+    return POWER.reduce(function (a, p) { return a + POWER_MAX - g.powerLevel(p.id); }, 0);
+  };
+  /** One upgrade point for UPGRADE_PRICE credits, while the points in hand are fewer than the room left. */
+  G.canBuyUpgrade = function () { return this.prog.credits >= UPGRADE_PRICE && this.prog.upts < this.powerRoom(); };
+  G.buyUpgrade = function () {
+    if (!this.canBuyUpgrade()) { RR.audio.sfx('deny'); return false; }
+    this.prog.credits -= UPGRADE_PRICE;
+    this.prog.upts++;
+    RR.audio.sfx('power');
+    save();
+    return true;
+  };
+  /** Put an upgrade point into powerup `id` (d = 1) or take one back (d = -1), like stat points. */
+  G.powerSpend = function (id, d) {
+    const pr = this.prog, lv = this.powerLevel(id);
+    const ok = !!powerOf(id) && (d > 0 ? pr.upts > 0 && lv < POWER_MAX : lv > 1);
+    if (!ok) { RR.audio.sfx('deny'); return false; }
+    pr.upts -= d;
+    if (lv + d > 1) pr.pup[id] = lv + d; else delete pr.pup[id];
+    RR.audio.sfx(d > 0 ? 'power' : 'select');
+    save();
+    return true;
+  };
+
   /** What the stat levels of ship `i` come to in the simulation. */
   function loadout(i) {
-    const m = STATS.map(function (st, k) { return 1 + st.step * (G.statLevel(i, k) - STAT_MID); });
+    return loadoutOf(STATS.map(function (st, k) { return G.statLevel(i, k); }));
+  }
+  /** What a list of five stat levels comes to in the simulation. */
+  function loadoutOf(levels) {
+    const m = STATS.map(function (st, k) { return 1 + st.step * (levels[k] - STAT_MID); });
     // top speed is thrust / drag, so more speed at the same acceleration means less drag
     return { accK: m[0], dragK: m[0] / m[1], turnK: m[2], maxHp: Math.round(C.MAXHP * m[3]), dmg: m[4] };
   }
   RR.loadout = loadout;
+  RR.loadoutOf = loadoutOf;
   const STOCK = { accK: 1, dragK: 1, turnK: 1, maxHp: C.MAXHP, dmg: 1 };
 
   G.openHangar = function () {
     if (this.state !== 'title') return;
     this.state = 'hangar';
     this.hangarRow = 0;
+    this.hangarPage = 'ship';
     this.hangarShip = this.prog.ship;
     RR.audio.sfx('select');
   };
@@ -228,6 +325,13 @@
     if (this.state !== 'hangar') return;
     RR.audio.sfx('confirm');
     this.startRace(true); // the attract mode flies the ship you picked
+  };
+  /** The hangar's two pages: 'ship' (the ship and its stats) and 'power' (powerup upgrades). */
+  G.hangarTab = function (page) {
+    if (this.state !== 'hangar' || this.hangarPage === page) return;
+    this.hangarPage = page;
+    this.hangarRow = page === 'ship' ? 0 : STATS.length + 1;
+    RR.audio.sfx('select');
   };
   /** Look at the next ship; an unlocked one becomes the ship you fly. */
   G.hangarBrowse = function (d) {
@@ -240,11 +344,14 @@
   /** Stat points and wins for a finished event; new ships unlock on wins. */
   function award(g, place) {
     const pr = g.prog, had = HULLS.map(function (h, i) { return g.shipUnlocked(i); });
-    const pts = Math.max(0, 4 - place) + (place === 1 ? g.diffIdx : 0);
+    const earned = Math.max(0, 4 - place) + (place === 1 ? g.diffIdx : 0);
+    if (place === 1) pr.wins++; // first, so a ship this win unlocks raises the cap straight away
+    const pts = Math.max(0, Math.min(earned, g.pointCap() - pr.points)); // stat points stop at the cap
+    const credits = Math.round(PAY[place - 1] * PAY_MULT[g.diffIdx]);
     pr.points += pts;
-    if (place === 1) pr.wins++;
+    pr.credits += credits;
     g.reward = {
-      pts: pts,
+      pts: pts, capped: pts < earned, credits: credits,
       unlocked: HULLS.filter(function (h, i) { return !had[i] && g.shipUnlocked(i); }).map(function (h) { return h.name; }),
     };
     save();
@@ -274,11 +381,13 @@
       spawn: { x: slot.x, y: slot.y, a: slot.a },
       hp: lo.maxHp, shield: 0, nitro: 0, stun: 0, spinRate: 0, emp: 0, invuln: 0, dead: 0,
       weapon: null, ammo: 0, cool: 0, prevFire: false, stickHeld: false, stickAim: null, launch: null,
+      used: {}, fresh: false, // powerups picked up and used this race (for the leaderboard), and a weapon pick-up not yet fired
+      plv: {}, // powerup levels: the player's upgrades (rivals and the attract mode stay at level 1)
       nextCp: 0, cpCount: 0, lap: 0, lapStart: 0, lapTimes: [], bestLap: 0,
       finished: false, finishTime: 0, place: i + 1, progress: 0,
       input: { turn: 0, thrust: 0, brake: 0, fire: false },
       ai: null, speedMult: 1, thrusting: 0, exh: 0, smk: 0, hitFlash: 0, out: false, wrong: 0,
-      rewind: 0, rw: null, hist: [], histT: 0, // do-over charge, rewind in progress, state history
+      defer: 0, // gate deferrals held
     };
   }
 
@@ -333,6 +442,7 @@
     const diff = demo ? DEMO_DIFF : DIFFS[g.diffIdx];
     const hull = HULLS[g.prog.ship], turn = Math.floor(Math.random() * 6);
     g.demo = demo;
+    g.online = false; g.server = false; g.events = [];
     g.laps = demo ? 1e9 : tr.laps;
     g.ships = RACERS.map(function (r, i) {
       // racing, the player starts at the back; in an arena everyone gets a random spawn point
@@ -345,6 +455,12 @@
       return s;
     });
     g.player = g.ships[0];
+    // what the player is flying, for the leaderboard (the hangar cannot change it mid-race)
+    g.player.setup = {
+      ship: hull.id, stats: STATS.map(function (st, k) { return G.statLevel(g.prog.ship, k); }),
+      levels: Object.assign({}, g.prog.pup),
+    };
+    if (!demo) g.player.plv = Object.assign({}, g.prog.pup); // upgrades make the player's pick-ups stronger
     g.order = g.ships.slice();
     g.rocks = tr.rocks.map(makeRock);
     g.pickups = tr.pickups.map(function (p, i) {
@@ -360,6 +476,132 @@
     g.zone = g.royale ? { r: tr.radius * 1.42, r0: tr.radius * 1.42 } : null; // starts around the whole arena
     g.over = false; g.elimN = 0; g.feed = []; g.spec = null; g.reward = null;
     g.state = demo ? 'title' : 'play';
+  };
+
+  /*
+   * An online race or fight. The multiplayer server runs it headless (with
+   * `server` set: every human ship takes its controls from `netInput`, and
+   * effects become `events` for the players' screens); each player's game
+   * builds the same world with `me` = their own seat, to draw and predict.
+   *   opts: { mode, track, diff, me, server,
+   *           seats: [{ name, team, design, hull, human, stats, levels }] }
+   * `track` is a course index for a Grand Prix, an arena index for a fight.
+   */
+  G.startOnline = function (opts) {
+    const g = this, seats = opts.seats, turn = opts.turn || 0;
+    g.modeIdx = Math.max(0, MODES.findIndex(function (m) { return m.id === opts.mode; }));
+    g.mode = MODES[g.modeIdx].id;
+    g.combat = g.mode !== 'race';
+    g.royale = g.mode === 'royale';
+    if (g.combat) g.arenaIdx = opts.track; else g.trackIdx = opts.track;
+    const tr = (g.track = g.combat ? RR.getArena(opts.track) : RR.getTrack(opts.track));
+    const diff = DIFFS[opts.diff] || DIFFS[1];
+    g.diffIdx = DIFFS.indexOf(diff);
+    g.demo = false;
+    g.online = true;
+    g.server = !!opts.server;
+    g.events = [];
+    g.laps = tr.laps;
+    g.ships = seats.map(function (seat, i) {
+      const slot = tr.grid[(i + turn) % tr.grid.length];
+      const s = makeShip(i, { name: seat.name, team: seat.team, design: seat.design }, slot,
+        seat.human ? loadoutOf(seat.stats) : STOCK);
+      s.human = !!seat.human;
+      if (s.human) {
+        s.plv = Object.assign({}, seat.levels);
+        s.setup = { ship: seat.hull, stats: seat.stats.slice(), levels: Object.assign({}, seat.levels) };
+        s.netInput = { turn: 0, thrust: 0, brake: 0, fire: false, aim: null, stick: false };
+      } else {
+        s.ai = makeAI(diff);
+        if (g.combat) s.dmg = diff.dmg;
+      }
+      if (g.royale) s.dmg *= C.ROYALE_DMG;
+      return s;
+    });
+    // the server has no player of its own: a stand-in nobody is ever compared equal to
+    g.player = g.server ? { x: tr.center ? tr.center.x : 0, y: tr.center ? tr.center.y : 0, progress: 0, gone: false, dead: 0 }
+      : g.ships[opts.me];
+    g.order = g.ships.slice();
+    g.rocks = tr.rocks.map(makeRock);
+    g.pickups = tr.pickups.map(function (p, i) {
+      return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind, g.combat), on: true, timer: 0, ph: i * 1.7 };
+    });
+    g.shots = []; g.mines = []; g.waves = []; g.parts = []; g.rings = []; g.texts = [];
+    g.raceTime = 0;
+    g.phase = 'countdown';
+    g.count = 3.9;
+    g.cam.x = g.player.x; g.cam.y = g.player.y;
+    g.shake = 0; g.flash = 0; g.msg = null;
+    g.playerDone = false; g.doneT = 0; g.newRecord = false;
+    g.zone = g.royale ? { r: tr.radius * 1.42, r0: tr.radius * 1.42 } : null;
+    g.over = false; g.elimN = 0; g.feed = []; g.spec = null; g.reward = null;
+    g.state = 'play';
+  };
+
+  /* ------------------------------------------------- online, on a player's screen */
+
+  /**
+   * One 1/120 s step of an online game on a player's screen. Only the
+   * player's own ship is simulated here (see G.predictShip); the rest of
+   * the world comes from the server's snapshots (RR.mp).
+   */
+  G.onlineStep = function (dt) {
+    const g = this, p = g.player;
+    g.t += dt;
+    if (g.flash > 0) g.flash -= dt * 2;
+    if (g.msg) { g.msg.t += dt; if (g.msg.t >= g.msg.dur) g.msg = null; }
+    for (let i = g.feed.length - 1; i >= 0; i--) {
+      g.feed[i].t += dt;
+      if (g.feed[i].t > 5) g.feed.splice(i, 1);
+    }
+    for (const a of g.rocks) a.rot += a.rs * dt; // asteroids tumble here; the server only moves them
+    // a hit flashes a ship white for a moment: snapshots start the flash, this ends it (every ship, own included)
+    for (const s of g.ships) if (s.hitFlash > 0) s.hitFlash -= dt;
+    if (!g.combat && g.phase === 'race' && p.dead <= 0 && !p.finished) { // "wrong way"
+      const cp = g.track.cps[p.nextCp], dx = cp.x - p.x, dy = cp.y - p.y;
+      const sp = Math.hypot(p.vx, p.vy), d = Math.hypot(dx, dy) || 1;
+      if (sp > 90 && (p.vx * dx + p.vy * dy) / (sp * d) < -0.45) p.wrong += dt;
+      else p.wrong = Math.max(0, p.wrong - dt * 3);
+    }
+    if (p.gone && (!g.spec || g.spec.gone)) g.spec = g.order.find(function (s) { return !s.gone; }) || null;
+    updateFx(g, dt);
+    updateCamera(g, dt);
+  };
+
+  /**
+   * Fly ship `s` one step with these controls: the player's own ship,
+   * predicted so it answers at once, and replayed on top of each snapshot.
+   * Replays (`quiet`) make no exhaust; nothing here does damage.
+   */
+  G.predictShip = function (s, inp, dt, quiet) {
+    const g = this, i = s.input;
+    i.turn = inp.turn; i.thrust = inp.thrust; i.brake = inp.brake; i.fire = inp.fire; i.aim = inp.aim; i.stick = inp.stick;
+    g.predicting = true;
+    const parts = g.parts.length, flash = s.hitFlash; // (the hit flash runs on real time, in onlineStep, not per replayed step)
+    updateShip(s, g, dt, true);
+    s.hitFlash = flash;
+    if (quiet) g.parts.length = parts;
+    g.predicting = false;
+  };
+
+  /** Online: what the player earned in a race or fight that just ended (once). */
+  G.awardOnline = function (place) {
+    award(this, place);
+    return this.reward;
+  };
+
+  /** Online: back to the room's lobby (the attract race plays behind it). */
+  G.toOnlineLobby = function () {
+    this.startRace(true);
+    this.state = 'online';
+  };
+
+  /** Online: a bot flies ship `s` while its player is away (on), or hands it back when they return (off). */
+  G.botTakeover = function (s, on) {
+    if (on) { if (!s.ai) { s.ai = makeAI(DIFFS[this.diffIdx] || DIFFS[1]); s.botFlown = !s.finished; } return; }
+    if (s.finished || !s.human) return; // a finished ship stays on autopilot
+    s.ai = null;
+    s.netInput = { turn: 0, thrust: 0, brake: 0, fire: false, aim: null, stick: false };
   };
 
   G.begin = function () {
@@ -379,9 +621,19 @@
     RR.net.load(RR.TRACKS[this.trackIdx].id);
     RR.audio.sfx('select');
     this.state = 'board';
+    this.boardSel = -1; this.boardCard = null;
   };
   G.closeBoard = function () {
-    if (this.state === 'board') { this.state = 'title'; RR.audio.sfx('select'); }
+    if (this.state === 'board') { this.state = 'title'; this.boardCard = null; RR.audio.sfx('select'); }
+  };
+  /** A pilot's card: their rocket, its stat levels and the powerups they used. `row` is { e, rank }. */
+  G.openCard = function (row) {
+    if (this.state !== 'board' || !row || !row.e) return;
+    this.boardCard = row;
+    RR.audio.sfx('confirm');
+  };
+  G.closeCard = function () {
+    if (this.boardCard) { this.boardCard = null; RR.audio.sfx('select'); }
   };
   /** Sound on/off (M key, or the SOUND button on touch screens). Remembered between visits. */
   G.toggleSound = function () {
@@ -397,11 +649,21 @@
    * it on the next finger-lift (G.onGestureEnd).
    *
    * Phones go full screen on the first tap and at the start of each race,
-   * unless the player turned it off with the button (remembered). iPhones
-   * can't: Safari only lets videos go full screen there, so they get an
-   * "Add to Home Screen" tip instead, which opens the game without Safari's bars.
+   * unless the player turned it off with the button (remembered).
+   *
+   * Not iPhones and iPads (every browser on them is Safari underneath). An
+   * iPhone only lets videos go full screen, and an iPad drops out of full
+   * screen on any downward swipe, which steering makes all the time (WebKit
+   * keeps that gesture on purpose; a page cannot switch it off). Both get an
+   * "Add to Home Screen" tip instead, which opens the game in its own window,
+   * without Safari's bars and without the swipe.
    */
-  function fsEnabled() { const d = document; return !!(d.fullscreenEnabled || d.webkitFullscreenEnabled); }
+  function appleTouch() {
+    const ua = navigator.userAgent || '';
+    // iPadOS asks for desktop sites as a Mac; a Mac has no touch screen
+    return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  }
+  function fsEnabled() { const d = document; return !appleTouch() && !!(d.fullscreenEnabled || d.webkitFullscreenEnabled); }
   function isFull() { const d = document; return !!(d.fullscreenElement || d.webkitFullscreenElement); }
   function enterFull() {
     if (isFull() || !fsEnabled()) return;
@@ -424,7 +686,7 @@
 
   /* ------------------------------------------------- moving the controls */
 
-  const CONTROL_NAMES = ['fire', 'brake', 'rewind']; // (steering is a drag anywhere, so it has no spot to move)
+  const CONTROL_NAMES = ['steer', 'fire', 'brake', 'defer']; // (steering by a drag anywhere else needs no spot)
 
   /** Keep only well-formed saved positions (fractions of the screen). */
   function cleanControls(raw) {
@@ -434,7 +696,7 @@
       const src = raw[o];
       if (!src || typeof src !== 'object') return;
       CONTROL_NAMES.forEach(function (n) {
-        const p = src[n];
+        const p = src[n] || src[RENAMED[n]];
         if (p && isFinite(p.x) && isFinite(p.y)) (out[o] = out[o] || {})[n] = { x: clamp(+p.x, 0, 1), y: clamp(+p.y, 0, 1) };
       });
     });
@@ -471,7 +733,7 @@
       if (p.drag === undefined) {
         p.drag = null;
         for (const n of CONTROL_NAMES) {
-          const c = L.centre[n], reach = n === 'fire' ? L.fire.grab : 30;
+          const c = L.centre[n], reach = n === 'fire' || n === 'steer' ? L[n].grab : 30;
           if (Math.hypot(p.sx - c.x, p.sy - c.y) <= reach) { p.drag = n; p.ox = c.x - p.sx; p.oy = c.y - p.sy; break; }
         }
       }
@@ -481,9 +743,9 @@
     }
   }
 
-  /** True on an iPhone browsing in Safari: the only way to full screen there is Add to Home Screen. */
+  /** True on an iPhone or iPad in the browser: the way to full screen there is Add to Home Screen. */
   G.homeScreenTip = function () {
-    if (!RR.input.touchMode || fsEnabled() || !/iPhone|iPod/.test(navigator.userAgent || '')) return false;
+    if (!RR.input.touchMode || !appleTouch()) return false;
     const mm = function (q) { try { return window.matchMedia(q).matches; } catch (e) { return false; } };
     const installed = navigator.standalone === true || mm('(display-mode: standalone)') || mm('(display-mode: fullscreen)');
     return !installed;
@@ -499,6 +761,7 @@
   /** The FULLSCREEN / EXIT FULL button and the F key. The choice is remembered. */
   G.fullscreen = function () {
     if (isFull()) { this.autoFull = false; this.wantFull = false; exitFull(); }
+    else if (appleTouch()) { toast(this, 'SHARE > ADD TO HOME SCREEN'); return; } // F on an iPad keyboard
     else {
       this.autoFull = true;
       this.wantFull = true; // a tap: granted as the finger lifts
@@ -528,8 +791,10 @@
     field.blur();
     box.hidden = true;
     RR.input.typing = false;
+    RR.input.focus(); // keys back to the game
   };
   G.pause = function () {
+    if (this.online) { this.mpMenu = !this.mpMenu; return; } // online the race goes on: a menu instead
     if (this.state !== 'play') return;
     this.state = 'paused';
     RR.audio.music({ on: false });
@@ -575,18 +840,20 @@
   /** Positional sound: fades with distance from the camera; silent in demo. */
   function snd(g, name, x, y, v) {
     if (g.demo) return;
+    if (g.online && !g.server && !g.replaying) return; // online, sounds arrive as the server's events
+    if (g.server) { g.events.push(['s', name, Math.round(x || 0), Math.round(y || 0), v === undefined ? 1 : +v.toFixed(2)]); return; }
     let vol = v === undefined ? 1 : v;
     if (x !== undefined) vol *= clamp(1.2 - Math.hypot(x - g.cam.x, y - g.cam.y) / 460, 0, 1);
     if (vol > 0.03) RR.audio.sfx(name, vol);
   }
 
   function part(g, x, y, vx, vy, life, size, ramp, drag, layer) {
-    if (g.parts.length > 1500) return;
+    if (g.server || g.parts.length > 1500) return;
     g.parts.push({ x: x, y: y, vx: vx, vy: vy, life: life, max: life, size: size, ramp: ramp, drag: drag || 0, layer: layer || 0 });
   }
 
   function burst(g, x, y, n, speed, ramp, life, size) {
-    if (!near(g, x, y, 120)) return;
+    if (g.predicting || !near(g, x, y, 120)) return;
     for (let i = 0; i < n; i++) {
       const a = Math.random() * TAU, v = speed * (0.25 + Math.random() * 0.75);
       // size 0 = start chunky and shrink with age (see drawParts)
@@ -596,10 +863,12 @@
   }
 
   function ringFx(g, x, y, r0, r1, dur, color) {
+    if (g.server) return;
     g.rings.push({ x: x, y: y, r0: r0, r1: r1, t: 0, dur: dur, color: color });
   }
 
   function boom(g, x, y, k) {
+    if (g.server) { g.events.push(['b', Math.round(x), Math.round(y), +k.toFixed(2)]); return; }
     burst(g, x, y, Math.round(30 * k), 210 * k, FX.fire, 0.75, 0);
     burst(g, x, y, Math.round(10 * k), 70 * k, FX.smoke, 1.1, 3);
     ringFx(g, x, y, 4, 36 * k, 0.32, PAL.white);
@@ -616,12 +885,14 @@
   }
 
   function floatText(g, x, y, text, color) {
+    if (g.server) return;
     g.texts.push({ x: x, y: y, text: text, color: color, t: 0, dur: 1 });
   }
 
   /* ----------------------------------------------------- damage + death */
 
   function hurt(s, g, dmg, by) {
+    if (g.online && !g.server) return; // online, the server decides every hit
     if (s.dead > 0 || s.invuln > 0 || s.shield > 0) return;
     if (by && by !== s) { s.hitBy = by; s.hitT = g.t; }
     s.hp -= dmg;
@@ -672,6 +943,7 @@
     victim.deaths++;
     if (killer) killer.kills++;
     g.feed.push({ a: killer ? killer.name : '', b: victim.name, zone: !killer && victim.zoned, t: 0 });
+    if (g.server) g.events.push(['k', killer ? killer.idx : -1, victim.idx, !killer && victim.zoned ? 1 : 0]);
     if (g.feed.length > 3) g.feed.shift();
     if (killer === g.player && !g.demo && !g.playerDone) {
       banner(g, 'WRECKED ' + victim.name + '!', PAL.yellow, 1.3, 3);
@@ -710,98 +982,73 @@
       s.x = s.spawn.x; s.y = s.spawn.y; s.angle = s.spawn.a;
     }
     s.vx = s.vy = 0; s.angVel = 0; s.dead = 0; s.hp = s.maxHp; s.invuln = 2.5;
-    s.hist.length = 0; s.histT = 0;
     if (s.ai) { s.ai.stuck = 0; s.ai.stuckN = 0; s.ai.rev = 0; }
     ringFx(g, s.x, s.y, 30, 6, 0.3, PAL.cyan);
   }
 
-  /* ------------------------------------------------------------- do-over */
+  /* ------------------------------------------------------ gate deferral */
 
-  /** Sample the player's state every HIST_DT; only the last REWIND_SPAN seconds are kept. */
-  function recordHistory(s, dt) {
-    s.histT += dt;
-    if (s.histT < C.HIST_DT - 1e-6) return;
-    s.histT -= C.HIST_DT;
-    const h = s.hist;
-    h.push({
-      x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle, angVel: s.angVel, hp: s.hp,
-      nextCp: s.nextCp, cpCount: s.cpCount, lap: s.lap, lapStart: s.lapStart,
-      nLaps: s.lapTimes.length, bestLap: s.bestLap,
-    });
-    if (h.length > Math.round(C.REWIND_SPAN / C.HIST_DT) + 1) h.shift();
-  }
-
-  /** Position and heading at a fractional index along a list of samples. */
-  function pathAt(pts, f) {
-    const n = pts.length, i = clamp(Math.floor(f), 0, n - 2), a = clamp(f - i, 0, 1);
-    const P = pts[i], Q = pts[i + 1];
-    return { x: P.x + (Q.x - P.x) * a, y: P.y + (Q.y - P.y) * a, angle: P.angle + angDiff(Q.angle, P.angle) * a };
-  }
-  RR.pathAt = pathAt;
-
-  /**
-   * Spend the do-over: the ship becomes a ghost that retraces its recorded
-   * path backwards, then picks up flying from where it was 3 seconds ago.
-   * The race clock and everyone else keep going, so it costs real time.
-   */
-  G.tryRewind = function () {
-    const g = this, p = g.player;
-    if (g.demo || g.state !== 'play' || g.phase !== 'race' || g.playerDone || p.rw || p.rewind <= 0) return;
-    if (p.hist.length < Math.round(C.REWIND_MIN / C.HIST_DT) + 1) {
-      floatText(g, p.x, p.y - 16, 'TOO SOON', PAL.silver);
-      RR.audio.sfx('deny');
-      return;
-    }
-    p.rewind = 0;
-    const pts = p.hist.slice();
-    pts.push({ x: p.x, y: p.y, angle: p.angle }); // the way back starts from where we are now
-    p.rw = {
-      t: 0, dur: C.REWIND_DUR, pts: pts, tgt: p.hist[0], u: 0, f: pts.length - 1,
-      span: (p.hist.length - 1) * C.HIST_DT, hpWas: p.dead > 0 ? 0 : p.hp,
-    };
-    // `dead` makes every other system (collisions, pickups, gates, weapons) ignore the ghost
-    p.dead = 1e9; p.vx = p.vy = 0; p.angVel = 0; p.thrusting = 0;
-    g.flash = 0.3; g.msg = null;
-    ringFx(g, p.x, p.y, 8, 40, 0.35, PAL.violet);
-    RR.audio.sfx('rewind');
-    RR.audio.music({ tempo: 0.5 });
-    RR.input.buzz(60);
+  RR.fx = {
+    snd: function (name, x, y, v) { G.replaying = true; snd(G, name, x, y, v); G.replaying = false; },
+    boom: function (x, y, k) { boom(G, x, y, k); },
+    burst: function (x, y, n, speed, kind, life, size) { burst(G, x, y, n, speed, FX[kind] || FX.spark, life, size); },
+    ring: function (x, y, r0, r1, dur, color) { ringFx(G, x, y, r0, r1, dur, color); },
+    text: function (x, y, text, color) { floatText(G, x, y, text, color); },
+    banner: function (text, color, dur, scale) { banner(G, text, color, dur, scale); },
   };
 
-  function stepRewind(s, g, dt) {
-    const r = s.rw;
-    r.t += dt;
-    const k = clamp(r.t / r.dur, 0, 1);
-    r.u = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2; // ease in and out: how far back, 0..1
-    r.f = (1 - r.u) * (r.pts.length - 1);
-    const at = pathAt(r.pts, r.f);
-    s.x = at.x; s.y = at.y; s.angle = at.angle;
-    if (Math.random() < 0.7) {
-      part(g, s.x + (Math.random() - 0.5) * 8, s.y + (Math.random() - 0.5) * 8,
-        (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, 0.35 + Math.random() * 0.3, 2, FX.ion, 1, 0);
-    }
-    if (k >= 1) finishRewind(s, g);
+  /**
+   * Can ship `p` defer the gate it is heading for now? It needs a deferral,
+   * a race under way, to be flying, and a gate that is not the start/finish
+   * line: every lap is still flown over the line.
+   */
+  function canDefer(g, p) {
+    return !g.combat && p.defer > 0 && g.phase === 'race' && !p.finished && p.dead <= 0 && !p.gone &&
+      !g.track.cps[p.nextCp].finish;
   }
+  G.canDefer = function (who) { return canDefer(this, who || this.player); };
 
-  function finishRewind(s, g) {
-    const r = s.rw, t = r.tgt;
-    s.rw = null;
-    s.x = t.x; s.y = t.y; s.vx = t.vx; s.vy = t.vy; s.angle = t.angle; s.angVel = t.angVel;
-    s.hp = Math.max(t.hp, r.hpWas); // undo the damage, but never lose a repair picked up since
-    s.nextCp = t.nextCp; s.cpCount = t.cpCount; s.lap = t.lap; s.lapStart = t.lapStart;
-    s.lapTimes.length = t.nLaps; s.bestLap = t.bestLap; // gates and laps passed in the meantime don't count
-    s.dead = 0; s.stun = 0; s.emp = 0; s.invuln = C.REWIND_INVULN;
-    s.hist.length = 0; s.histT = 0;
-    g.cam.x = s.x; g.cam.y = s.y;
-    g.flash = 0.4;
-    burst(g, s.x, s.y, 22, 160, FX.ion, 0.6);
-    ringFx(g, s.x, s.y, 30, 6, 0.3, PAL.cyan);
-    ringFx(g, s.x, s.y, 4, 34, 0.4, PAL.violet);
-    banner(g, 'DO-OVER!', PAL.violet, 1.1, 4);
-    RR.audio.sfx('rewound');
-    RR.audio.music({ tempo: s.lap >= g.laps ? 1.12 : 1 });
+  /**
+   * Spend a gate deferral: the gate the ship is heading for counts as passed
+   * (as if it had flown through it), and it goes straight on to the next.
+   */
+  G.tryDefer = function (who) {
+    const g = this, p = who || g.player, me = p === g.player && !g.server;
+    if (g.demo || g.state !== 'play' || (me && g.playerDone)) return false;
+    if (!canDefer(g, p)) {
+      // the one refusal worth explaining: the line itself
+      if (me && p.defer > 0 && g.phase === 'race' && !g.combat && g.track.cps[p.nextCp].finish) {
+        floatText(g, p.x, p.y - 16, 'FLY THE LINE', PAL.silver);
+        RR.audio.sfx('deny');
+      }
+      return false;
+    }
+    if (g.online && !g.server) { RR.mp.defer(); return false; } // the server takes it
+    const gate = p.nextCp, cp = g.track.cps[gate];
+    p.defer--; // an upgraded pick-up holds more than one
+    tally(p, 'defer');
+    passCp(p, g, cp);
+    if (g.server) { g.events.push(['d', p.idx, gate]); return true; }
+    if (me) deferFx(g, p, cp);
+    else floatText(g, p.x, p.y - 16, 'DEFERRED', PAL.violet);
+    return true;
+  };
+
+  /** What the player sees and hears when their own deferral goes through. */
+  function deferFx(g, p, cp) {
+    ringFx(g, cp.x, cp.y, Art.DONUT_RC + 26, Art.DONUT_RC - 12, 0.4, PAL.violet);
+    ringFx(g, p.x, p.y, 8, 40, 0.35, PAL.violet);
+    burst(g, p.x, p.y, 16, 150, FX.ion, 0.5);
+    banner(g, 'GATE DEFERRED!', PAL.violet, 1.2, 3);
+    RR.audio.sfx('defer');
     RR.input.buzz(40);
   }
+  RR.fx.deferred = function (idx, gate) { // online: the server's word that a deferral went through
+    const p = G.ships[idx], cp = G.track && G.track.cps[gate];
+    if (!p || !cp) return;
+    if (p === G.player) deferFx(G, p, cp);
+    else floatText(G, p.x, p.y - 16, 'DEFERRED', PAL.violet);
+  };
 
   /* --------------------------------------------------------------- zoom */
 
@@ -926,6 +1173,7 @@
       snd(g, 'emp', s.x, s.y);
       if (s === g.player && !g.demo) g.flash = 0.35;
     }
+    if (s.weapon && s.fresh) { tally(s, s.weapon); s.fresh = false; } // a weapon pick-up counts once, at its first shot
     if (s.weapon && --s.ammo <= 0) { s.weapon = null; s.ammo = 0; }
   }
 
@@ -1081,29 +1329,39 @@
 
   /* ------------------------------------------------------------ pickups */
 
+  /** What powerup `id` gives ship `s`, at its level. */
+  function powerFor(s, id) { return powerOf(id).lv[(s.plv[id] || 1) - 1]; }
+
+  /** One more use of powerup `type` by ship `s` this race. */
+  function tally(s, type) { s.used[type] = (s.used[type] || 0) + 1; }
+
   function collect(s, p, g) {
     p.on = false;
     p.timer = C.PICK_RESPAWN;
-    const T = ITEMS[p.type], isP = s === g.player && !g.demo;
+    if (g.server) g.events.push(['p', g.pickups.indexOf(p), s.idx, p.type]);
+    const T = ITEMS[p.type], isP = s === g.player && !g.demo, k = powerFor(s, p.type);
     if (T.ammo) {
-      if (s.weapon === p.type) s.ammo = Math.min(T.ammo * 2, s.ammo + T.ammo);
-      else { s.weapon = p.type; s.ammo = T.ammo; }
+      // the same weapon again tops it up, to twice a pick-up at most, and never takes ammo away
+      if (s.weapon === p.type) s.ammo = Math.max(s.ammo, Math.min(k * 2, s.ammo + k));
+      else { s.weapon = p.type; s.ammo = k; }
+      s.fresh = true; // counted as used once it is fired
       if (isP) RR.audio.sfx('weapon');
     } else if (p.type === 'nitro') {
-      s.nitro = C.NITRO_TIME;
+      s.nitro = C.NITRO_TIME * k;
       s.vx += Math.cos(s.angle) * 90; s.vy += Math.sin(s.angle) * 90;
       snd(g, 'nitro', s.x, s.y, isP ? 1 : 0.5);
     } else if (p.type === 'shield') {
-      s.shield = C.SHIELD_TIME;
+      s.shield = C.SHIELD_TIME * k;
       snd(g, 'shield', s.x, s.y, isP ? 1 : 0.5);
     } else if (p.type === 'repair') {
-      s.hp = Math.min(s.maxHp, s.hp + 50);
+      s.hp = Math.min(s.maxHp, s.hp + k);
       if (isP) RR.audio.sfx('power');
-    } else if (p.type === 'rewind') {
-      s.rewind = 1;
-      if (isP) { RR.audio.sfx('power'); banner(g, 'DO-OVER READY', PAL.violet, 1.6, 3); }
+    } else if (p.type === 'defer') {
+      s.defer = k; // counted as used when a gate is deferred
+      if (isP) { RR.audio.sfx('power'); banner(g, 'DEFERRAL READY', PAL.violet, 1.6, 3); }
     }
-    burst(g, p.x, p.y, 12, 120, T.ammo ? FX.fire : p.type === 'rewind' ? FX.ion : FX.shield, 0.45);
+    if (!T.ammo && p.type !== 'defer') tally(s, p.type); // nitro, shield and repair act at once
+    burst(g, p.x, p.y, 12, 120, T.ammo ? FX.fire : p.type === 'defer' ? FX.ion : FX.shield, 0.45);
     ringFx(g, p.x, p.y, 6, 20, 0.22, T.color);
     if (isP) floatText(g, p.x, p.y - 12, T.name, T.color);
   }
@@ -1118,8 +1376,8 @@
       }
       for (const s of g.ships) {
         if (s.dead > 0) continue;
-        // only the human can use a do-over, and only one at a time: otherwise leave it for later
-        if (p.type === 'rewind' && (s.ai || s.rewind > 0)) continue;
+        // only humans defer gates, and one pick-up at a time: otherwise leave it for later
+        if (p.type === 'defer' && (s.ai || s.defer > 0)) continue;
         const dx = s.x - p.x, dy = s.y - p.y;
         if (dx * dx + dy * dy < rr) { collect(s, p, g); break; }
       }
@@ -1193,7 +1451,6 @@
   /* --------------------------------------------------------------- ships */
 
   function updateShip(s, g, dt, racing) {
-    if (s.rw) { stepRewind(s, g, dt); return; }
     if (s.gone) return; // knocked out of a battle royale
     if (s.dead > 0) {
       s.dead -= dt;
@@ -1329,6 +1586,12 @@
   function finish(s, g) {
     s.finished = true;
     s.finishTime = g.raceTime;
+    if (g.online && !g.server) return;
+    if (g.server) { // autopilot takes the victory lap; the room reads the time
+      if (s.human) s.ai = makeAI(DEMO_DIFF);
+      g.events.push(['F', s.idx]);
+      return;
+    }
     if (s !== g.player || g.demo) return;
     g.playerDone = true;
     g.doneT = 0;
@@ -1343,7 +1606,10 @@
     if (s.bestLap && (!rec.lap || s.bestLap < rec.lap)) rec.lap = s.bestLap;
     g.best[id] = rec;
     award(g, s.place); // (saves)
-    RR.net.submit(id, { name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx, place: s.place });
+    RR.net.submit(id, {
+      name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx, place: s.place,
+      setup: { ship: s.setup.ship, stats: s.setup.stats.slice(), items: Object.assign({}, s.used), levels: s.setup.levels },
+    });
   }
 
   function passCp(s, g, cp) {
@@ -1389,7 +1655,6 @@
   function rank(g) {
     const cps = g.track.cps;
     for (const s of g.ships) {
-      if (s.rw) continue; // a ship being rewound keeps its place until it lands
       const cp = cps[s.nextCp];
       const seg = s.cpCount === 0 ? 420 : cp.segLen;
       s.progress = s.cpCount + (1 - clamp(Math.hypot(cp.x - s.x, cp.y - s.y) / seg, 0, 1)) * 0.999;
@@ -1420,7 +1685,7 @@
   /** The player's part in a combat event is settled: either it ended, or they are out of a battle royale. */
   function playerResult(g) {
     const p = g.player;
-    if (g.demo || g.playerDone) return;
+    if (g.demo || g.server || g.playerDone) return;
     g.playerDone = true;
     g.doneT = 0;
     rankCombat(g);
@@ -1480,7 +1745,7 @@
     let best = null, bestLat = 48;
     for (const p of g.pickups) {
       if (!p.on) continue;
-      if (p.kind === 'W' ? !!s.weapon : p.type === 'rewind' || (p.type === 'repair' && s.hp > 80) || (p.type === 'shield' && s.shield > 0)) continue;
+      if (p.kind === 'W' ? !!s.weapon : p.type === 'defer' || (p.type === 'repair' && s.hp > 80) || (p.type === 'shield' && s.shield > 0)) continue;
       const px = p.x - s.x, py = p.y - s.y, along = px * ux + py * uy;
       if (along < 24 || along > Math.min(dist, 280)) continue;
       const lat = Math.abs(px * uy - py * ux);
@@ -1619,6 +1884,13 @@
     aiFire(s, g, dt);
   }
 
+  /** Online: the human furthest round the course, still racing (the rivals pace themselves on them). */
+  function leadHuman(g) {
+    let best = null;
+    for (const s of g.ships) if (s.human && !s.finished && (!best || s.progress > best.progress)) best = s;
+    return best;
+  }
+
   function think(s, g, dt) {
     const ai = s.ai, inp = s.input, tr = g.track, cps = tr.cps, N = cps.length;
     inp.turn = 0; inp.thrust = 0; inp.brake = 0; inp.fire = false; inp.aim = null;
@@ -1626,8 +1898,9 @@
     if (g.combat) { thinkCombat(s, g, dt); return; }
 
     // rubber band: ease off when well ahead of the player, push when behind
-    if (!g.demo && !g.playerDone && s !== g.player) {
-      s.speedMult = ai.skill * (1 - ai.rubber * clamp((s.progress - g.player.progress) / 1.5, -1, 1));
+    const ref = g.server ? leadHuman(g) : g.player;
+    if (!g.demo && !g.playerDone && ref && s !== ref && !s.human) {
+      s.speedMult = ai.skill * (1 - ai.rubber * clamp((s.progress - ref.progress) / 1.5, -1, 1));
     } else s.speedMult = ai.skill;
 
     const cp = cps[s.nextCp];
@@ -1702,12 +1975,8 @@
   }
 
   function updateCamera(g, dt) {
+    if (g.server) return;
     const f = g.player.gone && g.spec ? g.spec : g.player; // out of a battle royale: watch a survivor
-    if (f.rw) { // the ghost moves too fast for a smoothed camera
-      g.cam.x = f.x; g.cam.y = f.y;
-      g.shake *= Math.exp(-9 * dt);
-      return;
-    }
     let lx = f.vx * 0.36, ly = f.vy * 0.36;
     const max = Math.min(g.vw, g.vh) * 0.27, m = Math.hypot(lx, ly);
     if (m > max) { lx *= max / m; ly *= max / m; }
@@ -1724,8 +1993,9 @@
     if (racing) g.raceTime += dt;
     for (const s of g.ships) {
       if (s.ai) think(s, g, dt);
+      else if (s.remote) continue; // online: another player's ship, drawn from the server's snapshots
       else {
-        const inp = RR.input.read(s);
+        const inp = s.netInput || RR.input.read(s);
         s.input.turn = inp.turn; s.input.thrust = inp.thrust; s.input.brake = inp.brake; s.input.fire = inp.fire;
         s.input.aim = inp.aim; s.input.stick = inp.stick;
       }
@@ -1743,9 +2013,9 @@
     if (g.combat) updateCombat(g, dt);
     else rank(g);
 
+    if (g.server) return;
     // "wrong way" when the player keeps flying away from the next gate
     const p = g.player;
-    if (!g.demo && !g.combat && racing && !p.rw && p.dead <= 0 && !g.playerDone) recordHistory(p, dt);
     if (!g.demo && !g.combat && racing && p.dead <= 0) {
       const cp = g.track.cps[p.nextCp], dx = cp.x - p.x, dy = cp.y - p.y;
       const sp = Math.hypot(p.vx, p.vy), d = Math.hypot(dx, dy) || 1;
@@ -1804,18 +2074,44 @@
       else if (hit.name) g.editName();
       else if (hit.board) g.showBoard();
       else if (hit.hangar) g.openHangar();
+      else if (hit.online && RR.mp.available()) RR.mp.open();
     } else if (g.state === 'hangar') {
-      // row 0 is the ship, rows 1.. are its stats
-      const rows = STATS.length + 1;
-      if (hit.up || hit.down) { g.hangarRow = (g.hangarRow + (hit.up ? rows - 1 : 1)) % rows; RR.audio.sfx('select'); }
-      const d = hit.left ? -1 : hit.right ? 1 : 0;
-      if (d) { if (g.hangarRow === 0) g.hangarBrowse(d); else g.spend(g.hangarShip, g.hangarRow - 1, d); }
+      // row 0 is the ship, rows 1.. its stats; then (on the powerups page) BUY, and a row per powerup
+      const buy = STATS.length + 1, rows = buy + 1 + POWER.length;
+      if (hit.up || hit.down) {
+        g.hangarRow = (g.hangarRow + (hit.up ? rows - 1 : 1)) % rows;
+        g.hangarPage = g.hangarRow < buy ? 'ship' : 'power';
+        RR.audio.sfx('select');
+      }
+      const d = hit.left ? -1 : hit.right ? 1 : 0, row = g.hangarRow;
+      if (d) {
+        if (row === 0) g.hangarBrowse(d);
+        else if (row < buy) g.spend(g.hangarShip, row - 1, d);
+        else if (row === buy) { if (d > 0) g.buyUpgrade(); else RR.audio.sfx('deny'); }
+        else g.powerSpend(POWER[row - buy - 1].id, d);
+      }
       if (hit.ok || hit.pause || hit.hangar) g.closeHangar();
     } else if (g.state === 'board') {
-      if (hit.ok || hit.pause || hit.board || hit.fire) g.closeBoard();
+      const rows = g.boardRows || [], n = rows.length;
+      if (g.boardCard) {
+        if (hit.ok || hit.pause || hit.board || hit.fire) g.closeCard();
+      } else if ((hit.up || hit.down) && n) {
+        // arrows pick a row, Enter opens it; with nothing picked, Enter closes the board as before
+        g.boardSel = hit.up ? (g.boardSel <= 0 ? n - 1 : g.boardSel - 1) : (g.boardSel + 1) % n;
+        RR.audio.sfx('select');
+      } else if (hit.ok && rows[g.boardSel]) g.openCard(rows[g.boardSel]);
+      else if (hit.ok || hit.pause || hit.board || hit.fire) g.closeBoard();
+    } else if (g.state === 'play' && g.online) {
+      if (hit.pause) g.mpMenu = !g.mpMenu; // the world goes on: a menu, not a pause
+      else if (hit.quit && g.mpMenu) RR.mp.leave();
+      else if (hit.defer) g.tryDefer();
+    } else if (g.state === 'online') {
+      RR.mp.keys(hit);
+    } else if (g.state === 'mpresults') {
+      if (hit.ok || hit.pause) RR.mp.backToRoom();
     } else if (g.state === 'play') {
       if (hit.pause) g.pause();
-      else if (hit.rewind) g.tryRewind();
+      else if (hit.defer) g.tryDefer();
     } else if (g.state === 'layout') {
       if (hit.pause || hit.ok) g.closeControls();
     } else if (g.state === 'paused') {
@@ -1836,12 +2132,15 @@
     if (!I.typing) { I.pollPad(); handleUI(g); }
     if (g.toast) { g.toast.t += dt; if (g.toast.t >= g.toast.dur) g.toast = null; }
 
-    g.acc += dt;
-    let n = 0;
-    while (g.acc >= C.STEP) {
-      g.acc -= C.STEP;
-      if (++n > 14) { g.acc = 0; break; } // never spiral after a long stall
-      g.step(C.STEP);
+    if (g.online) RR.mp.frame(dt); // online: the server runs the world; this screen predicts and draws it
+    else {
+      g.acc += dt;
+      let n = 0;
+      while (g.acc >= C.STEP) {
+        g.acc -= C.STEP;
+        if (++n > 14) { g.acc = 0; break; } // never spiral after a long stall
+        g.step(C.STEP);
+      }
     }
 
     const p = g.player;
