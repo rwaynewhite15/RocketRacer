@@ -1210,7 +1210,7 @@ test('touch: the blaster fires all the time the fire stick is held, straight ahe
     assert.strictEqual(await shown(), null, 'no aim line while firing straight ahead');
 
     await ph.move([f.x - 30, f.y + 30]); // then dragged down and to the left, still held
-    await ph.page.waitForTimeout(400);
+    await ph.page.waitForTimeout(800); // (one shot every 0.13 s: room for several after the two the drag overlaps)
     const after = (await fired()).slice(b.length + 2);
     assert.ok(after.length >= 2, 'still firing after the drag');
     for (const x of after) {
