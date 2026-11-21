@@ -121,59 +121,53 @@ test('zoom changes the world scale but not the HUD, and is remembered', { skip }
   } finally { await ctx.close(); }
 });
 
-test('do-over: goes back about 3 s, un-flies a gate, and the race clock keeps running', { skip }, async () => {
+test('gate deferral: the gate ahead counts as passed and the rocket heads straight on to the next; every lap is still flown over the line', { skip }, async () => {
   const { page, ctx, errors } = await openGame();
   try {
     const r = await page.evaluate(() => {
       const g = RR.game, S = 1 / 120, out = {};
-
-      // A: where the ship lands, and what it gets back. Rewind 1.2 s after
-      // flying through the second gate, so the 3 s window always contains a
-      // gate (a fixed race time did not: the AI's random lines vary per run).
       T.fresh(0);
-      const p = g.player, log = [];
-      const rec = () => log.push({ t: g.raceTime, x: p.x, y: p.y, cp: p.cpCount });
-      let n = 0;
-      while (p.cpCount < 2 && n++ < 120 * 60) { g.step(S); rec(); }
-      T.run(1.2, rec);
-      p.rewind = 1;
-      const before = { t: g.raceTime, cp: p.cpCount };
-      out.historySecs = (p.hist.length - 1) * 0.05;
-      const want = log.find((e) => e.t >= before.t - 3.0);
-      g.tryRewind();
-      out.started = { rw: !!p.rw, charge: p.rewind };
-      const tgt = p.rw.tgt, tgtSpeed = Math.hypot(tgt.vx, tgt.vy); // what it was doing 3 s ago
-      n = 0;
-      while (p.rw && n++ < 120 * 3) g.step(S);
-      out.A = {
-        dist: Math.hypot(p.x - want.x, p.y - want.y), cp: p.cpCount, wantCp: want.cp, beforeCp: before.cp,
-        alive: p.dead === 0, invuln: p.invuln, clock: g.raceTime - before.t, speed: Math.hypot(p.vx, p.vy), tgtSpeed,
+      const p = g.player;
+      out.N = g.track.cps.length;
+      // on autopilot over the line: lap 1, heading for gate 1
+      let n = 0; while (p.cpCount < 1 && n++ < 120 * 60) g.step(S);
+      const before = { gate: p.nextCp, count: p.cpCount, x: p.x, y: p.y, t: g.raceTime };
+      p.defer = 1;
+      out.ok = g.tryDefer();
+      out.before = before;
+      out.after = {
+        gate: p.nextCp, count: p.cpCount, held: p.defer, used: p.used.defer,
+        moved: Math.hypot(p.x - before.x, p.y - before.y), clock: g.raceTime - before.t, banner: g.msg && g.msg.text,
       };
+      // the line can't be deferred: heading for it, the deferral is kept and the pilot is told to fly it
+      p.nextCp = 0; p.defer = 1;
+      out.line = { ok: g.tryDefer(), can: g.canDefer(), held: p.defer, said: g.texts.some((t) => t.text === 'FLY THE LINE') };
 
-      // B: a gate flown through inside the window counts again once re-flown
+      // a whole lap deferred: every gate but the line, which the autopilot then flies through, and the lap counts
       T.fresh(0);
-      const q = g.player, k0 = q.cpCount;
-      n = 0; while (q.cpCount === k0 && n++ < 120 * 60) g.step(S);
-      const passed = q.cpCount;
-      T.run(1.4);
-      q.rewind = 1; g.tryRewind();
-      n = 0; while (q.rw && n++ < 120 * 3) g.step(S);
-      out.B = { passed, after: q.cpCount };
-      n = 0; while (q.cpCount < passed && n++ < 120 * 30) g.step(S);
-      out.B.reflown = q.cpCount;
+      const q = g.player;
+      n = 0; while (q.cpCount < 1 && n++ < 120 * 60) g.step(S);
+      q.defer = 99;
+      const lap0 = q.lap;
+      let deferred = 0;
+      n = 0;
+      while (q.lap === lap0 && n++ < 120 * 60) { if (g.canDefer() && g.tryDefer()) deferred++; g.step(S); }
+      out.lap = { from: lap0, to: q.lap, deferred: deferred, laps: q.lapTimes.length };
+
+      // not before the lights go green
+      g.startRace(false); g.player.defer = 1; g.player.nextCp = 1;
+      out.countdown = { ok: g.tryDefer(), held: g.player.defer };
       return out;
     });
-    assert.ok(r.historySecs > 2.9, 'a full 3 s of history was recorded: ' + r.historySecs);
-    assert.deepStrictEqual(r.started, { rw: true, charge: 0 });
-    assert.ok(r.A.dist < 40, 'lands on the recorded path, ' + Math.round(r.A.dist) + ' px off');
-    assert.strictEqual(r.A.cp, r.A.wantCp, 'gate progress is what it was 3 s ago');
-    assert.ok(r.A.beforeCp > r.A.cp, 'the test window really contained a gate');
-    assert.ok(r.A.alive && r.A.invuln > 1.9, 'alive and protected');
-    // it lands with the velocity it had back then (not always fast: the AI sometimes brakes hard for a gate)
-    assert.ok(Math.abs(r.A.speed - r.A.tgtSpeed) < 1, 'keeps the speed it had: ' + r.A.speed + ' vs ' + r.A.tgtSpeed);
-    assert.ok(r.A.clock > 0.8 && r.A.clock < 1.1, 'the race clock kept running: ' + r.A.clock);
-    assert.ok(r.B.after < r.B.passed, 'gate is un-flown');
-    assert.ok(r.B.reflown >= r.B.passed, 'and counts again when re-flown');
+    assert.strictEqual(r.N, 9, 'the course has nine gates (the line and eight more)');
+    assert.strictEqual(r.ok, true);
+    assert.deepStrictEqual([r.before.gate, r.after.gate, r.after.count], [1, 2, r.before.count + 1], 'gate 1 counts as passed: on to gate 2');
+    assert.deepStrictEqual([r.after.held, r.after.used], [0, 1], 'spent, and counted as used');
+    assert.ok(r.after.moved < 1 && r.after.clock === 0, 'nothing else changes: the rocket stays put and the clock is untouched');
+    assert.strictEqual(r.after.banner, 'GATE DEFERRED!');
+    assert.deepStrictEqual(r.line, { ok: false, can: false, held: 1, said: true });
+    assert.deepStrictEqual(r.lap, { from: 1, to: 2, deferred: r.N - 1, laps: 1 }, 'every gate but the line deferred; the lap counts once the line is flown');
+    assert.deepStrictEqual(r.countdown, { ok: false, held: 1 });
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
 });
@@ -260,8 +254,8 @@ test('leaderboard: a race sends the rocket flown, its stat levels and the poweru
       grab('missile'); shoot(); T.run(0.6); shoot(); // two missiles from one pick-up: one missile powerup used
       T.run(0.6); grab('missile'); shoot(); // a second pick-up, fired (once the launcher has reloaded)
       out.during = Object.assign({}, p.used);
-      grab('rewind'); T.run(1.2); g.tryRewind(); T.run(1.5); // a do-over, taken
-      grab('rewind'); // and one picked up but never taken
+      grab('defer'); p.lap = 1; p.nextCp = 1; p.cpCount = 1; g.tryDefer(); // a gate deferred (as if just over the line)
+      grab('defer'); // and one picked up but never used
       // nothing more to pick up or fire: the autopilot brings it home
       g.pickups.forEach((q) => { q.on = false; q.timer = 1e9; });
       p.weapon = null; p.ammo = 0;
@@ -277,7 +271,7 @@ test('leaderboard: a race sends the rocket flown, its stat levels and the poweru
     });
     assert.deepStrictEqual(r.during, { nitro: 1, shield: 1, missile: 2 }, 'tallied as they were used');
     assert.ok(r.done && r.result && !r.result.error, JSON.stringify(r.result));
-    const want = { ship: 'dart', stats: [6, 4, 4, 3, 3], items: { nitro: 1, shield: 1, missile: 2, rewind: 1 }, levels: { missile: 3, nitro: 2 } };
+    const want = { ship: 'dart', stats: [6, 4, 4, 3, 3], items: { nitro: 1, shield: 1, missile: 2, defer: 1 }, levels: { missile: 3, nitro: 2 } };
     assert.deepStrictEqual(r.mine, want, 'your own row');
     assert.deepStrictEqual(r.row, want, 'the top-ten row everyone sees');
     assert.deepStrictEqual(errors, []);
@@ -287,7 +281,7 @@ test('leaderboard: a race sends the rocket flown, its stat levels and the poweru
 test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the arrows and Enter) opens their card', { skip }, async () => {
   const at = (pid, name, time, setup) => Object.assign({ track: 'lunar', pid: 'card-' + pid.padEnd(8, '0'), name: name, time: time, lap: 14, diff: 2, place: 1 }, setup ? { setup } : {});
   const { own, url } = await ownBoard([
-    at('a', 'COMET', 44, { ship: 'phoenix', stats: [8, 9, 7, 6, 5], items: { nitro: 3, shield: 1, missile: 2, rewind: 1 } }),
+    at('a', 'COMET', 44, { ship: 'phoenix', stats: [8, 9, 7, 6, 5], items: { nitro: 3, shield: 1, missile: 2, defer: 1 } }),
     at('b', 'ZIPPY', 45, { ship: 'dart', stats: [6, 7, 6, 3, 3], items: { nitro: 1 } }),
     at('c', 'ROCKY', 46, { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: {} }),
     at('d', 'OLDIE', 47), // from before setups were saved
@@ -324,7 +318,7 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     await click('PILOT 1');
     let s = await state();
     assert.deepStrictEqual(s.card, { rank: 1, name: 'COMET', shown: {
-      ship: 'phoenix', stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['rewind', 1]], numbers: [],
+      ship: 'phoenix', stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['defer', 1]], numbers: [],
     } });
     await click('BACK (ENTER)');
     s = await state();
@@ -432,7 +426,7 @@ test('powerup upgrades: events pay credits, credits buy upgrade points, and poin
     await press('ArrowDown', 7); // NITRO SHIELD REPAIR BLASTER MISSILE MINE EMP
     await press('ArrowRight');
     assert.deepStrictEqual(await state(), ['power', 0, 0, { shield: 2, emp: 2 }]);
-    await press('ArrowDown', 2); // DO-OVER, then round to the ship
+    await press('ArrowDown', 2); // DEFERRAL, then round to the ship
     assert.strictEqual((await state())[0], 'ship');
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
@@ -450,7 +444,7 @@ test('powerup upgrades: an upgraded pick-up is stronger, rivals stay at level 1,
     await page.waitForFunction(() => RR.net.online);
     const r = await page.evaluate(async () => {
       const g = RR.game, n = RR.net, out = {};
-      g.prog.pup = { nitro: 3, shield: 2, repair: 3, missile: 3, blaster: 3, rewind: 2 };
+      g.prog.pup = { nitro: 3, shield: 2, repair: 3, missile: 3, blaster: 3, defer: 2 };
       g.trackIdx = 0; g.modeIdx = 0; g.startRace(false); g.state = 'play';
       T.run(4.3);
       const p = g.player, rival = g.ships[1], pk = g.pickups[0];
@@ -461,16 +455,17 @@ test('powerup upgrades: an upgraded pick-up is stronger, rivals stay at level 1,
       grab(p, 'missile'); out.missiles = [p.weapon, p.ammo];
       grab(p, 'blaster'); out.blaster = p.ammo; grab(p, 'blaster'); out.topUp = p.ammo; // a top-up never takes ammo away
       p.weapon = null; p.ammo = 0;
-      grab(p, 'rewind'); out.rewinds = p.rewind;
+      grab(p, 'defer'); out.defers = p.defer;
       // a rival picking up the same thing gets level 1 (the player moved off the pick-up first)
       p.x = g.track.grid[0].x; p.y = g.track.grid[0].y;
       rival.weapon = null; rival.ammo = 0;
       grab(rival, 'missile'); out.rival = [rival.weapon, rival.ammo];
       rival.hp = 10; grab(rival, 'repair'); out.rivalRepair = rival.hp - 10;
-      // two do-overs from one pick-up, both counted as used
-      T.run(1.5); g.tryRewind(); T.run(1.5); out.afterOne = p.rewind;
-      T.run(1); g.tryRewind(); T.run(1.5); out.afterTwo = [p.rewind, p.used.rewind];
-      out.words = [RR.powerDoes('missile', 3), RR.powerDoes('rewind', 2), RR.powerDoes('nitro', 3), RR.powerDoes('shield', 2), RR.powerDoes('repair', 3), RR.powerDoes('emp', 1)];
+      // two gate deferrals from one pick-up, both counted as used (heading for gate 1, over the line)
+      p.lap = 1; p.nextCp = 1; p.cpCount = 1;
+      g.tryDefer(); out.afterOne = p.defer;
+      g.tryDefer(); out.afterTwo = [p.defer, p.used.defer, p.cpCount];
+      out.words = [RR.powerDoes('missile', 3), RR.powerDoes('defer', 2), RR.powerDoes('nitro', 3), RR.powerDoes('shield', 2), RR.powerDoes('repair', 3), RR.powerDoes('emp', 1)];
       out.setupLevels = p.setup.levels;
       g.toTitle(); g.trackIdx = 0; g.showBoard();
       return out;
@@ -480,12 +475,12 @@ test('powerup upgrades: an upgraded pick-up is stronger, rivals stay at level 1,
     assert.strictEqual(r.repair, 100, 'repair level 3: +100 hull');
     assert.deepStrictEqual(r.missiles, ['missile', 5], 'missile level 3: five');
     assert.deepStrictEqual([r.blaster, r.topUp], [30, 60], 'blaster level 3: 30 shots, topped up to 60');
-    assert.strictEqual(r.rewinds, 2, 'do-over level 2: two');
+    assert.strictEqual(r.defers, 2, 'deferral level 2: two gates');
     assert.deepStrictEqual(r.rival, ['missile', 2], 'a rival still gets two missiles');
     assert.strictEqual(r.rivalRepair, 50);
-    assert.deepStrictEqual([r.afterOne, r.afterTwo], [1, [0, 2]]);
-    assert.deepStrictEqual(r.words, ['5 MISSILES', '2 DO-OVERS', 'BOOST 5.2S', 'SHIELD 10.5S', '+100 HULL', '1 EMP']);
-    assert.deepStrictEqual(r.setupLevels, { nitro: 3, shield: 2, repair: 3, missile: 3, blaster: 3, rewind: 2 }, 'sent with the time');
+    assert.deepStrictEqual([r.afterOne, r.afterTwo], [1, [0, 2, 3]]);
+    assert.deepStrictEqual(r.words, ['5 MISSILES', '2 GATES', 'BOOST 5.2S', 'SHIELD 10.5S', '+100 HULL', '1 EMP']);
+    assert.deepStrictEqual(r.setupLevels, { nitro: 3, shield: 2, repair: 3, missile: 3, blaster: 3, defer: 2 }, 'sent with the time');
 
     // the board: a small 3 beside the level 3 missile; nothing by a level 1 nitro
     await page.waitForFunction(() => RR.game.boardRows && RR.game.boardRows.length === 2);
@@ -553,67 +548,90 @@ test('hangar: no ship ever holds stat points it cannot use', { skip }, async () 
   } finally { await ctx.close(); }
 });
 
-test('do-over: undoes a wreck', { skip }, async () => {
+test('gate deferral: E (or the DEFER button on a touch screen) spends one; heading for the line, the button stays and a tap keeps it', { skip }, async () => {
+  // keyboard
   const { page, ctx, errors } = await openGame();
   try {
     const r = await page.evaluate(() => {
-      const g = RR.game, w = (T.fresh(0), g.player);
-      T.run(9, () => { w.hp = w.maxHp; }); // a full hull on the way (rivals and rocks land random hits), so the do-over has one to go back to
-      w.rewind = 1; w.ai = null; // hands off: fly straight into a planet at speed
-      w.shield = 0; w.invuln = 0; // with no shield or respawn grace the autopilot may have picked up on the way
-      const pl = g.track.planets[0];
-      w.x = pl.x; w.y = pl.y - pl.r - 140; w.vx = 0; w.vy = 520; w.angle = Math.PI / 2; w.hp = 20;
-      T.run(0.9);
-      const wrecked = { dead: w.dead > 0 && w.dead < 5, hp: w.hp };
-      g.tryRewind();
-      let n = 0; while (w.rw && n++ < 120 * 3) g.step(1 / 120);
-      return { wrecked, alive: w.dead === 0, hp: w.hp, clearOfPlanet: Math.hypot(w.x - pl.x, w.y - pl.y) - pl.r };
+      const g = RR.game, p = (T.fresh(0), g.player);
+      let n = 0; while (p.cpCount < 1 && n++ < 120 * 60) g.step(1 / 120);
+      p.ai = null; p.vx = p.vy = 0; p.defer = 2;
+      return { gate: p.nextCp };
     });
-    assert.deepStrictEqual(r.wrecked, { dead: true, hp: 0 });
-    assert.ok(r.alive, 'back in the race');
-    assert.ok(r.hp > 50, 'with the hull it had before');
-    assert.ok(r.clearOfPlanet > 100, 'and away from the planet');
+    await page.waitForTimeout(100);
+    await page.keyboard.press('KeyE');
+    await page.waitForTimeout(100);
+    const after = await page.evaluate(() => ({ gate: RR.game.player.nextCp, held: RR.game.player.defer }));
+    assert.deepStrictEqual(after, { gate: r.gate + 1, held: 1 }, 'E defers the gate ahead');
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
+
+  // touch
+  const ph = await phoneRace();
+  try {
+    const btn = () => ph.page.evaluate(() => !!RR.game.ui.find((u) => u.label === 'DEFER'));
+    assert.strictEqual(await btn(), false, 'no button without a deferral');
+    await ph.page.evaluate(() => { const p = RR.game.player; p.lap = 1; p.nextCp = 1; p.cpCount = 1; p.defer = 1; });
+    await ph.page.waitForTimeout(100);
+    assert.strictEqual(await btn(), true, 'the button appears with one');
+    await ph.tapLabel('DEFER');
+    const s = await ph.page.evaluate(() => ({ gate: RR.game.player.nextCp, held: RR.game.player.defer, banner: RR.game.msg && RR.game.msg.text }));
+    assert.deepStrictEqual(s, { gate: 2, held: 0, banner: 'GATE DEFERRED!' });
+    await ph.page.waitForTimeout(100);
+    assert.strictEqual(await btn(), false, 'and goes once it is spent');
+
+    // heading for the line: the button stays (dimmed), and a tap keeps the deferral and says why
+    await ph.page.evaluate(() => { const p = RR.game.player; p.nextCp = 0; p.defer = 1; });
+    await ph.page.waitForTimeout(100);
+    await ph.tapLabel('DEFER');
+    const l = await ph.page.evaluate(() => ({ held: RR.game.player.defer, gate: RR.game.player.nextCp, said: RR.game.texts.some((t) => t.text === 'FLY THE LINE') }));
+    assert.deepStrictEqual(l, { held: 1, gate: 0, said: true });
+    assert.deepStrictEqual(ph.errors, []);
+  } finally { await ph.ctx.close(); }
 });
 
-test('do-over: needs history, one at a time, humans only, not during the countdown', { skip }, async () => {
+test('gate deferral: only humans pick one up, one at a time; none in a fight; saved do-over upgrades and button spots carry over', { skip }, async () => {
   const { page, ctx, errors } = await openGame();
   try {
     const r = await page.evaluate(() => {
       const g = RR.game, out = {};
-
-      // right after a rewind there is no history yet: "too soon", and the charge is kept
-      T.fresh(0);
-      const p = g.player;
-      T.run(6);
-      p.rewind = 1; g.tryRewind();
-      let n = 0; while (p.rw && n++ < 120 * 3) g.step(1 / 120);
-      p.rewind = 1; g.tryRewind();
-      out.tooSoon = { rw: !!p.rw, charge: p.rewind };
-
-      // capsules: rivals ignore them, the human takes one but not a second
+      // capsules: rivals leave them, the human takes one but not a second
       T.fresh(1);
       const a = g.pickups[0], b = g.pickups[1];
-      a.type = b.type = 'rewind'; a.on = b.on = true;
+      a.type = b.type = 'defer'; a.on = b.on = true;
       const rival = g.ships[1]; rival.x = a.x; rival.y = a.y; T.run(0.05);
-      out.rivalIgnored = a.on && rival.rewind === 0;
+      out.rivalIgnored = a.on && rival.defer === 0;
       rival.x = 1e5;
       const me = g.player; me.ai = null; me.x = a.x; me.y = a.y; me.vx = me.vy = 0; T.run(0.05);
-      out.tookOne = { charge: me.rewind, gone: !a.on };
+      out.tookOne = { held: me.defer, gone: !a.on };
       me.x = b.x; me.y = b.y; T.run(0.05);
-      out.secondLeft = { charge: me.rewind, stillThere: b.on };
-
-      // not before the lights go green
-      g.startRace(false); g.player.rewind = 1; g.tryRewind();
-      out.countdown = { rw: !!g.player.rw, charge: g.player.rewind };
+      out.secondLeft = { held: me.defer, stillThere: b.on };
+      // a fight has no gates: no deferrals in its pick-ups, and none can be spent
+      g.modeIdx = 1; g.arenaIdx = 0; g.startRace(false); g.state = 'play'; T.run(4.3);
+      g.player.defer = 1;
+      out.fight = { can: g.canDefer(), ok: g.tryDefer(), rolls: [] };
+      for (let i = 0; i < 300; i++) { g.pickups.forEach((p) => { p.on = false; p.timer = 0; }); g.step(1 / 120); out.fight.rolls.push(...g.pickups.map((p) => p.type)); }
+      out.fight.deferRolled = out.fight.rolls.includes('defer');
+      delete out.fight.rolls;
       return out;
     });
-    assert.deepStrictEqual(r.tooSoon, { rw: false, charge: 1 });
     assert.strictEqual(r.rivalIgnored, true);
-    assert.deepStrictEqual(r.tookOne, { charge: 1, gone: true });
-    assert.deepStrictEqual(r.secondLeft, { charge: 1, stillThere: true });
-    assert.deepStrictEqual(r.countdown, { rw: false, charge: 1 });
+    assert.deepStrictEqual(r.tookOne, { held: 1, gone: true });
+    assert.deepStrictEqual(r.secondLeft, { held: 1, stillThere: true });
+    assert.deepStrictEqual(r.fight, { can: false, ok: false, deferRolled: false });
+
+    // a save from before the change: do-over upgrades and the DO-OVER button's spot become the deferral's
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem('rocketracer.v1') || '{}');
+      s.prog = Object.assign({}, s.prog, { pup: { rewind: 3, nitro: 2 } });
+      s.controls = { land: { rewind: { x: 0.25, y: 0.5 }, brake: { x: 0.5, y: 0.9 } } };
+      localStorage.setItem('rocketracer.v1', JSON.stringify(s));
+    });
+    await page.reload();
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    const kept = await page.evaluate(() => ({ pup: RR.game.prog.pup, controls: RR.game.controls }));
+    assert.deepStrictEqual(kept.pup, { nitro: 2, defer: 3 });
+    assert.deepStrictEqual(kept.controls, { land: { brake: { x: 0.5, y: 0.9 }, defer: { x: 0.25, y: 0.5 } } });
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
 });

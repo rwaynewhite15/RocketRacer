@@ -90,12 +90,12 @@ test('mp: quick match puts two players in one room; when both are ready the race
   } finally { a.ws.close(); b.ws.close(); s.close(); }
 });
 
-test('mp: inputs fly the right ship and are acknowledged; a do-over is taken on request', async () => {
+test('mp: inputs fly the right ship and are acknowledged; a gate deferral is taken on request', async () => {
   const s = await serve();
   const a = player(s.url, 'ALICE'), b = player(s.url, 'BOB');
   try {
     await a.hello(); await b.hello();
-    a.send({ t: 'quick', mode: 'race', track: 0, diff: 1, setup: Object.assign({}, setup, { levels: { rewind: 2 } }) });
+    a.send({ t: 'quick', mode: 'race', track: 0, diff: 1, setup: Object.assign({}, setup, { levels: { defer: 2 } }) });
     await a.wait(isRoom());
     b.send({ t: 'quick', mode: 'race', track: 0, diff: 1, setup });
     await b.wait(isRoom());
@@ -120,12 +120,19 @@ test('mp: inputs fly the right ship and are acknowledged; a do-over is taken on 
     await sleep(120);
     assert.strictEqual(a.snaps[a.snaps.length - 1].ack, seq, 'snapshots acknowledge the last input used');
 
-    G.ships[0].rewind = 1;
-    a.input({ seq: ++seq, rewind: true });
+    const me = G.ships[0];
+    me.lap = Math.max(me.lap, 1);
+    if (G.track.cps[me.nextCp].finish) { me.nextCp = 1; me.cpCount = Math.max(me.cpCount, 1); } // heading for a gate, not the line
+    const gate = me.nextCp, count = me.cpCount;
+    me.defer = 1;
+    a.input({ seq: ++seq, defer: true });
     await sleep(100);
-    assert.ok(G.ships[0].rw, 'the do-over is under way');
-    const ev = await a.wait((m) => m.t === 'ev' && m.e.some((e) => e[0] === 'r' && e[1] === 0));
+    assert.deepStrictEqual([me.defer, me.cpCount, me.nextCp], [0, count + 1, (gate + 1) % G.track.cps.length], 'the gate counts as passed');
+    const ev = await a.wait((m) => m.t === 'ev' && m.e.some((e) => e[0] === 'd' && e[1] === 0 && e[2] === gate));
     assert.ok(ev.ms > 0);
+    await sleep(120);
+    const last = a.snaps[a.snaps.length - 1].ships[0];
+    assert.ok(last.defer === 0 && last.cpCount >= count + 1, 'and the snapshots say so: ' + JSON.stringify([last.defer, last.cpCount]));
   } finally { a.ws.close(); b.ws.close(); s.close(); }
 });
 

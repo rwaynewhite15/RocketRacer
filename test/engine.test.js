@@ -37,20 +37,20 @@ test('engine: an online race runs headless; bots race, humans fly on network inp
   assert.strictEqual(G.parts.length, 0, 'no particles on a server');
 });
 
-test('engine: a human who finishes is flown home by autopilot; a do-over works for any human', () => {
+test('engine: a human who finishes is flown home by autopilot; a gate deferral works for any human', () => {
   const { G } = createEngine();
-  G.startOnline({ server: true, mode: 'race', track: 0, diff: 1, seats: [seat(0, true), seat(1, true, { levels: { rewind: 2 } }), seat(2), seat(3), seat(4), seat(5)] });
+  G.startOnline({ server: true, mode: 'race', track: 0, diff: 1, seats: [seat(0, true), seat(1, true, { levels: { defer: 2 } }), seat(2), seat(3), seat(4), seat(5)] });
   run(G, 4.2);
   const h = G.ships[1];
-  h.netInput.thrust = 1;
-  run(G, 2);
-  h.rewind = 2;
-  assert.strictEqual(G.tryRewind(h), true, 'the second human takes a do-over');
-  assert.ok(h.rw && h.rewind === 1);
-  assert.ok(G.events.some((e) => e[0] === 'r' && e[1] === 1));
-  run(G, 1.5);
-  assert.ok(!h.rw && G.events.some((e) => e[0] === 'R' && e[1] === 1), 'and lands');
-  assert.strictEqual(G.tryRewind(G.ships[2]), false, 'a bot has none');
+  h.lap = 1; h.nextCp = 1; h.cpCount = 1; // over the line and on the way to gate 1
+  h.defer = 2;
+  assert.strictEqual(G.tryDefer(h), true, 'the second human defers a gate');
+  assert.deepStrictEqual([h.nextCp, h.cpCount, h.defer, h.used.defer], [2, 2, 1, 1], 'gate 1 counts as passed; on to gate 2');
+  assert.ok(G.events.some((e) => e[0] === 'd' && e[1] === 1 && e[2] === 1), 'the players hear of it');
+  G.ships[2].defer = 1; G.ships[2].nextCp = 1;
+  assert.strictEqual(G.tryDefer(G.ships[2]), true, 'the server takes one from any ship that holds one (only humans pick them up)');
+  G.ships[3].nextCp = 1;
+  assert.strictEqual(G.tryDefer(G.ships[3]), false, 'none held, none taken');
 
   // a human crossing the line for the last time: the server keeps it flying
   const p = G.ships[0];

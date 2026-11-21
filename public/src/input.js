@@ -50,7 +50,7 @@
     Escape: 'pause', KeyP: 'pause',
     KeyM: 'mute', KeyC: 'crt', KeyR: 'restart', KeyQ: 'quit',
     KeyN: 'name', KeyT: 'board', KeyF: 'full', KeyH: 'hangar', KeyO: 'online',
-    KeyE: 'rewind', ShiftLeft: 'rewind', ShiftRight: 'rewind',
+    KeyE: 'defer', ShiftLeft: 'defer', ShiftRight: 'defer', // gate deferral
     KeyZ: 'zoom', Equal: 'zoomIn', NumpadAdd: 'zoomIn', Minus: 'zoomOut', NumpadSubtract: 'zoomOut',
   };
 
@@ -223,7 +223,7 @@
   /**
    * Work out the touch controls for this frame. `L` is RR.touchLayout() while
    * racing, or null when touch controls are not on screen; `buttons` are the
-   * on-screen buttons (pause, zoom, do-over), which a steering drag must not
+   * on-screen buttons (pause, zoom, defer), which a steering drag must not
    * start on. A finger keeps the role (steer / fire / brake) of wherever it
    * first landed.
    */
@@ -264,7 +264,7 @@
   function btn(p, i) { return !!(p.buttons[i] && p.buttons[i].pressed); }
 
   /** Gamepad buttons that act once per press, folded into the same `hit` flags as keys. */
-  const PAD_ACTIONS = { rewind: [3, 4], zoom: [8], pause: [9] };
+  const PAD_ACTIONS = { defer: [3, 4], zoom: [8], pause: [9] };
   const padWas = {};
   I.pollPad = function () {
     const p = pad();

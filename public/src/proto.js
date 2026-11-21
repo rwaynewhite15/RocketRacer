@@ -16,16 +16,16 @@
   'use strict';
 
   const P = {
-    VERSION: 1,
+    VERSION: 2, // 2: the gate deferral replaced the do-over
     INPUT: 1, SNAP: 2, // first byte of a binary message
     WEAPONS: [null, 'blaster', 'missile', 'mine', 'emp'],
-    ITEMS: ['nitro', 'shield', 'repair', 'rewind', 'blaster', 'missile', 'mine', 'emp'],
+    ITEMS: ['nitro', 'shield', 'repair', 'defer', 'blaster', 'missile', 'mine', 'emp'],
   };
   const PI = Math.PI;
 
   /* ------------------------------------------------------------- input */
 
-  /** { seq, turn -1..1, thrust 0..1, brake, fire, stick, aim (radians) | null, rewind } -> 8 bytes */
+  /** { seq, turn -1..1, thrust 0..1, brake, fire, stick, aim (radians) | null, defer } -> 8 bytes */
   P.encodeInput = function (i) {
     const b = new ArrayBuffer(8), v = new DataView(b);
     v.setUint8(0, P.INPUT);
@@ -33,7 +33,7 @@
     v.setInt8(3, Math.round(clampN(i.turn, -1, 1) * 127));
     v.setUint8(4, Math.round(clampN(i.thrust, 0, 1) * 255));
     const aim = i.aim == null || !isFinite(i.aim) ? null : Math.atan2(Math.sin(i.aim), Math.cos(i.aim));
-    v.setUint8(5, (i.brake ? 1 : 0) | (i.fire ? 2 : 0) | (i.stick ? 4 : 0) | (aim != null ? 8 : 0) | (i.rewind ? 16 : 0));
+    v.setUint8(5, (i.brake ? 1 : 0) | (i.fire ? 2 : 0) | (i.stick ? 4 : 0) | (aim != null ? 8 : 0) | (i.defer ? 16 : 0));
     v.setInt16(6, aim == null ? 0 : Math.round((aim / PI) * 32767), true);
     return b;
   };
@@ -48,14 +48,14 @@
       thrust: v.getUint8(4) / 255,
       brake: f & 1 ? 1 : 0, fire: !!(f & 2), stick: !!(f & 4),
       aim: f & 8 ? (v.getInt16(6, true) / 32767) * PI : null,
-      rewind: !!(f & 16),
+      defer: !!(f & 16), // spend a gate deferral
     };
   };
 
   /* ---------------------------------------------------------- snapshot */
 
   // ship flags
-  const F = { dead: 1, gone: 2, finished: 4, rw: 8, shield: 16, nitro: 32, invuln: 64, stun: 128, emp: 256, zoned: 512, hit: 1024, human: 2048, bot: 4096 };
+  const F = { dead: 1, gone: 2, finished: 4, /* 8: spare */ shield: 16, nitro: 32, invuln: 64, stun: 128, emp: 256, zoned: 512, hit: 1024, human: 2048, bot: 4096 };
   P.SHIP_FLAGS = F;
 
   /** A growing byte buffer with typed writes. */
@@ -96,7 +96,7 @@
     o.u8(w.ships.length);
     for (const s of w.ships) {
       o.u8(s.idx);
-      o.u16((s.dead > 0 ? F.dead : 0) | (s.gone ? F.gone : 0) | (s.finished ? F.finished : 0) | (s.rw ? F.rw : 0) |
+      o.u16((s.dead > 0 ? F.dead : 0) | (s.gone ? F.gone : 0) | (s.finished ? F.finished : 0) |
         (s.shield > 0 ? F.shield : 0) | (s.nitro > 0 ? F.nitro : 0) | (s.invuln > 0 ? F.invuln : 0) | (s.stun > 0 ? F.stun : 0) |
         (s.emp > 0 ? F.emp : 0) | (s.zoned ? F.zoned : 0) | (s.hitFlash > 0 ? F.hit : 0) | (s.human ? F.human : 0) | (s.ai ? F.bot : 0));
       o.f32(s.x); o.f32(s.y); o.f32(s.vx); o.f32(s.vy); o.f32(s.angle); o.f32(s.angVel);
@@ -104,7 +104,7 @@
       o.u16(Math.round(clampN(s.hp, 0, 6000) * 10)); o.u16(s.maxHp);
       o.u8(dsec(s.shield)); o.u8(dsec(s.nitro)); o.u8(dsec(s.stun)); o.u8(dsec(s.emp)); o.u8(dsec(s.invuln));
       o.i16(s.spinRate * 100);
-      o.u8(Math.max(0, P.WEAPONS.indexOf(s.weapon))); o.u8(clampN(s.ammo, 0, 255)); o.u8(clampN(s.rewind, 0, 255));
+      o.u8(Math.max(0, P.WEAPONS.indexOf(s.weapon))); o.u8(clampN(s.ammo, 0, 255)); o.u8(clampN(s.defer, 0, 255));
       o.u8(clampN(s.lap, 0, 255)); o.u8(clampN(s.nextCp, 0, 255)); o.u16(clampN(s.cpCount, 0, 65535)); o.u8(clampN(s.place, 0, 255));
       o.f32(s.lapStart); o.f32(s.bestLap || 0); o.f32(s.finished ? s.finishTime : 0); o.f32(s.progress || 0);
       o.u16(clampN(s.kills, 0, 65535)); o.u16(clampN(s.deaths, 0, 65535)); o.u8(clampN(s.elim, 0, 255));
@@ -156,14 +156,14 @@
       const idx = r.u8(), f = r.u16();
       s.ships.push({
         idx: idx, flags: f,
-        dead: !!(f & F.dead), gone: !!(f & F.gone), finished: !!(f & F.finished), rw: !!(f & F.rw), zoned: !!(f & F.zoned),
+        dead: !!(f & F.dead), gone: !!(f & F.gone), finished: !!(f & F.finished), zoned: !!(f & F.zoned),
         hit: !!(f & F.hit), human: !!(f & F.human), bot: !!(f & F.bot),
         x: r.f32(), y: r.f32(), vx: r.f32(), vy: r.f32(), angle: r.f32(), angVel: r.f32(),
         thrusting: r.u8() / 255,
         hp: r.u16() / 10, maxHp: r.u16(),
         shield: r.u8() / 10, nitro: r.u8() / 10, stun: r.u8() / 10, emp: r.u8() / 10, invuln: r.u8() / 10,
         spinRate: r.i16() / 100,
-        weapon: P.WEAPONS[r.u8()] || null, ammo: r.u8(), rewind: r.u8(),
+        weapon: P.WEAPONS[r.u8()] || null, ammo: r.u8(), defer: r.u8(),
         lap: r.u8(), nextCp: r.u8(), cpCount: r.u16(), place: r.u8(),
         lapStart: r.f32(), bestLap: r.f32(), finishTime: r.f32(), progress: r.f32(),
         kills: r.u16(), deaths: r.u16(), elim: r.u8(),

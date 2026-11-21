@@ -245,3 +245,60 @@ test('online: with online play as its own service at another address (as on Clou
     web.close(); mp.hub.shutdown(); mp.close();
   }
 });
+
+test('online: a hit flashes a ship white only for a moment; human pilots are named at the start and for 2 s as they come into view (bots never); a gate deferral goes through the server', { skip }, async () => {
+  const s = await serve();
+  const A = await player(s.url, 'ALICE'), B = await player(s.url, 'BOB');
+  try {
+    await intoRace(A, B);
+    const G = [...s.hub.rooms][0].engine.G, alice = G.ships[0], bob = G.ships[1], bot = G.ships[2];
+    const tags = () => A.page.evaluate(() => (RR.game.tagsShown || []).slice().sort());
+    const place = (sh, x, y) => { sh.x = x; sh.y = y; sh.vx = sh.vy = 0; sh.angVel = 0; };
+    const inView = (i, on) => A.page.waitForFunction(([i, on]) => !!RR.game.ships[i].inView === on, [i, on], { timeout: 4000 });
+
+    // the start: every human pilot's name (and no bot's), through the countdown and the first 2 s
+    await A.page.waitForTimeout(300);
+    assert.deepStrictEqual(await tags(), ['ALICE', 'BOB'], 'both pilots named on the grid');
+    await A.page.waitForFunction(() => RR.game.phase === 'race' && RR.game.raceTime > RR.TAG_HOLD + 0.6, null, { timeout: 8000 });
+    assert.deepStrictEqual(await tags(), [], 'then the names go');
+
+    // Bob leaves Alice's screen and comes back into it: his name, for 2 s
+    place(bob, G.track.cps[4].x, G.track.cps[4].y); // the far side of the course
+    await inView(1, false);
+    place(bob, alice.x + 40, alice.y - 40);
+    await inView(1, true);
+    assert.deepStrictEqual(await tags(), ['BOB'], 'Bob is named as he comes into view');
+    await A.page.waitForTimeout(1500);
+    assert.deepStrictEqual(await tags(), ['BOB'], 'and still is 1.5 s later');
+    await A.page.waitForTimeout(900);
+    assert.deepStrictEqual(await tags(), [], 'gone after 2 s');
+
+    // a bot doing the same is never named
+    place(bot, G.track.cps[4].x, G.track.cps[4].y); bot.ai = null;
+    await inView(2, false);
+    place(bot, alice.x - 40, alice.y + 40);
+    await inView(2, true);
+    assert.deepStrictEqual(await tags(), [], 'no name for a bot');
+
+    // a hit (a shot, a bump, a rock) flashes Bob white on Alice's screen, for a moment only
+    bob.hitFlash = 0.12;
+    const flash = await A.page.evaluate(async () => {
+      const s = RR.game.ships[1];
+      let most = 0;
+      for (let i = 0; i < 25; i++) { most = Math.max(most, s.hitFlash); await new Promise((r) => setTimeout(r, 20)); }
+      await new Promise((r) => setTimeout(r, 500));
+      return { most, after: s.hitFlash };
+    });
+    assert.ok(flash.most > 0, 'the flash shows');
+    assert.ok(flash.after <= 0, 'and ends (it used to stay white for good): ' + flash.after);
+
+    // a gate deferral: Alice presses E, the server takes it, and her screen and Bob's show it
+    alice.lap = 1; alice.nextCp = 1; alice.cpCount = 1; alice.defer = 1;
+    await A.page.waitForFunction(() => RR.game.player.defer === 1 && RR.game.player.nextCp === 1);
+    await A.page.keyboard.press('KeyE');
+    await A.page.waitForFunction(() => RR.game.player.nextCp === 2 && RR.game.player.defer === 0 && RR.game.msg && RR.game.msg.text === 'GATE DEFERRED!', null, { timeout: 3000 });
+    assert.deepStrictEqual([alice.nextCp, alice.cpCount, alice.defer, alice.used.defer], [2, 2, 0, 1], 'on the server');
+    await B.page.waitForFunction(() => RR.game.texts.some((t) => t.text === 'DEFERRED'), null, { timeout: 3000 });
+    assert.deepStrictEqual([A.errors, B.errors], [[], []]);
+  } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
+});

@@ -38,7 +38,7 @@
   let snaps = []; // decoded snapshots, oldest first
   let events = []; // { ms, e }
   let steps = []; // the player's own steps not yet acknowledged: { seq, inp }
-  let seq = 0, stepN = 0, acc = 0, wantRewind = false, last = null;
+  let seq = 0, stepN = 0, acc = 0, wantDefer = false, last = null;
 
   M.available = function () { return !!RR.net.mp; };
   M.serverNow = function () { return performance.now() + M.offset; };
@@ -153,7 +153,7 @@
     G.ships.forEach(function (s, i) { s.remote = i !== m.you; });
     G.mpMenu = false;
     M.me = m.you; M.results = null; M.reward = null; M.error = null;
-    snaps = []; events = []; steps = []; seq = 0; stepN = 0; acc = 0; wantRewind = false; last = null;
+    snaps = []; events = []; steps = []; seq = 0; stepN = 0; acc = 0; wantDefer = false; last = null;
     RR.audio.sfx('confirm');
     RR.audio.music({ on: true, tempo: 1, lead: true, restart: true });
   }
@@ -224,7 +224,7 @@
     } else if (hit.ok || hit.fire) M.ready(!M.isReady());
   };
 
-  M.rewind = function () { wantRewind = true; };
+  M.defer = function () { wantDefer = true; }; // a gate deferral, asked for with the next input
 
   /** JOIN ROOM: a real text field, so phones show a keyboard. */
   M.askCode = function () {
@@ -265,7 +265,7 @@
 
   /** Can the player's own ship be flown here, ahead of the server? */
   function predictable(G, s) {
-    return G.state === 'play' && G.phase === 'race' && s.dead <= 0 && !s.rwOn && !s.finished && !s.gone;
+    return G.state === 'play' && G.phase === 'race' && s.dead <= 0 && !s.finished && !s.gone;
   }
 
   const ZERO = { turn: 0, thrust: 0, brake: 0, fire: false, aim: null, stick: false };
@@ -284,8 +284,8 @@
     }
     if (stepN % 2 === 0 && ws && ws.readyState === 1) { // 60 a second
       seq = next;
-      ws.send(P.encodeInput({ seq: seq, turn: inp.turn, thrust: inp.thrust, brake: inp.brake, fire: inp.fire, aim: inp.aim, stick: inp.stick, rewind: wantRewind }));
-      wantRewind = false;
+      ws.send(P.encodeInput({ seq: seq, turn: inp.turn, thrust: inp.thrust, brake: inp.brake, fire: inp.fire, aim: inp.aim, stick: inp.stick, defer: wantDefer }));
+      wantDefer = false;
     }
   }
 
@@ -332,7 +332,7 @@
       fx.banner(lastLap ? 'FINAL LAP!' : 'LAP ' + me.lap, lastLap ? PAL.orange : PAL.cyan, 1.6, 4);
       RR.audio.sfx('lap');
     }
-    if (me.dead > 0 && !was.dead && !me.rwOn && !me.gone) {
+    if (me.dead > 0 && !was.dead && !me.gone) {
       G.flash = 0.6; G.shake = 12;
       fx.banner('WRECKED!', PAL.alarm, 1.5, 3);
       RR.input.buzz(160);
@@ -348,13 +348,12 @@
   function copyState(s, st) {
     s.hp = st.hp; s.maxHp = st.maxHp;
     s.shield = st.shield; s.nitro = st.nitro; s.stun = st.stun; s.emp = st.emp; s.invuln = st.invuln; s.spinRate = st.spinRate;
-    s.weapon = st.weapon; s.ammo = st.ammo; s.rewind = st.rewind;
+    s.weapon = st.weapon; s.ammo = st.ammo; s.defer = st.defer;
     s.lap = st.lap; s.nextCp = st.nextCp; s.cpCount = st.cpCount; s.place = st.place;
     s.lapStart = st.lapStart; s.bestLap = st.bestLap; s.progress = st.progress;
     s.finished = st.finished; s.finishTime = st.finishTime;
     s.kills = st.kills; s.deaths = st.deaths; s.elim = st.elim; s.gone = st.gone; s.zoned = st.zoned;
-    s.dead = st.dead ? (st.rw ? 1e9 : Math.max(s.dead, 1)) : 0;
-    s.rwOn = st.rw;
+    s.dead = st.dead ? Math.max(s.dead, 1) : 0;
     if (st.hit) s.hitFlash = 0.12;
   }
 
@@ -438,12 +437,12 @@
       case 'p': {
         const pk = G.pickups[e[1]], it = RR.ITEMS[e[3]];
         if (!pk || !it) break;
-        fx.burst(pk.x, pk.y, 12, 120, it.ammo ? 'fire' : e[3] === 'rewind' ? 'ion' : 'shield', 0.45);
+        fx.burst(pk.x, pk.y, 12, 120, it.ammo ? 'fire' : e[3] === 'defer' ? 'ion' : 'shield', 0.45);
         fx.ring(pk.x, pk.y, 6, 20, 0.22, it.color);
         if (e[2] === M.me) {
           fx.text(pk.x, pk.y - 12, it.name, it.color);
           RR.audio.sfx(it.ammo ? 'weapon' : 'power');
-          if (e[3] === 'rewind') fx.banner('DO-OVER READY', PAL.violet, 1.6, 3);
+          if (e[3] === 'defer') fx.banner('DEFERRAL READY', PAL.violet, 1.6, 3);
         }
         break;
       }
@@ -455,20 +454,7 @@
         if (e[1] === M.me && e[2] !== M.me) { fx.banner('WRECKED ' + victim.name + '!', PAL.yellow, 1.3, 3); RR.audio.sfx('power'); }
         break;
       }
-      case 'r': {
-        const s = G.ships[e[1]];
-        if (!s) break;
-        fx.ring(s.x, s.y, 8, 40, 0.35, PAL.violet);
-        if (e[1] === M.me) { G.flash = 0.3; RR.audio.sfx('rewind'); RR.input.buzz(60); }
-        break;
-      }
-      case 'R': {
-        const s = G.ships[e[1]];
-        if (!s) break;
-        fx.ring(s.x, s.y, 4, 34, 0.4, PAL.violet);
-        if (e[1] === M.me) { G.flash = 0.4; fx.banner('DO-OVER!', PAL.violet, 1.1, 4); RR.audio.sfx('rewound'); }
-        break;
-      }
+      case 'd': fx.deferred(e[1], e[2]); break; // ship e[1] deferred gate e[2]
       default: break;
     }
   }

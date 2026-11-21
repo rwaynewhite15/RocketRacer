@@ -62,7 +62,7 @@
 
   /**
    * Touch controls with a place on screen, in game pixels: the fire stick,
-   * BRAKE, and the DO-OVER button (shown only while one is held). Steering has
+   * BRAKE, and the DEFER button (shown only while a gate deferral is held). Steering has
    * no place: it is a drag that can start anywhere else (see input.js). Each
    * control has a standard spot; the player can move them (Pause > Move
    * controls). Moved spots are kept as fractions of the screen, separately for
@@ -73,15 +73,15 @@
     ins = ins || NO_INSET;
     const R = 34, grab = R + 24; // a thumb landing within `grab` of a stick's centre takes it
     const def = { fire: { x: W - ins.r - 66, y: H - ins.b - 66 } };
-    if (W - ins.l - ins.r < 360) { // narrow (upright phone): stack BRAKE and DO-OVER above the fire stick
+    if (W - ins.l - ins.r < 360) { // narrow (upright phone): stack BRAKE and DEFER above the fire stick
       def.brake = { x: def.fire.x, y: def.fire.y - 80 };
-      def.rewind = { x: def.fire.x, y: def.brake.y - 54 };
+      def.defer = { x: def.fire.x, y: def.brake.y - 54 };
     } else {
       def.brake = { x: def.fire.x - 82, y: H - ins.b - 31 };
-      def.rewind = { x: def.fire.x, y: def.fire.y - 74 };
+      def.defer = { x: def.fire.x, y: def.fire.y - 74 };
     }
     const g = RR.game, saved = (g && g.controls && g.controls[W >= H ? 'land' : 'port']) || {};
-    const half = { fire: R + 2, brake: 21, rewind: 22 }, centre = {};
+    const half = { fire: R + 2, brake: 21, defer: 22 }, centre = {};
     for (const n in def) {
       const sp = saved[n], h = half[n];
       centre[n] = {
@@ -94,7 +94,7 @@
       stickR: R,
       fire: { x: centre.fire.x, y: centre.fire.y, r: R, grab: grab },
       brake: box(centre.brake, 42, 42),
-      rewind: box(centre.rewind, 44, 44),
+      defer: box(centre.defer, 44, 44),
       centre: centre,
     };
   };
@@ -115,37 +115,31 @@
     }
   }
 
-  /** The player's ghost during a do-over: dotted path still to unwind, echoes, a ringed silhouette. */
-  function drawRewindGhost(g, ctx, s, cx, cy, W, H) {
-    const r = s.rw, pts = r.pts, n = pts.length, f = r.f;
-    ctx.fillStyle = PAL.violet;
-    for (let i = Math.ceil(f); i < n; i++) {
-      const x = Math.round(pts[i].x - cx), y = Math.round(pts[i].y - cy);
-      if (x > -4 && y > -4 && x < W + 4 && y < H + 4) ctx.fillRect(x - 1, y - 1, 2, 2);
-    }
-    for (let e = 3; e >= 1; e--) { // echoes trailing back towards the present
-      const at = RR.pathAt(pts, Math.min(n - 1, f + e * 1.8));
-      ctx.globalAlpha = 0.14 * (4 - e);
-      RR.drawRot(ctx, s.ghost, at.x - cx, at.y - cy, at.angle + Math.PI / 2);
-    }
-    glow(ctx, s.x - cx, s.y - cy, 16, '#a98bff'); // (resets the alpha)
-    ctx.globalAlpha = 0.9;
-    RR.drawRot(ctx, s.ghost, s.x - cx, s.y - cy, s.angle + Math.PI / 2);
-    ctx.globalAlpha = 1;
-    RR.ring(ctx, s.x - cx, s.y - cy, 15, PAL.cyan, 8, -g.t * 12);
-  }
+  const TAG_HOLD = 2; // seconds a human pilot's name stays over their ship
+  RR.TAG_HOLD = TAG_HOLD;
 
-  /** Worn-tape look for the whole world while rewinding: torn bands, violet wash, scanlines. */
-  function drawRewindOverlay(g, ctx, W, H) {
-    for (let i = 0; i < 5; i++) {
-      const y = Math.floor(Math.random() * H), h = 1 + Math.floor(Math.random() * 5);
-      const dx = Math.round((Math.random() - 0.5) * 18);
-      ctx.drawImage(ctx.canvas, 0, y, W, h, dx, y, W, h);
+  /** A ship flown by a person: online, any player's (even while a bot stands in); offline, yours. */
+  function humanPilot(g, s) { return g.online ? !!s.human : s === g.player; }
+
+  /**
+   * Names over human pilots' ships, on the HUD layer so they stay readable at
+   * every zoom: everyone's through the countdown and the first TAG_HOLD
+   * seconds of the race, then a pilot's for TAG_HOLD seconds each time their
+   * ship comes into view. `g.tagsShown` lists them, for the tests.
+   */
+  function drawTags(g, ctx) {
+    g.tagsShown = [];
+    if (g.demo || g.state !== 'play' || !g.view) return;
+    const start = g.phase !== 'race' || g.raceTime < TAG_HOLD, z = g.zoomScale;
+    for (const s of g.ships) {
+      if (!s.inView || !humanPilot(g, s)) continue;
+      const left = start ? TAG_HOLD : (s.tagUntil || 0) - g.t;
+      if (left <= 0) continue;
+      g.tagsShown.push(!g.online && s === g.player ? g.name : s.name);
+      if (left < 0.3 && Math.floor(g.t * 16) & 1) continue; // blinks out
+      const x = Math.round((s.x - g.view.cx) * z), y = Math.round((s.y - g.view.cy - 14) * z) - 10;
+      text(ctx, !g.online && s === g.player ? g.name : s.name, x, y, s.colors.i, 1, 'center', PAL.ink); // (offline, your ship is "YOU")
     }
-    ctx.fillStyle = 'rgba(110,70,255,0.16)';
-    ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = 'rgba(0,0,0,0.2)';
-    for (let y = Math.floor(g.t * 40) % 3; y < H; y += 3) ctx.fillRect(0, y, W, 1);
   }
 
   function drawWorld(g, ctx, W, H) {
@@ -154,6 +148,7 @@
     const shy = g.shake > 0.4 ? (Math.random() - 0.5) * 2 * g.shake : 0;
     const cx = Math.round(g.cam.x - W / 2 + shx), cy = Math.round(g.cam.y - H / 2 + shy);
     const vis = function (x, y, pad) { return x > -pad && y > -pad && x < W + pad && y < H + pad; };
+    g.view = { cx: cx, cy: cy }; // where the world layer looks, for the name tags on the HUD
 
     /* deep space: nebula and three parallax star layers */
     ctx.fillStyle = PAL.void;
@@ -235,18 +230,16 @@
       if (!pk.on) continue;
       const sx = Math.round(pk.x - cx), sy = Math.round(pk.y - cy + Math.sin(g.t * 3 + pk.ph) * 2);
       if (!vis(sx, sy, 20)) continue;
-      glow(ctx, sx, sy, 17, pk.kind === 'W' ? '#e5404f' : pk.type === 'rewind' ? '#a855f7' : '#38b764');
+      glow(ctx, sx, sy, 17, pk.kind === 'W' ? '#e5404f' : pk.type === 'defer' ? '#a855f7' : '#38b764');
       ctx.drawImage(Art.pickups[pk.type], sx - 8, sy - 8);
     }
 
-    /* while holding a do-over: a faint ghost where it would put you back */
-    if (!g.demo && p.rewind > 0 && !p.rw && p.dead <= 0 && !g.playerDone && p.hist.length > 10) {
-      const t = p.hist[0], sx = t.x - cx, sy = t.y - cy;
-      if (vis(sx, sy, 24)) {
-        ctx.globalAlpha = 0.3 + 0.12 * Math.sin(g.t * 6);
-        RR.drawRot(ctx, p.ghost, sx, sy, t.angle + Math.PI / 2);
-        ctx.globalAlpha = 1;
-        RR.ring(ctx, sx, sy, 15, PAL.violet, 8, g.t * 5);
+    /* while holding a gate deferral: the gate it would defer, ringed in violet */
+    if (!g.demo && g.state === 'play' && g.canDefer(p)) {
+      const cp = tr.cps[p.nextCp], sx = cp.x - cx, sy = cp.y - cy;
+      if (vis(sx, sy, Art.DONUT_RC + 40)) {
+        RR.ring(ctx, sx, sy, Art.DONUT_RC + 22, PAL.violet, 10, g.t * 3);
+        RR.ring(ctx, sx, sy, Art.DONUT_RC + 25, '#5b21b6', 10, -g.t * 3);
       }
     }
 
@@ -286,10 +279,14 @@
     }
 
     /* ships */
+    const tagging = !g.demo && g.state === 'play';
     for (const s of g.ships) {
-      if (s.rw) { drawRewindGhost(g, ctx, s, cx, cy, W, H); continue; }
-      if (s.dead > 0) continue;
       const sx = s.x - cx, sy = s.y - cy;
+      // a human pilot's name goes up for TAG_HOLD seconds as their ship comes into view (see drawTags)
+      const inView = s.dead <= 0 && !s.gone && vis(sx, sy, -6);
+      if (inView && !s.inView && tagging && s !== p && humanPilot(g, s)) s.tagUntil = g.t + TAG_HOLD;
+      s.inView = inView;
+      if (s.dead > 0) continue;
       if (!vis(sx, sy, 30)) continue;
       if (s.invuln > 0 && Math.floor(g.t * 16) & 1) continue;
       if (s.thrusting > 0.05) {
@@ -313,7 +310,7 @@
 
     /* where the fire stick is aiming */
     g.aimShown = null;
-    if (!g.demo && g.state === 'play' && !p.rw && p.dead <= 0) drawAim(g, ctx, p, cx, cy);
+    if (!g.demo && g.state === 'play' && p.dead <= 0) drawAim(g, ctx, p, cx, cy);
 
     drawParts(g, ctx, cx, cy, W, H, 1);
 
@@ -387,7 +384,6 @@
       }
     }
 
-    if (p.rw) drawRewindOverlay(g, ctx, W, H);
     if (g.flash > 0) {
       ctx.fillStyle = 'rgba(255,255,255,' + Math.min(0.6, g.flash).toFixed(3) + ')';
       ctx.fillRect(0, 0, W, H);
@@ -418,7 +414,7 @@
     }
     for (let i = g.ships.length - 1; i >= 0; i--) {
       const s = g.ships[i];
-      if (s.dead > 0 && !s.rw) continue;
+      if (s.dead > 0) continue;
       const x = Math.round(mx + s.x * mm.s + mm.ox), y = Math.round(my + s.y * mm.s + mm.oy);
       if (i === 0) { ctx.fillStyle = PAL.white; ctx.fillRect(x - 2, y - 2, 5, 5); }
       ctx.fillStyle = s.colors.a;
@@ -473,7 +469,7 @@
     /* hull + speed */
     const hx = L, hy = touch ? Tp + 38 : B - 28;
     panel(ctx, hx, hy, 104, 28);
-    const hull = p.dead > 0 && !p.rw ? 0 : p.hp / p.maxHp;
+    const hull = p.dead > 0 ? 0 : p.hp / p.maxHp;
     const low = hull < 0.3 && Math.floor(T * 8) & 1;
     text(ctx, 'HULL', hx + 6, hy + 5, low ? PAL.alarm : PAL.silver);
     bar(ctx, hx + 33, hy + 5, 13, hull, hull > 0.55 ? PAL.lime : hull > 0.3 ? PAL.yellow : PAL.alarm);
@@ -493,14 +489,15 @@
 
     /* weapon slot (keyboard play; on touch the FIRE button shows it) */
     if (!touch) {
-      const rx = Rr - 72, ry = B - 34, held = p.rewind > 0;
-      if (!g.combat) { // no do-overs in a fight
-        panel(ctx, rx, ry, 34, 34, held ? (Math.floor(T * 4) & 1 ? PAL.white : PAL.violet) : PAL.slate);
-        if (!held) ctx.globalAlpha = 0.3;
-        ctx.drawImage(Art.icons.rewind, rx + 8, ry + 4, 18, 18);
+      const rx = Rr - 72, ry = B - 34, held = p.defer > 0, ready = g.canDefer(p);
+      if (!g.combat) { // no gates to defer in a fight
+        // blinks while it can be used; steady (and dim) while the next gate is the line, which can't be deferred
+        panel(ctx, rx, ry, 34, 34, ready ? (Math.floor(T * 4) & 1 ? PAL.white : PAL.violet) : held ? PAL.violet : PAL.slate);
+        if (!ready) ctx.globalAlpha = held ? 0.55 : 0.3;
+        ctx.drawImage(Art.icons.defer, rx + 8, ry + 4, 18, 18);
         ctx.globalAlpha = 1;
         text(ctx, 'E', rx + 17, ry + 25, held ? PAL.white : PAL.steel, 1, 'center');
-        if (held) text(ctx, p.rewind > 1 ? 'DO-OVER X' + p.rewind : 'DO-OVER', rx + 33, ry - 10, PAL.violet, 1, 'right', PAL.ink);
+        if (held) text(ctx, p.defer > 1 ? 'DEFER X' + p.defer : 'DEFER', rx + 33, ry - 10, PAL.violet, 1, 'right', PAL.ink);
       }
       const wx = Rr - 34, wy = B - 34;
       panel(ctx, wx, wy, 34, 34, p.weapon ? RR.ITEMS[p.weapon].color : g.combat ? PAL.cyan : PAL.slate);
@@ -532,11 +529,7 @@
 
     /* big centre messages */
     const my = Math.round(H * (narrow ? 0.3 : 0.24));
-    if (p.rw) {
-      const sc = W < 300 ? 2 : 3;
-      if (Math.floor(T * 8) & 1) text(ctx, '<< REWIND <<', W / 2, my, PAL.violet, sc, 'center', PAL.ink);
-      text(ctx, '-' + (p.rw.span * (1 - p.rw.u)).toFixed(1) + 'S', W / 2, my + sc * 9 + 4, PAL.cyan, 2, 'center', PAL.ink);
-    } else if (g.phase === 'countdown') {
+    if (g.phase === 'countdown') {
       const n = Math.ceil(g.count);
       if (n > 3) text(ctx, 'READY', W / 2, my + 8, PAL.white, 4, 'center', PAL.ink);
       else text(ctx, String(n), W / 2, my - 6, [PAL.lime, PAL.lime, PAL.yellow, PAL.alarm][n], 8, 'center', PAL.ink);
@@ -561,7 +554,7 @@
       else if (p.out) text(ctx, g.combat ? 'ARENA WALL - TURN BACK!' : 'RETURN TO THE COURSE!', W / 2, H * 0.64, PAL.alarm, 1, 'center', PAL.ink);
       else if (p.wrong > 1.1) text(ctx, 'WRONG WAY!', W / 2, H * 0.64, PAL.alarm, 2, 'center', PAL.ink);
     }
-    if (p.dead > 0 && !p.rw && !p.gone && g.state === 'play') text(ctx, 'RESPAWNING', W / 2, H * 0.5, PAL.silver, 1, 'center', PAL.ink);
+    if (p.dead > 0 && !p.gone && g.state === 'play') text(ctx, 'RESPAWNING', W / 2, H * 0.5, PAL.silver, 1, 'center', PAL.ink);
 
     if (touch && g.state === 'play') {
       const by = narrow ? cy + 40 : Tp + mm.h + 8;
@@ -682,13 +675,15 @@
     key(L.brake, t.brake, PAL.steel);
     text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.silver, 1, 'center');
 
-    if (p.rewind > 0 && !p.rw) {
-      const r = L.rewind;
-      panel(ctx, r.x, r.y, r.w, r.h, Math.floor(g.t * 4) & 1 ? PAL.white : PAL.violet);
-      ctx.drawImage(Art.icons.rewind, r.x + 13, r.y + 6, 18, 18);
-      text(ctx, 'DO-OVER', r.x + r.w / 2, r.y + 31, PAL.violet, 1, 'center');
-      if (p.rewind > 1) text(ctx, 'X' + p.rewind, r.x + r.w - 2, r.y + 2, PAL.white, 1, 'right', PAL.ink);
-      g.ui.push({ x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8, act: function () { g.tryRewind(); } });
+    if (p.defer > 0 && !g.combat) {
+      const r = L.defer, ready = g.canDefer(p); // (not while the next gate is the line: a tap says so)
+      panel(ctx, r.x, r.y, r.w, r.h, ready && Math.floor(g.t * 4) & 1 ? PAL.white : PAL.violet);
+      if (!ready) ctx.globalAlpha = 0.55;
+      ctx.drawImage(Art.icons.defer, r.x + 13, r.y + 6, 18, 18);
+      ctx.globalAlpha = 1;
+      text(ctx, 'DEFER', r.x + r.w / 2, r.y + 31, PAL.violet, 1, 'center');
+      if (p.defer > 1) text(ctx, 'X' + p.defer, r.x + r.w - 2, r.y + 2, PAL.white, 1, 'right', PAL.ink);
+      g.ui.push({ x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8, label: 'DEFER', act: function () { g.tryDefer(); } });
     }
   }
 
@@ -711,10 +706,10 @@
     stickLabel(ctx, L.fire, 'AIM + FIRE', PAL.yellow, H, ins);
     panel(ctx, L.brake.x, L.brake.y, L.brake.w, L.brake.h, held.brake ? PAL.white : PAL.yellow);
     text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.yellow, 1, 'center');
-    const r = L.rewind;
-    panel(ctx, r.x, r.y, r.w, r.h, held.rewind ? PAL.white : PAL.yellow);
-    ctx.drawImage(Art.icons.rewind, r.x + 13, r.y + 6, 18, 18);
-    text(ctx, 'DO-OVER', r.x + r.w / 2, r.y + 31, PAL.yellow, 1, 'center');
+    const r = L.defer;
+    panel(ctx, r.x, r.y, r.w, r.h, held.defer ? PAL.white : PAL.yellow);
+    ctx.drawImage(Art.icons.defer, r.x + 13, r.y + 6, 18, 18);
+    text(ctx, 'DEFER', r.x + r.w / 2, r.y + 31, PAL.yellow, 1, 'center');
   }
 
   /* ------------------------------------------------------------ overlays */
@@ -860,10 +855,10 @@
       text(ctx, fight ? 'WIN EVENTS TO EARN STAT POINTS' : 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, fight ? 'AND UNLOCK BETTER SHIPS' : 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
     } else if (W >= 440) {
-      text(ctx, 'ARROWS / WASD  FLY    SPACE  FIRE    E  DO-OVER    P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'ARROWS / WASD  FLY    SPACE  FIRE    E  DEFER GATE    P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, 'H  HANGAR    Z OR WHEEL  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     } else {
-      text(ctx, 'ARROWS/WASD FLY - SPACE FIRE - E REWIND', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'ARROWS/WASD FLY - SPACE FIRE - E DEFER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, 'H HANGAR - Z ZOOM - P PAUSE - M MUTE', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     }
   }
@@ -1379,6 +1374,7 @@
     else if (g.state === 'hangar') drawHangar(g, ctx, W, H);
     else if (g.state === 'online') drawOnline(g, ctx, W, H);
     else {
+      drawTags(g, ctx);
       drawHUD(g, ctx, W, H);
       if (RR.input.touchMode && g.state === 'play') drawTouch(g, ctx, W, H);
       if (g.online) drawOnlineRace(g, ctx, W, H);

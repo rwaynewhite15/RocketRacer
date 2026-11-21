@@ -175,7 +175,7 @@ test('setups that are not a known rocket, five stat levels and known powerup cou
       '"setup":{"ship":"dart","stats":[3,3,3,3,3],"items":{"__proto__":{"nitro":1}}}}';
     assert.strictEqual((await post(base, proto, true)).status, 400, '__proto__ is not an item');
     assert.strictEqual((await board(base, 'lunar', 'pilot-setup009')).me, null, 'none of them was stored');
-    assert.deepStrictEqual(cleanSetup({ ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2, rewind: 0 }, levels: { nitro: 1, emp: 2 } }),
+    assert.deepStrictEqual(cleanSetup({ ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2, defer: 0, rewind: 1 }, levels: { nitro: 1, emp: 2 } }),
       { ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2 }, levels: { emp: 2 } });
   } finally { server.close(); }
 });

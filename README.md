@@ -16,11 +16,11 @@ and a second runs online multiplayer over WebSockets.
   at the screen edge points to it. The checkered donut is start/finish. Three laps.
 - **Planets** are solid and pull on your rocket. **Asteroids** drift, bounce and can be shot.
 - **Power-ups** (green capsules, used instantly): Nitro, Shield, Repair.
-- **Do-over** (rare violet capsule, kept until you use it): rewinds your ship 3 seconds. You
-  fly the way back as a ghost along the path you just took, then carry on from there with the
-  hull, lap and gate progress you had then, and 2 seconds of protection. It also undoes a
-  wreck. The race clock and your rivals keep going, so it costs time. While you hold one, a
-  faint ghost marks where it would put you. Rivals can't use it.
+- **Gate deferral** (rare violet capsule, kept until you use it): marks the gate you are
+  heading for as passed, so you go straight on to the next one. Your rocket stays where it is
+  and the race clock isn't touched. While you hold one, a violet ring marks the gate it would
+  defer. The start/finish line can't be deferred: every lap is still flown over the line (with
+  the line next, the button dims, and pressing it says FLY THE LINE). Rivals can't use it.
 - **Weapons** (red crates, one slot): Blaster, homing Missile, Mine, EMP shockwave.
 - **Rivals** in three skill levels: Rookie, Pilot, Ace. They pick up and use items too.
 - **Three events**, chosen on the menu:
@@ -60,7 +60,7 @@ and a second runs online multiplayer over WebSockets.
     | Missile | 2 / 3 / 5 missiles |
     | Mine | 3 / 5 / 8 mines |
     | EMP | 1 / 2 / 3 EMPs |
-    | Do-over | 1 / 2 / 3 do-overs ready |
+    | Gate deferral | 1 / 2 / 3 gates |
   - Progress is saved in the browser, like your records.
 - **Zoom** the world in or out in whole-pixel steps, so the pixel art stays sharp. The HUD
   keeps its size at every level, and your choice is remembered.
@@ -77,7 +77,7 @@ and a second runs online multiplayer over WebSockets.
 | Fly | Arrow keys or WASD (turn, thrust, brake/reverse) | Touch anywhere and drag. The rocket heads the way you drag, and the farther you drag from where you started, the more engine power. A power meter appears by your thumb and fills to MAX (about a thumb's width of travel); ease back to throttle down, lift to coast |
 | Fire weapon | Space (or X / J): fires the way the rocket points; hold it for the blaster's automatic fire | Fire stick. Blaster: automatic, firing all the time you hold the stick, straight ahead until you drag it, then the way you drag. Missiles: hold the stick, drag the way to fire (a faint dashed line shows the aim and corner marks show the rival it will lock onto), and let go to launch; a quick tap launches straight ahead. Mines drop behind and EMP spreads all round as soon as you touch the stick |
 | Brake | Down / S | BRAKE button |
-| Do-over | E or Shift | DO-OVER button (appears while you hold one) |
+| Gate deferral | E or Shift | DEFER button (appears while you hold one) |
 | Zoom | Z cycles normal / wide / close; + and - or the mouse wheel step through every level | ZOOM button |
 | Pause | P or Esc | II button |
 | Move the controls | | Pause > MOVE CONTROLS: drag the fire stick and buttons where you like (kept separately for sideways and upright; RESET restores them). Steering needs no spot of its own: it starts wherever you touch |
@@ -87,7 +87,7 @@ and a second runs online multiplayer over WebSockets.
 | Other | M mute, C CRT filter, F fullscreen, N pilot name, T world top 10 (arrows and Enter open a pilot's setup) | FULLSCREEN, PILOT, TOP 10 buttons (tap a pilot for their setup) |
 
 A gamepad also works (stick or d-pad to turn, A to thrust, B to brake, X to fire, Y or LB for
-a do-over, Back to zoom, Start to pause).
+a gate deferral, Back to zoom, Start to pause).
 
 Keys and touch work together, for example on an iPad with a keyboard: drag to steer and press
 Space to fire, or steer with the arrows and use the fire stick. Playing with keys alone clears
@@ -116,6 +116,9 @@ ONLINE on the menu (when the game's server says online play is available):
 - Results pay credits and stat points as offline. Grand Prix times the player flew themselves go
   to the world top 10, marked online (the server timed them).
 - A dropped connection reconnects and gets the same ship back; a bot flies it meanwhile.
+- Every human pilot's name shows over their rocket on the grid and for the first 2 seconds of
+  the race, and again for 2 seconds whenever their rocket comes into view (bots are never
+  named). Offline, your own name shows at the start.
 
 How it works:
 
@@ -147,7 +150,7 @@ npm test           # API tests, plus browser tests of the game if Playwright is 
 ```
 
 The browser tests drive the real game in headless Chromium (AI races on every course, zoom,
-do-over, the hangar, dogfights and battle royales in every arena, and two players racing
+gate deferral, the hangar, dogfights and battle royales in every arena, and two players racing
 online against the multiplayer server, also on a slow network). They need `npm install --no-save playwright && npx playwright install chromium`
 and are skipped without it.
 
@@ -294,7 +297,8 @@ in that race, 1 to 6) and `setup`: `{ ship, stats, items, levels }`, the rocket 
 five stat levels, how many of each powerup were picked up and used (`items`), and the pilot's
 powerup upgrade levels (`levels`: item -> 2 or 3; level 1 is left out). A powerup counts as
 used when it takes effect: nitro, shield and repair on pick-up, a weapon at its first shot, a
-do-over when taken.
+gate deferral when a gate is deferred. (Rows from before the deferral replaced the do-over may
+still list `rewind`; the game no longer shows it.)
 The setup belongs to the record run, so a slower race leaves it alone. Rows from before either
 field existed have `null`.
 

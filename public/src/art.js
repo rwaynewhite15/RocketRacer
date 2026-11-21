@@ -305,16 +305,16 @@
       '...ee....',
       '....e....',
     ],
-    rewind: [ // the "rewind" double arrow: light on top, violet below
-      '....c...c',
-      '...cc..cc',
-      '..ccc.ccc',
-      '.cccccccc',
+    defer: [ // "skip ahead": two arrows on to a bar (the next gate), light on top, violet below
+      '........w',
+      'c...c...w',
+      'cc..cc..w',
+      'ccc.ccc.w',
       'wwwwwwwww',
-      '.VVVVVVVV',
-      '..VVV.VVV',
-      '...VV..VV',
-      '....V...V',
+      'VVV.VVV.w',
+      'VV..VV..w',
+      'V...V...w',
+      '........w',
     ],
   };
 
@@ -732,7 +732,7 @@
     Object.keys(ICONS).forEach(function (k) {
       Art.icons[k] = sprite(ICONS[k]);
       const power = k === 'nitro' || k === 'shield' || k === 'repair';
-      Art.pickups[k] = k === 'rewind'
+      Art.pickups[k] = k === 'defer'
         ? pickupSprite(Art.icons[k], '#e6c0ff', '#a855f7', '#1d0f3d')
         : power
           ? pickupSprite(Art.icons[k], '#c8f58a', '#38b764', '#0f2a1c')

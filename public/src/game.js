@@ -22,8 +22,6 @@
     MISSILE_SPEED: 560, MISSILE_TURN: 3.4, MISSILE_LIFE: 4.5, MISSILE_DMG: 34,
     MINE_DMG: 30, MINE_LIFE: 45,
     EMP_RANGE: 240, EMP_TIME: 2.4,
-    // do-over: the ship is sampled HIST_DT apart and the last REWIND_SPAN seconds are kept
-    REWIND_SPAN: 3, HIST_DT: 0.05, REWIND_DUR: 0.9, REWIND_MIN: 0.5, REWIND_INVULN: 2,
     // combat modes
     CANNON_COOL: 0.2, KILL_CREDIT: 5, // built-in blaster; seconds a hit still counts towards a kill
     KILL_TARGET: 5, DOGFIGHT_TIME: 180,
@@ -39,12 +37,12 @@
     missile: { name: 'MISSILE', color: PAL.orange, ammo: 2 },
     mine: { name: 'MINE', color: PAL.alarm, ammo: 3 },
     emp: { name: 'EMP', color: PAL.violet, ammo: 1 },
-    rewind: { name: 'DO-OVER', color: PAL.violet },
+    defer: { name: 'DEFERRAL', color: PAL.violet }, // gate deferral: the gate ahead counts as passed
   });
   const ROLL = {
-    P: [['nitro', 38], ['shield', 26], ['repair', 22], ['rewind', 14]],
+    P: [['nitro', 38], ['shield', 26], ['repair', 22], ['defer', 14]],
     W: [['blaster', 35], ['missile', 30], ['mine', 20], ['emp', 15]],
-    // combat modes: every ship already has a cannon, and there are no do-overs
+    // combat modes: every ship already has a cannon, and there are no gates to defer
     CP: [['nitro', 30], ['shield', 35], ['repair', 35]],
     CW: [['missile', 45], ['mine', 25], ['emp', 30]],
   };
@@ -78,7 +76,7 @@
     { id: 'missile', lv: [2, 3, 5] },
     { id: 'mine', lv: [3, 5, 8] },
     { id: 'emp', lv: [1, 2, 3] },
-    { id: 'rewind', lv: [1, 2, 3] }, // do-overs ready
+    { id: 'defer', lv: [1, 2, 3] }, // gate deferrals held
   ]);
   const UPGRADE_PRICE = (RR.UPGRADE_PRICE = 150), POWER_MAX = 3;
   const powerOf = function (id) { return POWER.filter(function (p) { return p.id === id; })[0] || null; };
@@ -88,7 +86,7 @@
     if (id === 'nitro') return 'BOOST ' + n(C.NITRO_TIME * k) + 'S';
     if (id === 'shield') return 'SHIELD ' + n(C.SHIELD_TIME * k) + 'S';
     if (id === 'repair') return '+' + k + ' HULL';
-    if (id === 'rewind') return k + (k === 1 ? ' DO-OVER' : ' DO-OVERS');
+    if (id === 'defer') return k + (k === 1 ? ' GATE' : ' GATES');
     const unit = { blaster: ['SHOT', 'SHOTS'], missile: ['MISSILE', 'MISSILES'], mine: ['MINE', 'MINES'], emp: ['EMP', 'EMPS'] }[id];
     return k + ' ' + unit[k === 1 ? 0 : 1];
   };
@@ -162,7 +160,7 @@
     cam: { x: 0, y: 0 }, shake: 0, flash: 0, msg: null, ui: [],
     best: {}, crt: true, newRecord: false,
     autoFull: true, wantFull: false, // full screen on phones (see G.fullscreen)
-    // touch controls the player has moved: { land|port: { fire|brake|rewind: {x, y} } },
+    // touch controls the player has moved: { land|port: { fire|brake|defer: {x, y} } },
     // as fractions of the screen so they survive other screen sizes (see RR.touchLayout)
     controls: {},
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
@@ -213,6 +211,7 @@
   /* ------------------------------------------------------------- hangar */
 
   function count(v) { return Number.isInteger(v) && v > 0 ? v : 0; }
+  const RENAMED = { defer: 'rewind' }; // the gate deferral took the do-over's place: its upgrades and button spot carry over
 
   /** Saved progress is only trusted as far as the rules allow. */
   function loadProgress(p) {
@@ -225,7 +224,8 @@
     pr.pup = {};
     let levelsLeft = 0;
     POWER.forEach(function (pw) {
-      const v = p.pup && p.pup[pw.id], lv = Number.isInteger(v) ? clamp(v, 1, POWER_MAX) : 1;
+      const v = p.pup && (pw.id in p.pup ? p.pup[pw.id] : p.pup[RENAMED[pw.id]]);
+      const lv = Number.isInteger(v) ? clamp(v, 1, POWER_MAX) : 1;
       if (lv > 1) pr.pup[pw.id] = lv;
       levelsLeft += POWER_MAX - lv;
     });
@@ -387,7 +387,7 @@
       finished: false, finishTime: 0, place: i + 1, progress: 0,
       input: { turn: 0, thrust: 0, brake: 0, fire: false },
       ai: null, speedMult: 1, thrusting: 0, exh: 0, smk: 0, hitFlash: 0, out: false, wrong: 0,
-      rewind: 0, rw: null, hist: [], histT: 0, // do-over charge, rewind in progress, state history
+      defer: 0, // gate deferrals held
     };
   }
 
@@ -519,7 +519,7 @@
       return s;
     });
     // the server has no player of its own: a stand-in nobody is ever compared equal to
-    g.player = g.server ? { x: tr.center ? tr.center.x : 0, y: tr.center ? tr.center.y : 0, progress: 0, gone: false, dead: 0, hist: [] }
+    g.player = g.server ? { x: tr.center ? tr.center.x : 0, y: tr.center ? tr.center.y : 0, progress: 0, gone: false, dead: 0 }
       : g.ships[opts.me];
     g.order = g.ships.slice();
     g.rocks = tr.rocks.map(makeRock);
@@ -555,6 +555,8 @@
       if (g.feed[i].t > 5) g.feed.splice(i, 1);
     }
     for (const a of g.rocks) a.rot += a.rs * dt; // asteroids tumble here; the server only moves them
+    // a hit flashes a ship white for a moment: snapshots start the flash, this ends it (every ship, own included)
+    for (const s of g.ships) if (s.hitFlash > 0) s.hitFlash -= dt;
     if (!g.combat && g.phase === 'race' && p.dead <= 0 && !p.finished) { // "wrong way"
       const cp = g.track.cps[p.nextCp], dx = cp.x - p.x, dy = cp.y - p.y;
       const sp = Math.hypot(p.vx, p.vy), d = Math.hypot(dx, dy) || 1;
@@ -575,8 +577,9 @@
     const g = this, i = s.input;
     i.turn = inp.turn; i.thrust = inp.thrust; i.brake = inp.brake; i.fire = inp.fire; i.aim = inp.aim; i.stick = inp.stick;
     g.predicting = true;
-    const parts = g.parts.length;
+    const parts = g.parts.length, flash = s.hitFlash; // (the hit flash runs on real time, in onlineStep, not per replayed step)
     updateShip(s, g, dt, true);
+    s.hitFlash = flash;
     if (quiet) g.parts.length = parts;
     g.predicting = false;
   };
@@ -683,7 +686,7 @@
 
   /* ------------------------------------------------- moving the controls */
 
-  const CONTROL_NAMES = ['fire', 'brake', 'rewind']; // (steering is a drag anywhere, so it has no spot to move)
+  const CONTROL_NAMES = ['fire', 'brake', 'defer']; // (steering is a drag anywhere, so it has no spot to move)
 
   /** Keep only well-formed saved positions (fractions of the screen). */
   function cleanControls(raw) {
@@ -693,7 +696,7 @@
       const src = raw[o];
       if (!src || typeof src !== 'object') return;
       CONTROL_NAMES.forEach(function (n) {
-        const p = src[n];
+        const p = src[n] || src[RENAMED[n]];
         if (p && isFinite(p.x) && isFinite(p.y)) (out[o] = out[o] || {})[n] = { x: clamp(+p.x, 0, 1), y: clamp(+p.y, 0, 1) };
       });
     });
@@ -979,34 +982,12 @@
       s.x = s.spawn.x; s.y = s.spawn.y; s.angle = s.spawn.a;
     }
     s.vx = s.vy = 0; s.angVel = 0; s.dead = 0; s.hp = s.maxHp; s.invuln = 2.5;
-    s.hist.length = 0; s.histT = 0;
     if (s.ai) { s.ai.stuck = 0; s.ai.stuckN = 0; s.ai.rev = 0; }
     ringFx(g, s.x, s.y, 30, 6, 0.3, PAL.cyan);
   }
 
-  /* ------------------------------------------------------------- do-over */
+  /* ------------------------------------------------------ gate deferral */
 
-  /** Sample the player's state every HIST_DT; only the last REWIND_SPAN seconds are kept. */
-  function recordHistory(s, dt) {
-    s.histT += dt;
-    if (s.histT < C.HIST_DT - 1e-6) return;
-    s.histT -= C.HIST_DT;
-    const h = s.hist;
-    h.push({
-      x: s.x, y: s.y, vx: s.vx, vy: s.vy, angle: s.angle, angVel: s.angVel, hp: s.hp,
-      nextCp: s.nextCp, cpCount: s.cpCount, lap: s.lap, lapStart: s.lapStart,
-      nLaps: s.lapTimes.length, bestLap: s.bestLap,
-    });
-    if (h.length > Math.round(C.REWIND_SPAN / C.HIST_DT) + 1) h.shift();
-  }
-
-  /** Position and heading at a fractional index along a list of samples. */
-  function pathAt(pts, f) {
-    const n = pts.length, i = clamp(Math.floor(f), 0, n - 2), a = clamp(f - i, 0, 1);
-    const P = pts[i], Q = pts[i + 1];
-    return { x: P.x + (Q.x - P.x) * a, y: P.y + (Q.y - P.y) * a, angle: P.angle + angDiff(Q.angle, P.angle) * a };
-  }
-  RR.pathAt = pathAt;
   RR.fx = {
     snd: function (name, x, y, v) { G.replaying = true; snd(G, name, x, y, v); G.replaying = false; },
     boom: function (x, y, k) { boom(G, x, y, k); },
@@ -1017,75 +998,57 @@
   };
 
   /**
-   * Spend the do-over: the ship becomes a ghost that retraces its recorded
-   * path backwards, then picks up flying from where it was 3 seconds ago.
-   * The race clock and everyone else keep going, so it costs real time.
+   * Can ship `p` defer the gate it is heading for now? It needs a deferral,
+   * a race under way, to be flying, and a gate that is not the start/finish
+   * line: every lap is still flown over the line.
    */
-  G.tryRewind = function (who) {
-    const g = this, p = who || g.player, me = p === g.player;
-    if (g.online && !g.server) { // the server takes it, if it can
-      if (me && p.rewind > 0 && g.phase === 'race' && !p.finished && p.dead <= 0) RR.mp.rewind();
+  function canDefer(g, p) {
+    return !g.combat && p.defer > 0 && g.phase === 'race' && !p.finished && p.dead <= 0 && !p.gone &&
+      !g.track.cps[p.nextCp].finish;
+  }
+  G.canDefer = function (who) { return canDefer(this, who || this.player); };
+
+  /**
+   * Spend a gate deferral: the gate the ship is heading for counts as passed
+   * (as if it had flown through it), and it goes straight on to the next.
+   */
+  G.tryDefer = function (who) {
+    const g = this, p = who || g.player, me = p === g.player && !g.server;
+    if (g.demo || g.state !== 'play' || (me && g.playerDone)) return false;
+    if (!canDefer(g, p)) {
+      // the one refusal worth explaining: the line itself
+      if (me && p.defer > 0 && g.phase === 'race' && !g.combat && g.track.cps[p.nextCp].finish) {
+        floatText(g, p.x, p.y - 16, 'FLY THE LINE', PAL.silver);
+        RR.audio.sfx('deny');
+      }
       return false;
     }
-    if (g.demo || g.state !== 'play' || g.phase !== 'race' || (me ? g.playerDone : p.finished) || p.rw || p.rewind <= 0) return false;
-    if (p.hist.length < Math.round(C.REWIND_MIN / C.HIST_DT) + 1) {
-      if (me) { floatText(g, p.x, p.y - 16, 'TOO SOON', PAL.silver); RR.audio.sfx('deny'); }
-      return false;
-    }
-    p.rewind--; // an upgraded do-over pick-up holds more than one
-    tally(p, 'rewind');
-    const pts = p.hist.slice();
-    pts.push({ x: p.x, y: p.y, angle: p.angle }); // the way back starts from where we are now
-    p.rw = {
-      t: 0, dur: C.REWIND_DUR, pts: pts, tgt: p.hist[0], u: 0, f: pts.length - 1,
-      span: (p.hist.length - 1) * C.HIST_DT, hpWas: p.dead > 0 ? 0 : p.hp,
-    };
-    // `dead` makes every other system (collisions, pickups, gates, weapons) ignore the ghost
-    p.dead = 1e9; p.vx = p.vy = 0; p.angVel = 0; p.thrusting = 0;
-    if (g.server) { g.events.push(['r', p.idx]); return true; }
-    g.flash = 0.3; g.msg = null;
-    ringFx(g, p.x, p.y, 8, 40, 0.35, PAL.violet);
-    RR.audio.sfx('rewind');
-    RR.audio.music({ tempo: 0.5 });
-    RR.input.buzz(60);
+    if (g.online && !g.server) { RR.mp.defer(); return false; } // the server takes it
+    const gate = p.nextCp, cp = g.track.cps[gate];
+    p.defer--; // an upgraded pick-up holds more than one
+    tally(p, 'defer');
+    passCp(p, g, cp);
+    if (g.server) { g.events.push(['d', p.idx, gate]); return true; }
+    if (me) deferFx(g, p, cp);
+    else floatText(g, p.x, p.y - 16, 'DEFERRED', PAL.violet);
     return true;
   };
 
-  function stepRewind(s, g, dt) {
-    const r = s.rw;
-    r.t += dt;
-    const k = clamp(r.t / r.dur, 0, 1);
-    r.u = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2; // ease in and out: how far back, 0..1
-    r.f = (1 - r.u) * (r.pts.length - 1);
-    const at = pathAt(r.pts, r.f);
-    s.x = at.x; s.y = at.y; s.angle = at.angle;
-    if (Math.random() < 0.7) {
-      part(g, s.x + (Math.random() - 0.5) * 8, s.y + (Math.random() - 0.5) * 8,
-        (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, 0.35 + Math.random() * 0.3, 2, FX.ion, 1, 0);
-    }
-    if (k >= 1) finishRewind(s, g);
-  }
-
-  function finishRewind(s, g) {
-    const r = s.rw, t = r.tgt;
-    s.rw = null;
-    s.x = t.x; s.y = t.y; s.vx = t.vx; s.vy = t.vy; s.angle = t.angle; s.angVel = t.angVel;
-    s.hp = Math.max(t.hp, r.hpWas); // undo the damage, but never lose a repair picked up since
-    s.nextCp = t.nextCp; s.cpCount = t.cpCount; s.lap = t.lap; s.lapStart = t.lapStart;
-    s.lapTimes.length = t.nLaps; s.bestLap = t.bestLap; // gates and laps passed in the meantime don't count
-    s.dead = 0; s.stun = 0; s.emp = 0; s.invuln = C.REWIND_INVULN;
-    s.hist.length = 0; s.histT = 0;
-    if (g.server) { g.events.push(['R', s.idx]); return; } // each player's screen shows its own landing
-    g.cam.x = s.x; g.cam.y = s.y;
-    g.flash = 0.4;
-    burst(g, s.x, s.y, 22, 160, FX.ion, 0.6);
-    ringFx(g, s.x, s.y, 30, 6, 0.3, PAL.cyan);
-    ringFx(g, s.x, s.y, 4, 34, 0.4, PAL.violet);
-    banner(g, 'DO-OVER!', PAL.violet, 1.1, 4);
-    RR.audio.sfx('rewound');
-    RR.audio.music({ tempo: s.lap >= g.laps ? 1.12 : 1 });
+  /** What the player sees and hears when their own deferral goes through. */
+  function deferFx(g, p, cp) {
+    ringFx(g, cp.x, cp.y, Art.DONUT_RC + 26, Art.DONUT_RC - 12, 0.4, PAL.violet);
+    ringFx(g, p.x, p.y, 8, 40, 0.35, PAL.violet);
+    burst(g, p.x, p.y, 16, 150, FX.ion, 0.5);
+    banner(g, 'GATE DEFERRED!', PAL.violet, 1.2, 3);
+    RR.audio.sfx('defer');
     RR.input.buzz(40);
   }
+  RR.fx.deferred = function (idx, gate) { // online: the server's word that a deferral went through
+    const p = G.ships[idx], cp = G.track && G.track.cps[gate];
+    if (!p || !cp) return;
+    if (p === G.player) deferFx(G, p, cp);
+    else floatText(G, p.x, p.y - 16, 'DEFERRED', PAL.violet);
+  };
 
   /* --------------------------------------------------------------- zoom */
 
@@ -1393,12 +1356,12 @@
     } else if (p.type === 'repair') {
       s.hp = Math.min(s.maxHp, s.hp + k);
       if (isP) RR.audio.sfx('power');
-    } else if (p.type === 'rewind') {
-      s.rewind = k; // counted as used when a do-over is taken
-      if (isP) { RR.audio.sfx('power'); banner(g, 'DO-OVER READY', PAL.violet, 1.6, 3); }
+    } else if (p.type === 'defer') {
+      s.defer = k; // counted as used when a gate is deferred
+      if (isP) { RR.audio.sfx('power'); banner(g, 'DEFERRAL READY', PAL.violet, 1.6, 3); }
     }
-    if (!T.ammo && p.type !== 'rewind') tally(s, p.type); // nitro, shield and repair act at once
-    burst(g, p.x, p.y, 12, 120, T.ammo ? FX.fire : p.type === 'rewind' ? FX.ion : FX.shield, 0.45);
+    if (!T.ammo && p.type !== 'defer') tally(s, p.type); // nitro, shield and repair act at once
+    burst(g, p.x, p.y, 12, 120, T.ammo ? FX.fire : p.type === 'defer' ? FX.ion : FX.shield, 0.45);
     ringFx(g, p.x, p.y, 6, 20, 0.22, T.color);
     if (isP) floatText(g, p.x, p.y - 12, T.name, T.color);
   }
@@ -1413,8 +1376,8 @@
       }
       for (const s of g.ships) {
         if (s.dead > 0) continue;
-        // only the human can use a do-over, and only one at a time: otherwise leave it for later
-        if (p.type === 'rewind' && (s.ai || s.rewind > 0)) continue;
+        // only humans defer gates, and one pick-up at a time: otherwise leave it for later
+        if (p.type === 'defer' && (s.ai || s.defer > 0)) continue;
         const dx = s.x - p.x, dy = s.y - p.y;
         if (dx * dx + dy * dy < rr) { collect(s, p, g); break; }
       }
@@ -1488,7 +1451,6 @@
   /* --------------------------------------------------------------- ships */
 
   function updateShip(s, g, dt, racing) {
-    if (s.rw) { stepRewind(s, g, dt); return; }
     if (s.gone) return; // knocked out of a battle royale
     if (s.dead > 0) {
       s.dead -= dt;
@@ -1693,7 +1655,6 @@
   function rank(g) {
     const cps = g.track.cps;
     for (const s of g.ships) {
-      if (s.rw) continue; // a ship being rewound keeps its place until it lands
       const cp = cps[s.nextCp];
       const seg = s.cpCount === 0 ? 420 : cp.segLen;
       s.progress = s.cpCount + (1 - clamp(Math.hypot(cp.x - s.x, cp.y - s.y) / seg, 0, 1)) * 0.999;
@@ -1784,7 +1745,7 @@
     let best = null, bestLat = 48;
     for (const p of g.pickups) {
       if (!p.on) continue;
-      if (p.kind === 'W' ? !!s.weapon : p.type === 'rewind' || (p.type === 'repair' && s.hp > 80) || (p.type === 'shield' && s.shield > 0)) continue;
+      if (p.kind === 'W' ? !!s.weapon : p.type === 'defer' || (p.type === 'repair' && s.hp > 80) || (p.type === 'shield' && s.shield > 0)) continue;
       const px = p.x - s.x, py = p.y - s.y, along = px * ux + py * uy;
       if (along < 24 || along > Math.min(dist, 280)) continue;
       const lat = Math.abs(px * uy - py * ux);
@@ -2016,11 +1977,6 @@
   function updateCamera(g, dt) {
     if (g.server) return;
     const f = g.player.gone && g.spec ? g.spec : g.player; // out of a battle royale: watch a survivor
-    if (f.rw) { // the ghost moves too fast for a smoothed camera
-      g.cam.x = f.x; g.cam.y = f.y;
-      g.shake *= Math.exp(-9 * dt);
-      return;
-    }
     let lx = f.vx * 0.36, ly = f.vy * 0.36;
     const max = Math.min(g.vw, g.vh) * 0.27, m = Math.hypot(lx, ly);
     if (m > max) { lx *= max / m; ly *= max / m; }
@@ -2057,13 +2013,9 @@
     if (g.combat) updateCombat(g, dt);
     else rank(g);
 
-    if (g.server) { // every human can take a do-over
-      if (!g.combat && racing) for (const s of g.ships) if (s.human && !s.rw && s.dead <= 0 && !s.finished) recordHistory(s, dt);
-      return;
-    }
+    if (g.server) return;
     // "wrong way" when the player keeps flying away from the next gate
     const p = g.player;
-    if (!g.demo && !g.combat && racing && !p.rw && p.dead <= 0 && !g.playerDone) recordHistory(p, dt);
     if (!g.demo && !g.combat && racing && p.dead <= 0) {
       const cp = g.track.cps[p.nextCp], dx = cp.x - p.x, dy = cp.y - p.y;
       const sp = Math.hypot(p.vx, p.vy), d = Math.hypot(dx, dy) || 1;
@@ -2152,14 +2104,14 @@
     } else if (g.state === 'play' && g.online) {
       if (hit.pause) g.mpMenu = !g.mpMenu; // the world goes on: a menu, not a pause
       else if (hit.quit && g.mpMenu) RR.mp.leave();
-      else if (hit.rewind) g.tryRewind();
+      else if (hit.defer) g.tryDefer();
     } else if (g.state === 'online') {
       RR.mp.keys(hit);
     } else if (g.state === 'mpresults') {
       if (hit.ok || hit.pause) RR.mp.backToRoom();
     } else if (g.state === 'play') {
       if (hit.pause) g.pause();
-      else if (hit.rewind) g.tryRewind();
+      else if (hit.defer) g.tryDefer();
     } else if (g.state === 'layout') {
       if (hit.pause || hit.ok) g.closeControls();
     } else if (g.state === 'paused') {
