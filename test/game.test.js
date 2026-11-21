@@ -610,6 +610,7 @@ test('do-over: undoes a wreck', { skip }, async () => {
       const g = RR.game, w = (T.fresh(0), g.player);
       T.run(9);
       w.rewind = 1; w.ai = null; // hands off: fly straight into a planet at speed
+      w.shield = 0; w.invuln = 0; // with no shield or respawn grace the autopilot may have picked up on the way
       const pl = g.track.planets[0];
       w.x = pl.x; w.y = pl.y - pl.r - 140; w.vx = 0; w.vy = 520; w.angle = Math.PI / 2; w.hp = 20;
       T.run(0.9);
