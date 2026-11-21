@@ -89,6 +89,11 @@ and a second runs online multiplayer over WebSockets.
 A gamepad also works (stick or d-pad to turn, A to thrust, B to brake, X to fire, Y or LB for
 a do-over, Back to zoom, Start to pause).
 
+Keys and touch work together, for example on an iPad with a keyboard: drag to steer and press
+Space to fire, or steer with the arrows and use the fire stick. Playing with keys alone clears
+the touch controls off the screen once your thumbs have been off them for 10 seconds; touch
+anywhere to bring them back. (iPad keyboards often have no Esc key: P pauses.)
+
 On phones the game uses larger pixels, keeps the HUD clear of notches, and can be added to
 the home screen as a full-screen app. Landscape gives the best view.
 

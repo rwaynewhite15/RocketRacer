@@ -18,6 +18,12 @@
  *               fire and let go to launch (let go without pushing: straight
  *               ahead). Mines and EMP go off as the stick is touched.
  *   BRAKE       a button.
+ *
+ * Keys and touch work together (an iPad with a keyboard, say): both always
+ * steer the ship. A key press puts the keyboard prompts up and takes the
+ * touch controls off the screen, but not while a thumb is flying with them
+ * or has been in the last KEEP_TOUCH_MS, so steering with a drag and firing
+ * with Space works, and the controls do not flicker away under a thumb.
  * ======================================================================== */
 (function () {
   'use strict';
@@ -28,8 +34,12 @@
     pointers: {}, // id -> { x, y, sx, sy, role } in game pixels (sx, sy = where it began)
     touch: { drag: null, aimStick: null, aim: null, brake: false, fire: false },
     touchMode: false,
+    controlAt: -Infinity, // performance.now() when a thumb was last on the race controls (steering, fire stick, brake)
     typing: false, // true while an HTML text field has the keyboard
   });
+
+  const KEEP_TOUCH_MS = 10000; // after a thumb leaves the race controls, keys leave them on screen this long
+  I.KEEP_TOUCH_MS = KEEP_TOUCH_MS;
 
   const KEYS = {
     ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
@@ -51,7 +61,7 @@
     RR.audio.init();
     if (!e.repeat) I.hit[k] = true;
     I.down[k] = true;
-    I.touchMode = false;
+    if (performance.now() - I.controlAt > KEEP_TOUCH_MS) I.touchMode = false; // keyboard prompts, no touch controls
   });
   window.addEventListener('keyup', function (e) {
     const k = KEYS[e.code];
@@ -181,6 +191,7 @@
           : onAny(p.sx, p.sy, buttons) ? 'none'
           : 'steer'; // anywhere else on the screen
       }
+      if (p.role === 'steer' || p.role === 'fire' || p.role === 'brake') I.controlAt = performance.now();
       if (p.role === 'brake') t.brake = true;
       else if (p.role === 'steer' && !t.drag) t.drag = dragState(p);
       else if (p.role === 'fire' && !t.aimStick) {

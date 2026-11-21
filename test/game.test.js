@@ -799,8 +799,8 @@ test('rivals fight both combat modes to a finish in every arena', { skip }, asyn
 /* ---------------------------------------------------------------- sound */
 
 /** A phone-like page: touch screen, and a browser that refuses sound until a gesture. */
-async function openPhone(strict) {
-  const ctx = await strict.newContext({ viewport: { width: 390, height: 760 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+async function openPhone(strict, viewport) {
+  const ctx = await strict.newContext({ viewport: viewport || { width: 390, height: 760 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
   // Chromium has no Audio Session API (Safari's switch between "background sound" and "media playback"): stand one in
   await ctx.addInitScript(() => { Object.defineProperty(navigator, 'audioSession', { value: { type: 'auto' }, configurable: true }); });
   const page = await ctx.newPage();
@@ -1003,9 +1003,9 @@ test('full screen: desktops are left alone, and iPhones (which cannot) get the A
 
 /* --------------------------------------------------------- touch sticks */
 
-/** A phone with a race under way, and helpers to put thumbs on the screen (game-pixel coordinates). */
-async function phoneRace() {
-  const { ctx, page, errors } = await openPhone(browser);
+/** A phone (or a tablet, given its screen size) with a race under way, and helpers to put thumbs on the screen (game-pixel coordinates). */
+async function phoneRace(viewport) {
+  const { ctx, page, errors } = await openPhone(browser, viewport);
   await page.evaluate(() => {
     const g = RR.game;
     g.autoFull = false; g.wantFull = false; // keep the page still for these tests
@@ -1368,3 +1368,87 @@ test('touch: Pause > MOVE CONTROLS drags the controls to new spots, keeps them, 
   } finally { await ph.ctx.close(); }
 });
 
+test('iPad with a keyboard: keys and touch fly the rocket together or apart; a key clears the touch controls only once the thumbs have left them a while', { skip }, async () => {
+  const ph = await phoneRace({ width: 1194, height: 834 }); // an 11-inch iPad, sideways
+  try {
+    const { page } = ph, wait = (ms) => page.waitForTimeout(ms), kb = page.keyboard;
+    const MAX = await page.evaluate(() => RR.input.DRAG_MAX);
+    const st = () => page.evaluate(() => {
+      const I = RR.input, inp = I.read(RR.game.player), d = I.touch.drag;
+      return { touch: I.touchMode, power: d && d.power, ang: d && d.ang, turn: inp.turn, thrust: inp.thrust, fire: inp.fire };
+    });
+    assert.strictEqual((await st()).touch, true, 'a tablet starts with the touch controls');
+
+    // drag to steer, Space to fire: the drag carries on through the key press
+    await ph.down([200, 200]);
+    await wait(100);
+    await ph.move([200 + MAX + 10, 200]); // past the limit: full power
+    await wait(150);
+    assert.strictEqual((await st()).power, 1, 'flying with a drag');
+    await kb.down('Space');
+    await wait(150);
+    let s = await st();
+    assert.deepStrictEqual([s.touch, s.power, s.thrust, s.fire], [true, 1, 1, true], 'Space fires, and the drag and the touch controls stay');
+    await ph.move([210, 200 + MAX + 10]); // the thumb swings round to point down (from where the start point trailed to)
+    await wait(150);
+    s = await st();
+    assert.strictEqual(s.power, 1, 'still steering after the key press');
+    assert.ok(angleGap(s.ang, Math.PI / 2) < 0.02, 'and it follows the thumb: ' + s.ang);
+    await kb.up('Space');
+    await ph.up();
+
+    // arrows to steer, the fire stick to shoot
+    const f = (await ph.layout()).fire;
+    await kb.down('ArrowLeft');
+    await kb.down('ArrowUp');
+    await ph.down([f.x, f.y]);
+    await wait(150);
+    s = await st();
+    assert.deepStrictEqual([s.touch, s.turn, s.thrust, s.fire], [true, -1, 1, true], 'keys fly, the stick fires');
+    await ph.up();
+    await kb.up('ArrowLeft');
+    await kb.up('ArrowUp');
+
+    // keys alone just after: the controls stay put (the thumb may be on its way back)
+    await kb.down('ArrowUp');
+    await wait(100);
+    s = await st();
+    assert.deepStrictEqual([s.touch, s.thrust], [true, 1]);
+    await kb.up('ArrowUp');
+
+    // keys alone once the thumbs have been off the controls a while: keyboard prompts, no touch controls
+    await page.evaluate(() => { RR.input.controlAt -= RR.input.KEEP_TOUCH_MS + 1; });
+    await kb.down('ArrowUp');
+    await wait(100);
+    s = await st();
+    assert.deepStrictEqual([s.touch, s.thrust], [false, 1], 'the keys take over the screen and still fly');
+    await kb.up('ArrowUp');
+
+    // a thumb anywhere brings the touch controls back, and steers straight away
+    await ph.down([300, 300]);
+    await wait(100);
+    await ph.move([300, 300 - MAX - 10]);
+    await wait(150);
+    s = await st();
+    assert.deepStrictEqual([s.touch, s.power, s.thrust], [true, 1, 1], 'touch is back');
+    assert.ok(angleGap(s.ang, -Math.PI / 2) < 0.02, 'steering up: ' + s.ang);
+    await ph.up();
+
+    // tapping buttons (pause, resume) is not flying with the touch controls: a key right after still clears them
+    await page.evaluate(() => { RR.input.controlAt -= RR.input.KEEP_TOUCH_MS + 1; });
+    const II = await page.evaluate(() => RR.game.ui.find((u) => u.label === 'II'));
+    await ph.down([II.x + II.w / 2, II.y + II.h / 2]); // a thumb resting on the pause button for a few frames
+    await wait(120);
+    await ph.up();
+    await wait(80);
+    assert.strictEqual(await page.evaluate(() => RR.game.state), 'paused');
+    await ph.tapLabel('RESUME');
+    assert.strictEqual(await page.evaluate(() => RR.game.state), 'play');
+    await kb.down('ArrowRight');
+    await wait(100);
+    s = await st();
+    assert.deepStrictEqual([s.touch, s.turn], [false, 1]);
+    await kb.up('ArrowRight');
+    assert.deepStrictEqual(ph.errors, []);
+  } finally { await ph.ctx.close(); }
+});
