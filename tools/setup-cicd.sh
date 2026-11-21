@@ -133,13 +133,17 @@ setup_deployer staging "${STG_DEPLOYER}" "${STAGING_SERVICE}" roles/artifactregi
 # (rooms live in memory), CPU always on for the 120 Hz race loop, WebSocket
 # connections up to an hour. The game service is told where it is.
 setup_mp() {
-  local mp="$1" web="$2" env="$3" coll="$4" min="$5" deployer="$6" url ws
+  local mp="$1" web="$2" env="$3" coll="$4" min="$5" deployer="$6" url ws runtime
   echo "==> Online play: ${mp}"
+  # the same service account as the game: the deployers may act as it, and it can write the leaderboard
+  runtime="$(svc describe "${web}" --format='value(spec.template.spec.serviceAccountName)')"
+  runtime="${runtime:-${PROJECT_NUMBER}-compute@developer.gserviceaccount.com}"
   if exists svc describe "${mp}"; then
     echo "    already exists"
+    svc update "${mp}" --service-account "${runtime}" --quiet >/dev/null
   else
     gcloud run deploy "${mp}" --source . --project "${PROJECT}" --region "${REGION}" \
-      --command node --args mp-server.js --allow-unauthenticated \
+      --service-account "${runtime}" --command node --args mp-server.js --allow-unauthenticated \
       --timeout 3600 --session-affinity --concurrency 1000 --min-instances "${min}" --max-instances 1 \
       --cpu 2 --memory 1Gi --no-cpu-throttling \
       --set-env-vars "STORE=firestore,APP_ENV=${env},LEADERBOARD_COLLECTION=${coll},COMMIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo setup)" \

@@ -139,7 +139,7 @@ jobs:
           node-version: 22
 
       - name: Roll out online play to staging
-        run: tools/ci-deploy.sh "$MP_SERVICE" "${{ steps.build.outputs.image }}" staging mp
+        run: tools/ci-deploy.sh "$MP_SERVICE" "${{ steps.build.outputs.image }}" staging mp "$SERVICE"
 
       - name: Roll out to staging
         id: rollout
@@ -188,7 +188,7 @@ jobs:
           node-version: 22
 
       - name: Roll out online play (the image staging just proved)
-        run: tools/ci-deploy.sh "$MP_SERVICE" "${{ needs.staging.outputs.image }}" production mp
+        run: tools/ci-deploy.sh "$MP_SERVICE" "${{ needs.staging.outputs.image }}" production mp "$SERVICE"
 
       - name: Roll out the image staging just proved
         id: rollout

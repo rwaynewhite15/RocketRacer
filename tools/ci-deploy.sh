@@ -3,11 +3,13 @@
 # Release one image to one Cloud Run service, safely. Used by the GitHub
 # Actions pipeline for both staging and production.
 #
-#   PROJECT=... REGION=... tools/ci-deploy.sh <service> <image> [expected-env] [web|mp]
+#   PROJECT=... REGION=... tools/ci-deploy.sh <service> <image> [expected-env] [web|mp] [game-service]
 #
 # `mp` rolls out the online-play service (same image, `node mp-server.js`)
 # and checks it with a real WebSocket room instead of the game page. If that
-# service has not been created yet (tools/setup-cicd.sh), it is skipped.
+# service has not been created yet (tools/setup-cicd.sh), it is skipped. It
+# runs as the same service account as <game-service> (the deployer may act
+# as that one, and it can write the leaderboard).
 #
 #   1. deploy the image as a new revision that receives NO traffic
 #   2. smoke-test that revision on its private "candidate" URL
@@ -22,6 +24,7 @@ SERVICE="${1:?usage: ci-deploy.sh <service> <image> [expected-env]}"
 IMAGE="${2:?usage: ci-deploy.sh <service> <image> [expected-env]}"
 EXPECT_ENV="${3:-}"
 KIND="${4:-web}"
+RUNTIME_OF="${5:-}"
 : "${PROJECT:?PROJECT is not set}" "${REGION:?REGION is not set}"
 VERSION="${GITHUB_SHA:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}"
 TAG="candidate"
@@ -33,8 +36,14 @@ if [[ "${KIND}" == "mp" ]] && ! run services describe "${SERVICE}" >/dev/null 2>
   exit 0
 fi
 
+extra=()
+if [[ -n "${RUNTIME_OF}" ]]; then
+  SA="$(run services describe "${RUNTIME_OF}" --format='value(spec.template.spec.serviceAccountName)')"
+  if [[ -n "${SA}" ]]; then extra=(--service-account "${SA}"); echo "==> ${SERVICE}: runs as ${SA} (as ${RUNTIME_OF} does)"; fi
+fi
+
 echo "==> ${SERVICE}: deploying ${IMAGE} with no traffic"
-run deploy "${SERVICE}" --image "${IMAGE}" --update-env-vars "COMMIT_SHA=${VERSION}" --no-traffic --tag "${TAG}" --quiet
+run deploy "${SERVICE}" --image "${IMAGE}" --update-env-vars "COMMIT_SHA=${VERSION}" "${extra[@]}" --no-traffic --tag "${TAG}" --quiet
 
 URL="$(run services describe "${SERVICE}" --format=json | jq -r --arg t "${TAG}" '.status.traffic[]? | select(.tag == $t) | .url' | head -n 1)"
 if [[ -z "${URL}" || "${URL}" == "null" ]]; then
