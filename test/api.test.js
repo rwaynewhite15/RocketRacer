@@ -168,7 +168,7 @@ test('setups that are not a known rocket, five stat levels and known powerup cou
       { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { nitro: 100 } }, { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { nitro: 1.5 } },
       { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { constructor: 1 } },
       { ship: 'dart', stats: [3, 3, 3, 3, 3], bought: [1] }, { ship: 'dart', stats: [3, 3, 3, 3, 3], bought: { laser: 1 } },
-      { ship: 'dart', stats: [3, 3, 3, 3, 3], bought: { missile: -1 } },
+      { ship: 'dart', stats: [3, 3, 3, 3, 3], bought: { missile: -1 } }, { ship: 'dart', stats: [3, 3, 3, 3, 3], bought: { missile: 4 } },
     ];
     for (const b of bad) assert.strictEqual((await post(base, run({ pid: 'pilot-setup009', setup: b }))).status, 400, JSON.stringify(b));
     const proto = '{"track":"lunar","pid":"pilot-setup009","name":"X","time":75.5,"lap":24.2,"diff":1,"place":2,' +

@@ -36,16 +36,26 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
   - Finishing 1st, 2nd or 3rd in any event earns 3, 2 or 1 stat points; a win adds one more
     against Pilot rivals and two more against Ace.
   - Points raise a ship's stats up to that ship's ceiling. Every ship can spend all the
-    points you have earned, and points can be taken back and moved at any time.
+    points you have earned, and points can be taken back and moved at any time. Points stop
+    at 25, the most any ship (the Phoenix) can use.
   - Wins unlock better ships with higher ceilings: the Dart (2 wins), the Hammer (5) and the
     Phoenix (9). The starting Sparrow flies exactly like the rivals' ships.
   - **The shop**: every finished event pays credits by place (100 for a win down to 30),
     times 1.5 against Pilot rivals and 2 against Ace. In the hangar's NEXT RACE slot, spend
-    them on one powerup to start your next Grand Prix with: NITRO 60 (a boost at GO), SHIELD
-    80 (shielded at GO), BLASTER 60, MINE 70, MISSILE 90, EMP 100 (start holding the weapon)
-    or DO-OVER 150 (one ready from the start). It is paid for when picked, refunded if you
-    switch or go back to EMPTY, and used up when the race starts. Fights leave it for the
+    them on one powerup, at level 1, 2 or 3, to start your next Grand Prix with. It is paid
+    for when picked, the difference is charged or refunded if you change item or level, and
+    EMPTY gives everything back. It is used up when the race starts; fights leave it for the
     next race.
+
+    | Credits (level 1 / 2 / 3) | | Level 1 / 2 / 3 gives |
+    |---|---|---|
+    | Nitro | 60 / 110 / 160 | a boost at GO lasting 2.6 / 3.9 / 5.2 s |
+    | Shield | 80 / 140 / 200 | shielded at GO for 7 / 10.5 / 14 s |
+    | Blaster | 60 / 110 / 160 | 10 / 20 / 30 shots in hand |
+    | Mine | 70 / 120 / 180 | 3 / 5 / 8 mines in hand |
+    | Missile | 90 / 160 / 240 | 2 / 3 / 5 missiles in hand |
+    | EMP | 100 / 180 / 260 | 1 / 2 / 3 EMPs in hand |
+    | Do-over | 150 / 270 / 390 | 1 / 2 / 3 do-overs ready |
   - Progress is saved in the browser, like your records.
 - **Zoom** the world in or out in whole-pixel steps, so the pixel art stays sharp. The HUD
   keeps its size at every level, and your choice is remembered.
@@ -219,13 +229,14 @@ anonymous id generated in their browser and keeps one row per course, replaced o
 faster time. A row records the time, best lap, rival level, `place` (where the pilot finished
 in that race, 1 to 6) and `setup`: `{ ship, stats, items }`, the rocket flown, its five stat
 levels, how many of each powerup were picked up on the track and used (`items`), and what was
-bought in the hangar for that race (`bought`). A track powerup counts as used when it takes
+bought in the hangar for that race (`bought`: item -> the level bought, 1 to 3). A track powerup counts as used when it takes
 effect: nitro, shield and repair on pick-up, a weapon at its first shot, a do-over when taken.
 The setup belongs to the record run, so a slower race leaves it alone. Rows from before either
 field existed have `null`.
 
 The top-10 screen shows each pilot's rocket and powerups in the row (a bought one first,
-underlined in gold, then the ones they used most; `+` when there were more), and your own row
+underlined in gold with a small 2 or 3 beside it when it was upgraded, then the ones they used
+most; `+` when there were more), and your own row
 and rank underneath when you are not in the top 10. Tap a row (or pick it with the arrow keys
 and press Enter) for that pilot's card: the rocket, its stat levels (grey: the ship's own,
 yellow: points put in), what they bought, and every powerup they picked up and used.

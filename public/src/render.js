@@ -500,7 +500,7 @@
         ctx.drawImage(Art.icons.rewind, rx + 8, ry + 4, 18, 18);
         ctx.globalAlpha = 1;
         text(ctx, 'E', rx + 17, ry + 25, held ? PAL.white : PAL.steel, 1, 'center');
-        if (held) text(ctx, 'DO-OVER', rx + 33, ry - 10, PAL.violet, 1, 'right', PAL.ink);
+        if (held) text(ctx, p.rewind > 1 ? 'DO-OVER X' + p.rewind : 'DO-OVER', rx + 33, ry - 10, PAL.violet, 1, 'right', PAL.ink);
       }
       const wx = Rr - 34, wy = B - 34;
       panel(ctx, wx, wy, 34, 34, p.weapon ? RR.ITEMS[p.weapon].color : g.combat ? PAL.cyan : PAL.slate);
@@ -687,6 +687,7 @@
       panel(ctx, r.x, r.y, r.w, r.h, Math.floor(g.t * 4) & 1 ? PAL.white : PAL.violet);
       ctx.drawImage(Art.icons.rewind, r.x + 13, r.y + 6, 18, 18);
       text(ctx, 'DO-OVER', r.x + r.w / 2, r.y + 31, PAL.violet, 1, 'center');
+      if (p.rewind > 1) text(ctx, 'X' + p.rewind, r.x + r.w - 2, r.y + 2, PAL.white, 1, 'right', PAL.ink);
       g.ui.push({ x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8, act: function () { g.tryRewind(); } });
     }
   }
@@ -876,6 +877,25 @@
    * finished in the race that set the time; below the list comes your own row
    * and world rank when you are not in the top 10.
    */
+  /* 3 x 5 digits, for the level of a bought powerup beside its icon */
+  const TINY = ['###1#1#1#1###', '.#.1##.1.#.1.#.1###', '##.1..#1.#.1#..1###', '##.1..#1.#.1..#1##.', '#.#1#.#1###1..#1..#',
+    '###1#..1##.1..#1##.', '.##1#..1###1#.#1###', '###1..#1.#.1.#.1.#.', '###1#.#1###1#.#1###', '###1#.#1###1..#1##.'];
+  /** Draw number `n` in the tiny digits with its top-left at (x, y); returns the width. */
+  function tinyNum(ctx, n, x, y, col) {
+    const str = String(n);
+    for (let c = 0; c < str.length; c++) {
+      const rows = TINY[+str[c]].split('1');
+      for (let r = 0; r < 5; r++) {
+        for (let k = 0; k < 3; k++) {
+          if (rows[r][k] !== '#') continue;
+          ctx.fillStyle = PAL.ink; ctx.fillRect(x + c * 4 + k + 1, y + r + 1, 1, 1);
+          ctx.fillStyle = col; ctx.fillRect(x + c * 4 + k, y + r, 1, 1);
+        }
+      }
+    }
+    return str.length * 4;
+  }
+
   const hullOf = function (id) { return RR.HULLS.filter(function (h) { return h.id === id; })[0] || null; };
 
   /** Powerups in one of a setup's lists, most first: [[type, count], ...] in RR.ITEMS order on ties. */
@@ -889,26 +909,29 @@
   /**
    * A leaderboard row's setup in a few pixels: the rocket, small, then up to
    * three powerup icons (+ when there were more). Bought powerups come first,
-   * underlined in gold; then the ones picked up on the track. Rows from before
-   * setups were recorded get a dash. Returns what it drew, for the tests.
+   * underlined in gold, with a small 2 or 3 beside an upgraded one; then the
+   * ones picked up on the track. Rows from before setups were recorded get a
+   * dash. Returns what it drew, for the tests.
    */
   function setupStrip(ctx, su, x, y) {
     const hull = su && hullOf(su.ship);
     if (!hull) { text(ctx, '-', x + 2, y, PAL.steel); return null; }
     ctx.drawImage(Art.shipMini(hull.design, 0), x, y - 2);
-    const bought = usedList(su, 'bought').map(function (u) { return u[0]; });
-    const all = bought.map(function (k) { return [k, true]; }).concat(usedList(su).map(function (u) { return [u[0], false]; }));
-    const shown = all.slice(0, all.length > 3 ? 2 : 3);
-    shown.forEach(function (u, k) {
-      const ix = x + 11 + k * 10;
+    const all = usedList(su, 'bought').map(function (u) { return [u[0], u[1]]; }) // [item, level]
+      .concat(usedList(su).map(function (u) { return [u[0], 0]; })); // [item, 0]: picked up
+    const shown = all.slice(0, all.length > 3 ? 2 : 3), out = { ship: hull.id, bought: [], icons: [], more: all.length - shown.length };
+    let ix = x + 11;
+    shown.forEach(function (u) {
       ctx.drawImage(Art.icons[u[0]], ix, y - 1);
-      if (u[1]) { ctx.fillStyle = PAL.gold; ctx.fillRect(ix, y + 9, 9, 1); }
+      ix += 10;
+      if (!u[1]) { out.icons.push(u[0]); return; }
+      ctx.fillStyle = PAL.gold; ctx.fillRect(ix - 10, y + 9, 9, 1);
+      const drawn = u[1] > 1 ? tinyNum(ctx, u[1], ix - 1, y + 3, PAL.gold) : 0;
+      ix += drawn;
+      out.bought.push([u[0], drawn ? u[1] : 1]);
     });
-    if (all.length > shown.length) text(ctx, '+', x + 11 + shown.length * 10 + 1, y, PAL.silver);
-    return {
-      ship: hull.id, bought: shown.filter(function (u) { return u[1]; }).map(function (u) { return u[0]; }),
-      icons: shown.filter(function (u) { return !u[1]; }).map(function (u) { return u[0]; }), more: all.length - shown.length,
-    };
+    if (out.more) text(ctx, '+', ix + 1, y, PAL.silver);
+    return out;
   }
 
   /**
@@ -1051,11 +1074,12 @@
       text(ctx, 'BOUGHT', x + 14, y + 152, PAL.steel);
       if (!bought.length) text(ctx, 'NOTHING', x + 60, y + 152, PAL.lime);
       bought.forEach(function (u, k) {
-        const bx = x + 60 + k * 80;
+        const bx = x + 60 + k * 80, lv = u[1] > 1 ? u[1] : 1;
         ctx.drawImage(Art.icons[u[0]], bx, y + 151);
         ctx.fillStyle = PAL.gold; ctx.fillRect(bx, y + 161, 9, 1);
-        text(ctx, RR.ITEMS[u[0]].name, bx + 12, y + 152, PAL.gold);
-        shown.bought.push(u);
+        const lw = lv > 1 ? tinyNum(ctx, lv, bx + 9, y + 155, PAL.gold) : 0; // an upgraded one: its level
+        text(ctx, RR.ITEMS[u[0]].name, bx + 12 + lw, y + 152, PAL.gold);
+        shown.bought.push([u[0], lw ? lv : 1]);
       });
       text(ctx, 'PICKED UP AND USED', x + 14, y + 166, PAL.steel);
       if (!used.length) text(ctx, bought.length ? 'NONE' : 'NONE - A CLEAN RUN', x + 14, y + 178, PAL.lime);
@@ -1084,11 +1108,13 @@
     const i = g.hangarShip, h = RR.HULLS[i], open = g.shipUnlocked(i), left = g.pointsLeft(i);
     ctx.fillStyle = 'rgba(7,7,26,0.72)';
     ctx.fillRect(0, 0, W, H);
-    const pw = Math.min(W - 8, 250), ph = 246;
+    const pw = Math.min(W - 8, 250), ph = 250;
     const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
     panel(ctx, x, y, pw, ph, PAL.yellow);
     text(ctx, 'HANGAR', W / 2, y + 7, PAL.yellow, 2, 'center', PAL.plum);
-    text(ctx, 'WINS ' + g.prog.wins + '   STAT POINTS ' + g.prog.points + '   CREDITS ' + g.prog.credits, W / 2, y + 25, PAL.silver, 1, 'center');
+    const maxed = g.prog.points >= RR.POINT_CAP; // stat points stop at the cap
+    text(ctx, 'WINS ' + g.prog.wins + '  POINTS ' + g.prog.points + (maxed ? ' MAX' : '') + '  CREDITS ' + g.prog.credits,
+      W / 2, y + 25, PAL.silver, 1, 'center');
     const mark = function (ry, hh) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry, pw - 10, hh); };
 
     /* the ship */
@@ -1113,7 +1139,7 @@
     const bx = x + 70;
     ST.forEach(function (st, k) {
       const lv = g.statLevel(i, k), base = h.base[k], cap = h.cap[k], on = g.hangarRow === k + 1 && !touch;
-      if (on) mark(ry - 4, 15);
+      if (on) mark(ry - 4, 14);
       text(ctx, st.name, x + 10, ry, on ? PAL.yellow : PAL.silver);
       for (let c = 0; c < 10; c++) {
         if (c >= cap) { ctx.fillStyle = PAL.slate; ctx.fillRect(bx + c * 5 + 1, ry + 3, 2, 1); continue; }
@@ -1122,31 +1148,36 @@
       }
       text(ctx, lv + '/' + cap, bx + 54, ry, lv >= cap ? PAL.lime : PAL.white);
       const less = open && lv > base, more = open && left > 0 && lv < cap;
-      button(g, ctx, '-', x + pw - 52, ry - 4, 22, 15, function () { g.spend(i, k, -1); }, less ? PAL.white : PAL.slate);
-      button(g, ctx, '+', x + pw - 27, ry - 4, 22, 15, function () { g.spend(i, k, 1); }, more ? PAL.yellow : PAL.slate);
-      ry += 17;
+      button(g, ctx, '-', x + pw - 52, ry - 4, 22, 14, function () { g.spend(i, k, -1); }, less ? PAL.white : PAL.slate);
+      button(g, ctx, '+', x + pw - 27, ry - 4, 22, 14, function () { g.spend(i, k, 1); }, more ? PAL.yellow : PAL.slate);
+      ry += 15;
     });
     text(ctx, open ? 'POINTS LEFT FOR THIS SHIP: ' + left : 'WIN RACES AND FIGHTS TO UNLOCK', W / 2, ry + 1,
       open && left > 0 ? PAL.yellow : PAL.steel, 1, 'center');
 
-    /* the shop: one powerup, bought with credits, to start the next Grand Prix with */
-    const kit = g.prog.kit && RR.SHOP.filter(function (s) { return s.id === g.prog.kit; })[0];
-    const ly = y + 196, onShop = g.hangarRow === ST.length + 1 && !touch;
-    if (onShop) mark(ly - 4, 28);
-    text(ctx, 'NEXT RACE', x + 10, ly, onShop ? PAL.yellow : PAL.silver);
-    const sx = x + 70, sw = pw - 80;
-    panel(ctx, sx, ly - 4, sw, 15, kit ? PAL.gold : PAL.steel);
+    /* the shop: one powerup, at level 1-3, bought with credits to start the next Grand Prix with */
+    const pr = g.prog, kit = pr.kit, klv = pr.kitLv, shopRow = ST.length + 1;
+    const ly = y + 186, onItem = g.hangarRow === shopRow && !touch, onLv = g.hangarRow === shopRow + 1 && !touch;
+    if (onItem || onLv) mark(ly - 5, 17);
+    text(ctx, 'NEXT RACE', x + 10, ly, onItem || onLv ? PAL.yellow : PAL.silver);
+    const lw = 50, sx = x + 70, sw = pw - 80 - lw - 4, lx = sx + sw + 4, LVC = [PAL.silver, PAL.yellow, PAL.orange];
+    panel(ctx, sx, ly - 4, sw, 15, onItem ? PAL.white : kit ? PAL.gold : PAL.steel);
     text(ctx, '<', sx + 6, ly, PAL.yellow, 1, 'center');
     text(ctx, '>', sx + sw - 6, ly, PAL.yellow, 1, 'center');
     if (kit) {
-      ctx.drawImage(Art.icons[kit.id], sx + 14, ly - 1);
-      text(ctx, RR.ITEMS[kit.id].name, sx + 26, ly, RR.ITEMS[kit.id].color);
-      text(ctx, kit.price + ' CR', sx + sw - 14, ly, PAL.gold, 1, 'right');
+      ctx.drawImage(Art.icons[kit], sx + 14, ly - 1);
+      text(ctx, RR.ITEMS[kit].name, sx + 26, ly, RR.ITEMS[kit].color);
     } else text(ctx, 'EMPTY', sx + sw / 2, ly, PAL.steel, 1, 'center');
-    text(ctx, kit ? 'BOUGHT: ' + kit.does : 'BUY A POWERUP FOR YOUR NEXT GRAND PRIX', W / 2, ly + 15,
+    panel(ctx, lx, ly - 4, lw, 15, onLv ? PAL.white : LVC[klv - 1]);
+    text(ctx, '-', lx + 6, ly, PAL.yellow, 1, 'center');
+    text(ctx, '+', lx + lw - 6, ly, PAL.yellow, 1, 'center');
+    text(ctx, 'LV' + klv, lx + lw / 2, ly, LVC[klv - 1], 1, 'center');
+    text(ctx, kit ? RR.priceOf(kit, klv) + ' CR: ' + RR.shopDoes(kit, klv) : 'BUY A POWERUP FOR YOUR NEXT GRAND PRIX', W / 2, ly + 15,
       kit ? PAL.gold : PAL.steel, 1, 'center');
     g.ui.push({ x: sx, y: ly - 6, w: sw / 2, h: 19, label: 'SHOP <', act: function () { g.shopCycle(-1); } });
     g.ui.push({ x: sx + sw / 2, y: ly - 6, w: sw / 2, h: 19, label: 'SHOP >', act: function () { g.shopCycle(1); } });
+    g.ui.push({ x: lx, y: ly - 6, w: lw / 2, h: 19, label: 'LEVEL -', act: function () { g.shopLevel(-1); } });
+    g.ui.push({ x: lx + lw / 2, y: ly - 6, w: lw / 2, h: 19, label: 'LEVEL +', act: function () { g.shopLevel(1); } });
 
     const bw = 96;
     button(g, ctx, touch ? 'DONE' : 'DONE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 23, bw, 17,
@@ -1211,7 +1242,7 @@
     if (rw) {
       const fresh = rw.unlocked.length && Math.floor(T) & 1;
       text(ctx, fresh ? 'NEW SHIP IN THE HANGAR: ' + rw.unlocked.join(' ')
-        : (rw.pts ? '+' + rw.pts + ' STAT POINT' + (rw.pts > 1 ? 'S' : '') + '  ' : '') + '+' + rw.credits + ' CREDITS',
+        : (rw.pts ? '+' + rw.pts + ' STAT POINT' + (rw.pts > 1 ? 'S' : '') + '  ' : rw.capped ? 'STAT POINTS MAXED  ' : '') + '+' + rw.credits + ' CREDITS',
         W / 2, ry + 24, fresh ? PAL.lime : rw.pts ? PAL.yellow : PAL.gold, 1, 'center');
     }
     if (net.online && !g.combat) {
