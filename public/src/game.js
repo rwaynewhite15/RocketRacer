@@ -777,6 +777,7 @@
     field.blur();
     box.hidden = true;
     RR.input.typing = false;
+    RR.input.focus(); // keys back to the game
   };
   G.pause = function () {
     if (this.online) { this.mpMenu = !this.mpMenu; return; } // online the race goes on: a menu instead

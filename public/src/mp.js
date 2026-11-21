@@ -243,6 +243,7 @@
     field.blur();
     box.hidden = true;
     RR.input.typing = false;
+    RR.input.focus(); // keys back to the game
   };
 
   /* ---------------------------------------------------- the race */

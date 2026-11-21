@@ -43,6 +43,11 @@ body {
   pointer-events: none;
 }
 
+/* The HUD takes the keyboard focus (iPad Safari only sends keys to a focused element); no focus ring. */
+#hud:focus {
+  outline: none;
+}
+
 /* CRT glass: one dark line per game-pixel row, plus a soft vignette. */
 #crt {
   position: absolute;

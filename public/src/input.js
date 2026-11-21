@@ -20,10 +20,11 @@
  *   BRAKE       a button.
  *
  * Keys and touch work together (an iPad with a keyboard, say): both always
- * steer the ship. A key press puts the keyboard prompts up and takes the
- * touch controls off the screen, but not while a thumb is flying with them
- * or has been in the last KEEP_TOUCH_MS, so steering with a drag and firing
- * with Space works, and the controls do not flicker away under a thumb.
+ * fly the ship, and a held turn key out-steers a drag. A key press puts the
+ * keyboard prompts up and takes the touch controls off the screen, but not
+ * while a thumb is flying with them or has been in the last KEEP_TOUCH_MS,
+ * so steering with a drag and firing with Space works, and the controls do
+ * not flicker away under a thumb.
  * ======================================================================== */
 (function () {
   'use strict';
@@ -31,7 +32,7 @@
   const RR = window.RR;
   const I = (RR.input = {
     down: {}, hit: {}, taps: [],
-    pointers: {}, // id -> { x, y, sx, sy, role } in game pixels (sx, sy = where it began)
+    pointers: {}, // id -> { x, y, sx, sy, role, touch } in game pixels (sx, sy = where it began; touch: a finger or pen, not a mouse)
     touch: { drag: null, aimStick: null, aim: null, brake: false, fire: false },
     touchMode: false,
     controlAt: -Infinity, // performance.now() when a thumb was last on the race controls (steering, fire stick, brake)
@@ -53,9 +54,38 @@
     KeyZ: 'zoom', Equal: 'zoomIn', NumpadAdd: 'zoomIn', Minus: 'zoomOut', NumpadSubtract: 'zoomOut',
   };
 
+  /*
+   * Which key, as a KeyboardEvent.code name. Most browsers fill in e.code;
+   * iPad Safari with a hardware keyboard may leave it empty or "Unidentified"
+   * and name the arrows "UIKeyInputLeftArrow" and so on, so fall back on
+   * e.key and then on the old keyCode.
+   */
+  const BY_KEY = {
+    ArrowLeft: 'ArrowLeft', Left: 'ArrowLeft', UIKeyInputLeftArrow: 'ArrowLeft',
+    ArrowRight: 'ArrowRight', Right: 'ArrowRight', UIKeyInputRightArrow: 'ArrowRight',
+    ArrowUp: 'ArrowUp', Up: 'ArrowUp', UIKeyInputUpArrow: 'ArrowUp',
+    ArrowDown: 'ArrowDown', Down: 'ArrowDown', UIKeyInputDownArrow: 'ArrowDown',
+    ' ': 'Space', Spacebar: 'Space', Enter: 'Enter', Escape: 'Escape', Esc: 'Escape', UIKeyInputEscape: 'Escape',
+    Shift: 'ShiftLeft', '=': 'Equal', '+': 'Equal', '-': 'Minus',
+  };
+  const BY_KEYCODE = {
+    37: 'ArrowLeft', 38: 'ArrowUp', 39: 'ArrowRight', 40: 'ArrowDown', 32: 'Space', 13: 'Enter', 27: 'Escape',
+    16: 'ShiftLeft', 187: 'Equal', 189: 'Minus', 107: 'NumpadAdd', 109: 'NumpadSubtract',
+  };
+  function codeOf(e) {
+    if (e.code && e.code !== 'Unidentified') return e.code;
+    const key = e.key || '';
+    if (/^[a-z]$/i.test(key)) return 'Key' + key.toUpperCase();
+    if (BY_KEY[key]) return BY_KEY[key];
+    const kc = e.keyCode || e.which || 0;
+    if (kc >= 65 && kc <= 90) return 'Key' + String.fromCharCode(kc);
+    return BY_KEYCODE[kc] || '';
+  }
+  I.codeOf = codeOf;
+
   window.addEventListener('keydown', function (e) {
     if (I.typing || e.ctrlKey || e.metaKey || e.altKey) return;
-    const k = KEYS[e.code];
+    const k = KEYS[codeOf(e)];
     if (!k) return;
     e.preventDefault();
     RR.audio.init();
@@ -64,12 +94,20 @@
     if (performance.now() - I.controlAt > KEEP_TOUCH_MS) I.touchMode = false; // keyboard prompts, no touch controls
   });
   window.addEventListener('keyup', function (e) {
-    const k = KEYS[e.code];
+    const k = KEYS[codeOf(e)];
     if (k) I.down[k] = false;
   });
   window.addEventListener('blur', function () {
     I.down = {};
     I.pointers = {};
+  });
+  // Every finger is off the glass: forget any touch whose lift never arrived
+  // (a system gesture can swallow it), so it cannot go on steering.
+  ['touchend', 'touchcancel'].forEach(function (ev) {
+    window.addEventListener(ev, function (e) {
+      if (e.touches && e.touches.length) return;
+      for (const id in I.pointers) if (I.pointers[id].touch) delete I.pointers[id];
+    }, { passive: true });
   });
   // The end of a gesture (finger lift, click) is when phones allow sound and full screen.
   ['pointerup', 'touchend', 'click'].forEach(function (ev) {
@@ -85,8 +123,21 @@
       /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent || '');
   } catch (e) { /* keep keyboard prompts */ }
 
+  /**
+   * Give the game canvas the keyboard focus. iPad Safari sends a hardware
+   * keyboard's keys only to a focused element, and a page with nothing
+   * focused gets none. Not while an HTML text field is taking the typing.
+   */
+  I.focus = function () {
+    const c = I.canvas;
+    if (!c || I.typing || document.activeElement === c) return;
+    try { c.focus({ preventScroll: true }); } catch (e) { /* not focusable */ }
+  };
+
   /** Hook pointer events on the game canvas. */
   I.attach = function (canvas) {
+    I.canvas = canvas;
+    I.focus();
     function pos(e) {
       const r = canvas.getBoundingClientRect();
       return {
@@ -97,9 +148,10 @@
     canvas.addEventListener('pointerdown', function (e) {
       e.preventDefault();
       RR.audio.init();
-      const p = pos(e);
-      if (e.pointerType === 'touch' || e.pointerType === 'pen') I.touchMode = true;
-      I.pointers[e.pointerId] = { x: p.x, y: p.y, sx: p.x, sy: p.y, role: null };
+      I.focus();
+      const p = pos(e), touch = e.pointerType === 'touch' || e.pointerType === 'pen';
+      if (touch) I.touchMode = true;
+      I.pointers[e.pointerId] = { x: p.x, y: p.y, sx: p.x, sy: p.y, role: null, touch: touch };
       I.taps.push(p);
       if (canvas.setPointerCapture) {
         try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
@@ -234,9 +286,10 @@
     if (d.fire || t.fire) fire = true;
 
     // steering drag: head the way it points, with as much engine as it is long
+    // (a held turn key steers instead, so a forgotten thumb cannot fight the keys)
     const dr = t.drag;
     if (dr && dr.power > 0 && ship) {
-      turn += RR.clamp(RR.angDiff(dr.ang, ship.angle) * 4.5, -1, 1);
+      if (!d.left && !d.right) turn += RR.clamp(RR.angDiff(dr.ang, ship.angle) * 4.5, -1, 1);
       thrust = Math.max(thrust, dr.power);
     }
 

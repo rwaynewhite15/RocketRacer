@@ -1452,3 +1452,77 @@ test('iPad with a keyboard: keys and touch fly the rocket together or apart; a k
     assert.deepStrictEqual(ph.errors, []);
   } finally { await ph.ctx.close(); }
 });
+
+test('iPad keyboard: the game holds the keyboard focus, knows keys by the names iPad Safari uses, and keys out-steer a drag or a forgotten touch', { skip }, async () => {
+  const ph = await phoneRace({ width: 1194, height: 834 });
+  try {
+    const { page } = ph, wait = (ms) => page.waitForTimeout(ms);
+    const focused = () => page.evaluate(() => document.activeElement && document.activeElement.id);
+    const inp = () => page.evaluate(() => RR.input.read(RR.game.player));
+
+    // Safari on an iPad sends a hardware keyboard's keys only to a focused element
+    assert.strictEqual(await focused(), 'hud', 'the game has the focus from the start');
+    await page.evaluate(() => document.activeElement.blur());
+    await ph.down([300, 300]);
+    await ph.up();
+    await wait(80);
+    assert.strictEqual(await focused(), 'hud', 'and a tap takes it back');
+
+    // keys as iPad Safari may name them: no code, UIKit arrow names, or only the old keyCode
+    const key = (type, init) => page.evaluate(([type, init]) => {
+      const e = new KeyboardEvent(type, Object.assign({ bubbles: true, cancelable: true }, init));
+      for (const f of ['keyCode', 'which']) if (init[f] !== undefined) Object.defineProperty(e, f, { value: init[f] });
+      document.activeElement.dispatchEvent(e);
+    }, [type, init]);
+    const cases = [
+      [{ key: 'UIKeyInputLeftArrow', code: 'Unidentified', keyCode: 0 }, 'turn', -1],
+      [{ key: 'UIKeyInputRightArrow', code: '' }, 'turn', 1],
+      [{ key: 'ArrowRight', code: '' }, 'turn', 1],
+      [{ key: 'Unidentified', code: '', keyCode: 38 }, 'thrust', 1],
+      [{ key: 'UIKeyInputDownArrow', code: 'Unidentified' }, 'brake', 1],
+      [{ key: 'a', code: '' }, 'turn', -1],
+      [{ key: ' ', code: '' }, 'fire', true],
+    ];
+    for (const [init, what, want] of cases) {
+      await key('keydown', init);
+      assert.strictEqual((await inp())[what], want, JSON.stringify(init) + ' down: ' + what);
+      await key('keyup', init);
+      assert.notStrictEqual((await inp())[what], want, JSON.stringify(init) + ' up: let go');
+    }
+
+    // a held turn key out-steers a drag that wants the other way (the drag keeps the engine going)
+    await page.evaluate(() => { const p = RR.game.player; p.angle = -Math.PI / 2; p.angVel = 0; }); // nose up
+    const MAX = await page.evaluate(() => RR.input.DRAG_MAX);
+    await ph.down([300, 300]);
+    await wait(80);
+    await ph.move([300 + MAX + 10, 300]); // drag right: the drag alone turns right
+    await wait(60);
+    await page.evaluate(() => { const p = RR.game.player; p.angle = -Math.PI / 2; p.angVel = 0; });
+    let r = await inp();
+    assert.deepStrictEqual([r.turn, r.thrust], [1, 1], 'the drag turns right');
+    await page.keyboard.down('ArrowLeft');
+    await wait(60);
+    await page.evaluate(() => { const p = RR.game.player; p.angle = -Math.PI / 2; p.angVel = 0; });
+    r = await inp();
+    assert.deepStrictEqual([r.turn, r.thrust], [-1, 1], 'the key turns left, and the drag still drives');
+    await page.keyboard.up('ArrowLeft');
+    await ph.up();
+    await wait(80);
+
+    // a touch whose lift never arrived (a system gesture took it) is cleared once every finger is off
+    await page.evaluate(() => { RR.input.pointers[777] = { x: 200 + RR.input.DRAG_MAX, y: 200, sx: 200, sy: 200, role: 'steer', touch: true }; });
+    await wait(60);
+    assert.ok(await page.evaluate(() => RR.input.touch.drag && RR.input.touch.drag.power === 1), 'the stuck touch is steering');
+    await ph.down([500, 300]);
+    await ph.up();
+    await wait(60);
+    assert.deepStrictEqual(await page.evaluate(() => [777 in RR.input.pointers, RR.input.touch.drag]), [false, null], 'gone after the next touch ends');
+
+    // typing a pilot name takes the keys; closing the box gives them back to the game
+    await page.evaluate(() => { RR.game.toTitle(); RR.game.editName(); });
+    assert.strictEqual(await focused(), 'pilot');
+    await page.evaluate(() => RR.game.closeName(false));
+    assert.strictEqual(await focused(), 'hud');
+    assert.deepStrictEqual(ph.errors, []);
+  } finally { await ph.ctx.close(); }
+});

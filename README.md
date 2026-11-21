@@ -92,7 +92,9 @@ a do-over, Back to zoom, Start to pause).
 Keys and touch work together, for example on an iPad with a keyboard: drag to steer and press
 Space to fire, or steer with the arrows and use the fire stick. Playing with keys alone clears
 the touch controls off the screen once your thumbs have been off them for 10 seconds; touch
-anywhere to bring them back. (iPad keyboards often have no Esc key: P pauses.)
+anywhere to bring them back. A held turn key overrides a drag's steering. (iPad keyboards often
+have no Esc key: P pauses. If the keys do nothing at first, tap the game once: Safari on iPad
+only sends keys to a page that has been touched since it opened.)
 
 On phones the game uses larger pixels, keeps the HUD clear of notches, and can be added to
 the home screen as a full-screen app. Landscape gives the best view.
