@@ -909,9 +909,9 @@
   /**
    * A leaderboard row's setup in a few pixels: the rocket, small, then up to
    * three powerup icons (+ when there were more). Bought powerups come first,
-   * underlined in gold, with a small 2 or 3 beside an upgraded one; then the
-   * ones picked up on the track. Rows from before setups were recorded get a
-   * dash. Returns what it drew, for the tests.
+   * with a small 2 or 3 beside an upgraded one; then the ones picked up on the
+   * track. Rows from before setups were recorded get a dash. Returns what it
+   * drew, for the tests.
    */
   function setupStrip(ctx, su, x, y) {
     const hull = su && hullOf(su.ship);
@@ -925,7 +925,6 @@
       ctx.drawImage(Art.icons[u[0]], ix, y - 1);
       ix += 10;
       if (!u[1]) { out.icons.push(u[0]); return; }
-      ctx.fillStyle = PAL.gold; ctx.fillRect(ix - 10, y + 9, 9, 1);
       const drawn = u[1] > 1 ? tinyNum(ctx, u[1], ix - 1, y + 3, PAL.gold) : 0;
       ix += drawn;
       out.bought.push([u[0], drawn ? u[1] : 1]);
@@ -964,6 +963,7 @@
       text(ctx, String(rank), x + 22, ry, col, 1, 'right');
       text(ctx, e.name, x + 30, ry, col);
       r.strip = setupStrip(ctx, e.setup, cSetup, ry);
+      r.at = [cSetup, ry];
       // finishing place in that race; older rows were saved without one
       if (e.place >= 1 && e.place <= 6) text(ctx, ORD[e.place - 1], cPlace, ry, col === PAL.yellow ? col : PLACE_COL[e.place - 1]);
       else text(ctx, '-', cPlace + 6, ry, PAL.steel);
@@ -1008,11 +1008,7 @@
       text(ctx, touch ? 'TAP A PILOT TO SEE THEIR ROCKET' : 'ARROWS + ENTER: SEE A PILOT\'S ROCKET', W / 2, y + ph - 34, PAL.sky, 1, 'center');
     }
     if (g.boardSel >= rows.length) g.boardSel = -1;
-    // the key: rival levels, and the gold line under a powerup bought in the hangar
-    const key = 'R ROOKIE  P PILOT  A ACE    BOUGHT', kx = Math.round(W / 2 - RR.textW(key, 1) / 2);
-    text(ctx, key, kx, y + ph - 45, PAL.steel);
-    ctx.fillStyle = PAL.gold;
-    ctx.fillRect(kx + RR.textW('R ROOKIE  P PILOT  A ACE  ', 1) - 1, y + ph - 39, 9, 1);
+    text(ctx, 'R ROOKIE  P PILOT  A ACE', W / 2, y + ph - 45, PAL.steel, 1, 'center');
     const bw = 90;
     button(g, ctx, touch ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
       function () { g.closeBoard(); }, PAL.lime);
@@ -1072,11 +1068,11 @@
       /* powerups: bought in the hangar, then picked up on the track */
       const used = usedList(su), bought = usedList(su, 'bought');
       text(ctx, 'BOUGHT', x + 14, y + 152, PAL.steel);
+      g.cardAt = [x + 60, y + 151]; // where the bought icons go (the tests look there)
       if (!bought.length) text(ctx, 'NOTHING', x + 60, y + 152, PAL.lime);
       bought.forEach(function (u, k) {
         const bx = x + 60 + k * 80, lv = u[1] > 1 ? u[1] : 1;
         ctx.drawImage(Art.icons[u[0]], bx, y + 151);
-        ctx.fillStyle = PAL.gold; ctx.fillRect(bx, y + 161, 9, 1);
         const lw = lv > 1 ? tinyNum(ctx, lv, bx + 9, y + 155, PAL.gold) : 0; // an upgraded one: its level
         text(ctx, RR.ITEMS[u[0]].name, bx + 12 + lw, y + 152, PAL.gold);
         shown.bought.push([u[0], lw ? lv : 1]);
@@ -1112,8 +1108,8 @@
     const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
     panel(ctx, x, y, pw, ph, PAL.yellow);
     text(ctx, 'HANGAR', W / 2, y + 7, PAL.yellow, 2, 'center', PAL.plum);
-    const maxed = g.prog.points >= RR.POINT_CAP; // stat points stop at the cap
-    text(ctx, 'WINS ' + g.prog.wins + '  POINTS ' + g.prog.points + (maxed ? ' MAX' : '') + '  CREDITS ' + g.prog.credits,
+    const pts = g.shipPoints(i), maxed = pts >= RR.shipRoom(i); // this ship's points: never more than it can use
+    text(ctx, 'WINS ' + g.prog.wins + '  POINTS ' + pts + (maxed ? ' MAX' : '') + '  CREDITS ' + g.prog.credits,
       W / 2, y + 25, PAL.silver, 1, 'center');
     const mark = function (ry, hh) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry, pw - 10, hh); };
 

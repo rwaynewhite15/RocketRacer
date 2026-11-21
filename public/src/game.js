@@ -119,10 +119,16 @@
     { name: 'ORION', team: 5, design: 2 },
   ];
 
-  // Stat points stop at the most any ship can put to use (the Phoenix's 25): more would buy nothing.
-  const POINT_CAP = (RR.POINT_CAP = Math.max.apply(null, HULLS.map(function (h) {
+  /*
+   * No stat point is ever unspendable. Each ship sees only as many points as
+   * it has room for (the gap between its own levels and its ceilings: 15 for
+   * the Sparrow up to 25 for the Phoenix), and points stop at the room of the
+   * best ship you have unlocked, so none pile up for a ship you cannot fly.
+   */
+  const room = (RR.shipRoom = function (i) {
+    const h = HULLS[i];
     return h.cap.reduce(function (a, c, k) { return a + c - h.base[k]; }, 0);
-  })));
+  });
 
   const DIFFS = (RR.DIFFS = [
     { name: 'ROOKIE', speed: 0.83, spread: 0.05, aggro: 0.45, rubber: 0.07, dmg: 0.7 },
@@ -213,7 +219,7 @@
     const pr = G.prog;
     if (!p || typeof p !== 'object') return;
     pr.wins = count(p.wins);
-    pr.points = Math.min(count(p.points), POINT_CAP);
+    pr.points = Math.min(count(p.points), G.pointCap()); // (the wins, just above, set the cap)
     pr.credits = count(p.credits);
     pr.kit = shopItem(p.kit) ? p.kit : null;
     pr.kitLv = p.kitLv === 2 || p.kitLv === 3 ? p.kitLv : 1;
@@ -224,7 +230,7 @@
         up[k] = Math.min(count(Array.isArray(saved) ? saved[k] : 0), h.cap[k] - h.base[k]);
         spent += up[k];
       }
-      if (spent > pr.points) up.fill(0);
+      if (spent > Math.min(pr.points, room(i))) up.fill(0);
     });
     pr.ship = p.ship >= 0 && p.ship < HULLS.length && pr.wins >= HULLS[p.ship].wins ? p.ship : 0;
   }
@@ -235,10 +241,18 @@
     return G.prog.up[id] || (G.prog.up[id] = STATS.map(function () { return 0; }));
   }
   G.shipUnlocked = function (i) { return this.prog.wins >= HULLS[i].wins; };
+  /** The most stat points you can hold: what the roomiest unlocked ship can use. */
+  G.pointCap = function () {
+    let m = 0;
+    for (let i = 0; i < HULLS.length; i++) if (this.shipUnlocked(i)) m = Math.max(m, room(i));
+    return m;
+  };
+  /** The points ship `i` can use: all you have, up to its room. */
+  G.shipPoints = function (i) { return Math.min(this.prog.points, room(i)); };
   G.statLevel = function (i, k) { return HULLS[i].base[k] + upgrades(i)[k]; };
-  /** Every ship can spend every point you have earned, so a new ship never starts from nothing. */
+  /** Every ship can spend every point you have earned (up to its room), so a new ship never starts from nothing. */
   G.pointsLeft = function (i) {
-    return this.prog.points - upgrades(i).reduce(function (a, b) { return a + b; }, 0);
+    return this.shipPoints(i) - upgrades(i).reduce(function (a, b) { return a + b; }, 0);
   };
   /** Put a point into stat `k` of ship `i` (d = 1) or take one back (d = -1). */
   G.spend = function (i, k, d) {
@@ -318,11 +332,11 @@
   function award(g, place) {
     const pr = g.prog, had = HULLS.map(function (h, i) { return g.shipUnlocked(i); });
     const earned = Math.max(0, 4 - place) + (place === 1 ? g.diffIdx : 0);
-    const pts = Math.min(earned, POINT_CAP - pr.points); // stat points stop at the cap
+    if (place === 1) pr.wins++; // first, so a ship this win unlocks raises the cap straight away
+    const pts = Math.max(0, Math.min(earned, g.pointCap() - pr.points)); // stat points stop at the cap
     const credits = Math.round(PAY[place - 1] * PAY_MULT[g.diffIdx]);
     pr.points += pts;
     pr.credits += credits;
-    if (place === 1) pr.wins++;
     g.reward = {
       pts: pts, capped: pts < earned, credits: credits,
       unlocked: HULLS.filter(function (h, i) { return !had[i] && g.shipUnlocked(i); }).map(function (h) { return h.name; }),

@@ -542,9 +542,18 @@ test('hangar shop: levels 1-3 cost more and give more, and the leaderboard marks
     await page.waitForFunction(() => RR.game.boardRows && RR.game.boardRows.length === 2);
     const strips = await page.evaluate(() => RR.game.boardRows.map((x) => x.strip.bought));
     assert.deepStrictEqual(strips, [[['missile', 3]], [['nitro', 1]]]);
+    // no underline: the line of pixels just below each row's icons has no gold in it
+    const gold = (pts) => page.evaluate((pts) => {
+      const c = document.getElementById('hud').getContext('2d'), want = RR.PAL.gold.toLowerCase();
+      return pts.filter(([x, y]) => '#' + Array.from(c.getImageData(x, y, 1, 1).data.slice(0, 3)).map((v) => v.toString(16).padStart(2, '0')).join('') === want).length;
+    }, pts);
+    const under = await page.evaluate(() => RR.game.boardRows.flatMap((r) => Array.from({ length: 54 }, (_, k) => [r.at[0] + k, r.at[1] + 9])));
+    assert.strictEqual(await gold(under), 0, 'no gold line under the row icons');
     await page.evaluate(() => RR.game.openCard(RR.game.boardRows[0]));
     await page.waitForTimeout(150);
     assert.deepStrictEqual(await page.evaluate(() => RR.game.cardShown.bought), [['missile', 3]]);
+    const cardUnder = await page.evaluate(() => Array.from({ length: 9 }, (_, k) => [RR.game.cardAt[0] + k, RR.game.cardAt[1] + 10]));
+    assert.strictEqual(await gold(cardUnder), 0, 'nor under the card\'s bought icon');
 
     // the hangar by keyboard: up from the ship lands on the level row, then the item row
     await page.evaluate(() => { const g = RR.game; g.closeCard(); g.closeBoard(); g.prog.credits = 500; g.prog.kit = 'mine'; g.prog.kitLv = 1; g.openHangar(); });
@@ -555,36 +564,41 @@ test('hangar shop: levels 1-3 cost more and give more, and the leaderboard marks
   } finally { await ctx.close(); own.close(); }
 });
 
-test('hangar: stat points stop at 25, the most any ship can use', { skip }, async () => {
+test('hangar: no ship ever holds stat points it cannot use', { skip }, async () => {
   const { page, ctx, errors } = await openGame();
   try {
     const r = await page.evaluate(() => {
-      const g = RR.game, out = { cap: RR.POINT_CAP };
-      g.prog.points = RR.POINT_CAP - 1;
-      T.fresh(0);
-      g.ships.forEach((s) => { if (s !== g.player) s.ai.skill = 0.2; }); // slow rivals: a sure win
-      let k = 0; while (!g.playerDone && k++ < 120 * 400) g.step(1 / 120);
-      out.place = g.player.place;
-      out.after = [g.prog.points, g.reward.pts, g.reward.capped];
-      T.fresh(0);
-      g.ships.forEach((s) => { if (s !== g.player) s.ai.skill = 0.2; });
-      k = 0; while (!g.playerDone && k++ < 120 * 400) g.step(1 / 120);
-      out.again = [g.prog.points, g.reward.pts, g.reward.capped, g.reward.credits > 0];
+      const g = RR.game, pr = g.prog, out = { room: RR.HULLS.map((h, i) => RR.shipRoom(i)) };
+      const win = () => {
+        T.fresh(0);
+        g.ships.forEach((s) => { if (s !== g.player) s.ai.skill = 0.2; }); // slow rivals: a sure win
+        let k = 0; while (!g.playerDone && k++ < 120 * 400) g.step(1 / 120);
+        return [g.player.place, pr.points, g.reward.pts, g.reward.capped];
+      };
+      g.diffIdx = 1; // a win against Pilot rivals earns 4 points
+      pr.wins = 0; pr.points = 14;
+      out.first = win(); // only the Sparrow (room 15): 1 of the 4 fits
+      out.second = win(); // the second win opens the Dart (room 19): all 4 fit
+      out.view = [0, 1].map((i) => [g.shipPoints(i), g.pointsLeft(i)]);
+      out.third = win(); // full for the Dart: nothing more until a roomier ship opens
+      out.credits = g.reward.credits > 0;
       return out;
     });
-    assert.strictEqual(r.cap, 25, 'the Phoenix can use 25');
-    assert.strictEqual(r.place, 1);
-    assert.deepStrictEqual(r.after, [25, 1, true], 'a win worth more than 1 point only tops it up');
-    assert.deepStrictEqual(r.again, [25, 0, true, true], 'at the cap, points stop; credits still come');
-    // a doctored save is cut back too
+    assert.deepStrictEqual(r.room, [15, 19, 20, 25], 'Sparrow, Dart, Hammer, Phoenix');
+    assert.deepStrictEqual(r.first, [1, 15, 1, true]);
+    assert.deepStrictEqual(r.second, [1, 19, 4, false]);
+    assert.deepStrictEqual(r.view, [[15, 15], [19, 19]], 'the Sparrow sees only the 15 it can use, the Dart all 19');
+    assert.deepStrictEqual(r.third, [1, 19, 0, true]);
+    assert.strictEqual(r.credits, true, 'credits still come');
+    // a doctored save is cut back to what the unlocked ships can use
     await page.evaluate(() => {
       const s = JSON.parse(localStorage.getItem('rocketracer.v1'));
-      s.prog.points = 999; s.prog.kitLv = 7;
+      s.prog.points = 999; s.prog.wins = 5; s.prog.kitLv = 7;
       localStorage.setItem('rocketracer.v1', JSON.stringify(s));
     });
     await page.reload();
     await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
-    assert.deepStrictEqual(await page.evaluate(() => [RR.game.prog.points, RR.game.prog.kitLv]), [25, 1]);
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.prog.points, RR.game.prog.kitLv]), [20, 1], 'five wins: the Hammer, room 20');
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
 });
@@ -667,7 +681,7 @@ test('hangar: races earn stat points, wins unlock ships, upgrades stop at the sh
       out.paid = { got: g.reward.pts, want: Math.max(0, 4 - place) + (place === 1 ? g.diffIdx : 0), points: g.prog.points, wins: g.prog.wins, won: place === 1 ? 1 : 0 };
 
       // spend: the Sparrow goes from 3 to its ceiling of 6 and no further; points can be taken back
-      g.prog.points = 20; g.prog.wins = 2;
+      g.prog.points = 19; g.prog.wins = 2; // the Dart is open: up to 19 points (its room)
       out.ups = [1, 1, 1, 1].map(() => g.spend(0, 1, 1));
       out.level = g.statLevel(0, 1);
       out.left = g.pointsLeft(0);
@@ -693,7 +707,7 @@ test('hangar: races earn stat points, wins unlock ships, upgrades stop at the sh
     assert.strictEqual(r.paid.wins, r.paid.won);
     assert.deepStrictEqual(r.ups, [true, true, true, false], 'three levels of room, then the ceiling');
     assert.strictEqual(r.level, 6);
-    assert.strictEqual(r.left, 17);
+    assert.strictEqual(r.left, 12, 'the Sparrow can use 15 of the 19 points; 3 are in');
     assert.deepStrictEqual(r.back, [true, 5, false]);
     assert.deepStrictEqual(r.open, [true, true, false, false]);
     assert.deepStrictEqual(r.locked, { viewing: 3, flying: 0, spend: false });
@@ -704,7 +718,7 @@ test('hangar: races earn stat points, wins unlock ships, upgrades stop at the sh
     await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
     const kept = await page.evaluate(() => ({ p: RR.game.prog, design: RR.game.player.design }));
     const { credits, kit, kitLv, ...rest } = kept.p;
-    assert.deepStrictEqual(rest, { wins: 2, points: 20, ship: 1, up: { sparrow: [0, 3, 0, 1, 0], dart: [0, 0, 0, 0, 0], hammer: [0, 0, 0, 0, 0], phoenix: [0, 0, 0, 0, 0] } });
+    assert.deepStrictEqual(rest, { wins: 2, points: 19, ship: 1, up: { sparrow: [0, 3, 0, 1, 0], dart: [0, 0, 0, 0, 0], hammer: [0, 0, 0, 0, 0], phoenix: [0, 0, 0, 0, 0] } });
     assert.ok(Number.isInteger(credits) && credits > 0, 'the race paid credits too: ' + credits);
     assert.deepStrictEqual([kit, kitLv], [null, 1]);
     assert.strictEqual(kept.design, 1, 'the attract mode flies the chosen ship');

@@ -36,8 +36,10 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
   - Finishing 1st, 2nd or 3rd in any event earns 3, 2 or 1 stat points; a win adds one more
     against Pilot rivals and two more against Ace.
   - Points raise a ship's stats up to that ship's ceiling. Every ship can spend all the
-    points you have earned, and points can be taken back and moved at any time. Points stop
-    at 25, the most any ship (the Phoenix) can use.
+    points you have earned, and points can be taken back and moved at any time.
+  - No point is ever unspendable: each ship sees only as many points as it has room for
+    (Sparrow 15, Dart 19, Hammer 20, Phoenix 25), and points stop at the room of the best
+    ship you have unlocked.
   - Wins unlock better ships with higher ceilings: the Dart (2 wins), the Hammer (5) and the
     Phoenix (9). The starting Sparrow flies exactly like the rivals' ships.
   - **The shop**: every finished event pays credits by place (100 for a win down to 30),
@@ -60,7 +62,7 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
 - **Zoom** the world in or out in whole-pixel steps, so the pixel art stays sharp. The HUD
   keeps its size at every level, and your choice is remembered.
 - **World top 10** for each course: every row shows the pilot's rocket and the powerups they
-  used, with bought ones marked; tap a row to see their whole setup.
+  used, with upgraded bought ones numbered; tap a row to see their whole setup.
 - Hull damage, wrecks and respawns, lap and race records, an attract-mode race behind the menu.
 - All art is generated in code at start-up and all sound is synthesised, so there are no
   image or audio files to load.
@@ -235,8 +237,8 @@ The setup belongs to the record run, so a slower race leaves it alone. Rows from
 field existed have `null`.
 
 The top-10 screen shows each pilot's rocket and powerups in the row (a bought one first,
-underlined in gold with a small 2 or 3 beside it when it was upgraded, then the ones they used
-most; `+` when there were more), and your own row
+with a small 2 or 3 beside it when it was upgraded, then the ones they used most; `+` when
+there were more), and your own row
 and rank underneath when you are not in the top 10. Tap a row (or pick it with the arrow keys
 and press Enter) for that pilot's card: the rocket, its stat levels (grey: the ship's own,
 yellow: points put in), what they bought, and every powerup they picked up and used.
