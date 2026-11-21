@@ -99,6 +99,12 @@ only sends keys to a page that has been touched since it opened.)
 On phones the game uses larger pixels, keeps the HUD clear of notches, and can be added to
 the home screen as a full-screen app. Landscape gives the best view.
 
+On iPhones and iPads the game does not use the browser's full screen: iPhones have none for web
+pages, and on an iPad a downward swipe (which steering makes all the time) drops out of it, which
+a page cannot switch off. Use Share > Add to Home Screen instead; the game then opens in its own
+window, with no browser bars and no swipe-to-exit. The title screen says so, and F says so on an
+iPad keyboard.
+
 ## Online multiplayer
 
 ONLINE on the menu (when the game's server says online play is available):

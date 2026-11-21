@@ -1001,6 +1001,54 @@ test('full screen: desktops are left alone, and iPhones (which cannot) get the A
   }
 });
 
+test('full screen: iPads skip Safari\'s full screen (a downward swipe, which steering makes, drops out of it) and get the Add to Home Screen tip; Macs keep it', { skip }, async () => {
+  const MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15';
+  const IPAD = 'Mozilla/5.0 (iPad; CPU OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+  const kinds = [
+    // iPadOS Safari asks for desktop sites as a Mac, so only the touch points tell it apart
+    { what: 'an iPad (desktop-site mode)', ua: MAC, touchPoints: 5, ipad: true },
+    { what: 'an iPad', ua: IPAD, touchPoints: 5, ipad: true },
+    { what: 'a Mac', ua: MAC, touchPoints: 0, ipad: false },
+  ];
+  for (const k of kinds) {
+    const c = await browser.newContext(k.ipad
+      ? { viewport: { width: 1194, height: 834 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2, userAgent: k.ua }
+      : { viewport: { width: 1280, height: 720 }, userAgent: k.ua });
+    await c.addInitScript((n) => Object.defineProperty(Navigator.prototype, 'maxTouchPoints', { get: () => n, configurable: true }), k.touchPoints);
+    const p = await c.newPage();
+    const errors = [];
+    p.on('pageerror', (e) => errors.push(e.stack || e.message));
+    try {
+      await p.goto(base + '/');
+      await p.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+      // the page's own Fullscreen API is there (as it is in iPad Safari): the game must choose not to use it
+      assert.strictEqual(await p.evaluate(() => document.fullscreenEnabled), true);
+      await p.waitForTimeout(200);
+      const r = await p.evaluate(() => ({ can: RR.game.canFullscreen(), tip: RR.game.homeScreenTip(), button: RR.game.ui.some((b) => b.label === 'FULLSCREEN' || b.label === 'EXIT FULL') }));
+      if (!k.ipad) {
+        assert.deepStrictEqual(r, { can: true, tip: false, button: false }, k.what + ': full screen stays available (F)');
+        await p.keyboard.press('KeyF');
+        await p.waitForTimeout(200);
+        assert.strictEqual(await p.evaluate(() => !!document.fullscreenElement), true, k.what + ': F goes full screen');
+        continue;
+      }
+      assert.deepStrictEqual(r, { can: false, tip: true, button: false }, k.what + ': the tip, and no FULLSCREEN button');
+      const box = await p.locator('#hud').boundingBox();
+      await p.touchscreen.tap(box.x + box.width / 2, box.y + box.height * 0.12); // the first tap would go full screen elsewhere
+      await p.waitForTimeout(200);
+      assert.strictEqual(await p.evaluate(() => !!document.fullscreenElement), false, k.what + ': a tap leaves the page as it is');
+      await p.evaluate(() => { RR.game.autoFull = true; RR.game.wantFull = false; RR.game.begin(); });
+      await p.touchscreen.tap(box.x + 40, box.y + 200);
+      await p.waitForTimeout(200);
+      assert.strictEqual(await p.evaluate(() => !!document.fullscreenElement), false, k.what + ': and so does starting a race');
+      await p.keyboard.press('KeyF');
+      await p.waitForTimeout(100);
+      assert.deepStrictEqual(await p.evaluate(() => [!!document.fullscreenElement, RR.game.toast && RR.game.toast.text]), [false, 'SHARE > ADD TO HOME SCREEN'], k.what + ': F on its keyboard says how');
+      assert.deepStrictEqual(errors, []);
+    } finally { await c.close(); }
+  }
+});
+
 /* --------------------------------------------------------- touch sticks */
 
 /** A phone (or a tablet, given its screen size) with a race under way, and helpers to put thumbs on the screen (game-pixel coordinates). */

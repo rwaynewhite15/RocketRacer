@@ -646,11 +646,21 @@
    * it on the next finger-lift (G.onGestureEnd).
    *
    * Phones go full screen on the first tap and at the start of each race,
-   * unless the player turned it off with the button (remembered). iPhones
-   * can't: Safari only lets videos go full screen there, so they get an
-   * "Add to Home Screen" tip instead, which opens the game without Safari's bars.
+   * unless the player turned it off with the button (remembered).
+   *
+   * Not iPhones and iPads (every browser on them is Safari underneath). An
+   * iPhone only lets videos go full screen, and an iPad drops out of full
+   * screen on any downward swipe, which steering makes all the time (WebKit
+   * keeps that gesture on purpose; a page cannot switch it off). Both get an
+   * "Add to Home Screen" tip instead, which opens the game in its own window,
+   * without Safari's bars and without the swipe.
    */
-  function fsEnabled() { const d = document; return !!(d.fullscreenEnabled || d.webkitFullscreenEnabled); }
+  function appleTouch() {
+    const ua = navigator.userAgent || '';
+    // iPadOS asks for desktop sites as a Mac; a Mac has no touch screen
+    return /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  }
+  function fsEnabled() { const d = document; return !appleTouch() && !!(d.fullscreenEnabled || d.webkitFullscreenEnabled); }
   function isFull() { const d = document; return !!(d.fullscreenElement || d.webkitFullscreenElement); }
   function enterFull() {
     if (isFull() || !fsEnabled()) return;
@@ -730,9 +740,9 @@
     }
   }
 
-  /** True on an iPhone browsing in Safari: the only way to full screen there is Add to Home Screen. */
+  /** True on an iPhone or iPad in the browser: the way to full screen there is Add to Home Screen. */
   G.homeScreenTip = function () {
-    if (!RR.input.touchMode || fsEnabled() || !/iPhone|iPod/.test(navigator.userAgent || '')) return false;
+    if (!RR.input.touchMode || !appleTouch()) return false;
     const mm = function (q) { try { return window.matchMedia(q).matches; } catch (e) { return false; } };
     const installed = navigator.standalone === true || mm('(display-mode: standalone)') || mm('(display-mode: fullscreen)');
     return !installed;
@@ -748,6 +758,7 @@
   /** The FULLSCREEN / EXIT FULL button and the F key. The choice is remembered. */
   G.fullscreen = function () {
     if (isFull()) { this.autoFull = false; this.wantFull = false; exitFull(); }
+    else if (appleTouch()) { toast(this, 'SHARE > ADD TO HOME SCREEN'); return; } // F on an iPad keyboard
     else {
       this.autoFull = true;
       this.wantFull = true; // a tap: granted as the finger lifts
