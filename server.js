@@ -34,6 +34,18 @@ const TRACKS = {
   gauntlet: { laps: 3, minLap: 25, minRace: 78 },
 };
 const MAX_RACE = 3600;
+
+/*
+ * A time's setup: the rocket, its five stat levels, and the powerups used.
+ * It is only shown on the leaderboard, so it is checked for shape, not
+ * against each ship's limits. Keep the lists in step with RR.HULLS, RR.STATS
+ * and RR.ITEMS in public/src/game.js.
+ */
+const SHIPS = ['sparrow', 'dart', 'hammer', 'phoenix'];
+const STAT_COUNT = 5;
+const STAT_MAX = 10;
+const ITEMS = ['nitro', 'shield', 'repair', 'rewind', 'blaster', 'missile', 'mine', 'emp'];
+const ITEM_MAX = 99;
 const RACERS = 6; // ships on the grid, so the worst finishing place
 const PID_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const STORE_TIMEOUT_MS = 8000;
@@ -151,7 +163,35 @@ function validateScore(body) {
   if (![0, 1, 2].includes(body.diff)) return 'Bad difficulty';
   // finishing place in that race; optional so a page loaded before this existed can still post
   if (body.place != null && !(Number.isInteger(body.place) && body.place >= 1 && body.place <= RACERS)) return 'Bad place';
+  // the rocket and powerups behind the time; optional, as pages from before it existed do not send one
+  if (body.setup != null) return setupError(body.setup);
   return null;
+}
+
+const isMap = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+function setupError(s) {
+  if (!isMap(s)) return 'Bad setup';
+  if (!SHIPS.includes(s.ship)) return 'Unknown ship';
+  if (!Array.isArray(s.stats) || s.stats.length !== STAT_COUNT ||
+    !s.stats.every((v) => Number.isInteger(v) && v >= 1 && v <= STAT_MAX)) return 'Bad stats';
+  if (s.items != null) {
+    if (!isMap(s.items)) return 'Bad items';
+    for (const k of Object.keys(s.items)) {
+      if (!ITEMS.includes(k)) return 'Unknown item';
+      const v = s.items[k];
+      if (!Number.isInteger(v) || v < 0 || v > ITEM_MAX) return 'Bad item count';
+    }
+  }
+  return null;
+}
+
+/** A setup that passed setupError, reduced to exactly what is stored (unused items dropped). */
+function cleanSetup(s) {
+  if (s == null) return null;
+  const items = {};
+  for (const k of ITEMS) if (s.items && s.items[k] > 0) items[k] = s.items[k];
+  return { ship: s.ship, stats: s.stats.slice(), items };
 }
 
 /** Give up on a slow backend call so a request never hangs on Firestore. */
@@ -233,6 +273,7 @@ function createApp(store) {
         lap: Math.floor(body.lap * 100 + 1e-6) / 100,
         diff: body.diff,
         place: body.place == null ? null : body.place,
+        setup: cleanSetup(body.setup),
         at: Date.now(),
       };
       const out = await withTimeout(store.submit(body.track, body.pid, entry), STORE_TIMEOUT_MS);
@@ -266,7 +307,7 @@ function decodeURIComponentSafe(s) {
   try { return decodeURIComponent(s); } catch (e) { return s; }
 }
 
-module.exports = { createApp, cleanName, validateScore, TRACKS };
+module.exports = { createApp, cleanName, validateScore, cleanSetup, TRACKS, SHIPS, ITEMS };
 
 if (require.main === module) {
   const store = createStore();

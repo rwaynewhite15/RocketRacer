@@ -876,25 +876,67 @@
    * finished in the race that set the time; below the list comes your own row
    * and world rank when you are not in the top 10.
    */
+  const hullOf = function (id) { return RR.HULLS.filter(function (h) { return h.id === id; })[0] || null; };
+
+  /** Powerups a setup used, most-used first: [[type, count], ...] in RR.ITEMS order on ties. */
+  function usedList(su) {
+    const order = Object.keys(RR.ITEMS), items = (su && su.items) || {};
+    return order.filter(function (k) { return items[k] > 0; })
+      .map(function (k) { return [k, items[k]]; })
+      .sort(function (a, b) { return b[1] - a[1] || order.indexOf(a[0]) - order.indexOf(b[0]); });
+  }
+
+  /**
+   * A leaderboard row's setup in a few pixels: the rocket, small, then up to
+   * three powerup icons (+ when there were more). Rows from before setups
+   * were recorded get a dash. Returns what it drew, for the tests.
+   */
+  function setupStrip(ctx, su, x, y) {
+    const hull = su && hullOf(su.ship);
+    if (!hull) { text(ctx, '-', x + 2, y, PAL.steel); return null; }
+    ctx.drawImage(Art.shipMini(hull.design, 0), x, y - 2);
+    const used = usedList(su), shown = used.slice(0, used.length > 3 ? 2 : 3);
+    shown.forEach(function (u, k) { ctx.drawImage(Art.icons[u[0]], x + 11 + k * 10, y - 1); });
+    if (used.length > shown.length) text(ctx, '+', x + 11 + shown.length * 10 + 1, y, PAL.silver);
+    return { ship: hull.id, icons: shown.map(function (u) { return u[0]; }), more: used.length - shown.length };
+  }
+
+  /**
+   * World top 10 for the selected course. Each row shows the pilot's rocket
+   * and powerups; tap a row (or pick it with the arrows and press Enter) for
+   * that pilot's card.
+   */
   function drawBoard(g, ctx, W, H) {
+    if (g.boardCard) { drawCard(g, ctx, W, H); return; }
     const def = RR.TRACKS[g.trackIdx], net = RR.net, list = net.boards[def.id], mine = net.me[def.id], rec = g.best[def.id];
+    const touch = RR.input.touchMode;
     ctx.fillStyle = 'rgba(7,7,26,0.72)';
     ctx.fillRect(0, 0, W, H);
-    const pw = Math.min(W - 8, 240), ph = 206;
+    const pw = Math.min(W - 8, 240), ph = 232, rowH = 12;
     const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
-    const cPlace = x + pw - 92, cDiff = x + pw - 62, cTime = x + pw - 10;
+    const cSetup = x + 94, cPlace = x + pw - 92, cDiff = x + pw - 62, cTime = x + pw - 10;
     panel(ctx, x, y, pw, ph, PAL.pink);
     text(ctx, 'WORLD TOP 10', W / 2, y + 7, PAL.pink, 2, 'center', PAL.plum);
     text(ctx, def.name, W / 2, y + 25, PAL.sky, 1, 'center');
 
+    const rows = (g.boardRows = []); // what the arrows can pick, in order
     const row = function (ry, rank, e, col) {
+      const n = rows.length, r = { e: e, rank: rank };
+      rows.push(r);
+      if (g.boardSel === n && !touch) { // picked with the arrows
+        ctx.fillStyle = PAL.white;
+        ctx.fillRect(x + 5, ry - 3, pw - 10, 1); ctx.fillRect(x + 5, ry + rowH - 4, pw - 10, 1);
+        ctx.fillRect(x + 5, ry - 3, 1, rowH); ctx.fillRect(x + pw - 6, ry - 3, 1, rowH);
+      }
       text(ctx, String(rank), x + 22, ry, col, 1, 'right');
       text(ctx, e.name, x + 30, ry, col);
+      r.strip = setupStrip(ctx, e.setup, cSetup, ry);
       // finishing place in that race; older rows were saved without one
       if (e.place >= 1 && e.place <= 6) text(ctx, ORD[e.place - 1], cPlace, ry, col === PAL.yellow ? col : PLACE_COL[e.place - 1]);
       else text(ctx, '-', cPlace + 6, ry, PAL.steel);
       text(ctx, DIFF_TAG[e.diff] || '', cDiff, ry, DIFF_COL[e.diff] || PAL.steel);
       text(ctx, fmt(e.time), cTime, ry, col, 1, 'right');
+      g.ui.push({ x: x + 5, y: ry - 3, w: pw - 10, h: rowH, label: 'PILOT ' + rank, act: function () { g.boardSel = n; g.openCard(r); } });
     };
     const isMine = function (e) {
       if (mine) return e.name === mine.name && e.time === mine.time;
@@ -910,30 +952,103 @@
     } else {
       text(ctx, '#', x + 22, y + 37, PAL.steel, 1, 'right');
       text(ctx, 'PILOT', x + 30, y + 37, PAL.steel);
+      text(ctx, 'SETUP', cSetup, y + 37, PAL.steel);
       text(ctx, 'RACE', cPlace - 3, y + 37, PAL.steel);
       text(ctx, 'TIME', cTime, y + 37, PAL.steel, 1, 'right');
       let shown = false;
       for (let i = 0; i < list.length && i < 10; i++) {
         const e = list[i], me = isMine(e);
-        if (me) { shown = true; ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry - 2, pw - 10, 11); }
+        if (me) { shown = true; ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry - 3, pw - 10, rowH); }
         row(ry, i + 1, e, me ? PAL.yellow : i === 0 ? PAL.gold : PAL.white);
-        ry += 11;
+        ry += rowH;
       }
       // your own standing, when it is not already highlighted above
-      const my = y + 161;
+      const my = y + 175;
       if (mine && !shown) {
-        RR.line(ctx, x + 8, my - 5, x + pw - 9, my - 5, PAL.steel, 3);
+        RR.line(ctx, x + 8, my - 6, x + pw - 9, my - 6, PAL.steel, 3);
         ctx.fillStyle = 'rgba(255,205,117,0.16)';
-        ctx.fillRect(x + 5, my - 2, pw - 10, 11);
+        ctx.fillRect(x + 5, my - 3, pw - 10, rowH);
         row(my, mine.rank > 999 ? '999+' : mine.rank, mine, PAL.yellow);
       } else if (mine === null) {
         text(ctx, 'FINISH A RACE HERE TO JOIN THE BOARD', W / 2, my, PAL.steel, 1, 'center');
       }
+      text(ctx, touch ? 'TAP A PILOT TO SEE THEIR ROCKET' : 'ARROWS + ENTER: SEE A PILOT\'S ROCKET', W / 2, y + ph - 34, PAL.sky, 1, 'center');
     }
-    text(ctx, 'R ROOKIE  P PILOT  A ACE', W / 2, y + ph - 34, PAL.steel, 1, 'center');
+    if (g.boardSel >= rows.length) g.boardSel = -1;
+    text(ctx, 'R ROOKIE  P PILOT  A ACE', W / 2, y + ph - 45, PAL.steel, 1, 'center');
     const bw = 90;
-    button(g, ctx, RR.input.touchMode ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 23, bw, 17,
+    button(g, ctx, touch ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
       function () { g.closeBoard(); }, PAL.lime);
+  }
+
+  /**
+   * One pilot's card from the leaderboard: the rocket they flew, its stat
+   * levels (grey: the ship's own, yellow: points they put in), and every
+   * powerup they used on the way to that time.
+   */
+  function drawCard(g, ctx, W, H) {
+    const c = g.boardCard, e = c.e, su = e.setup, hull = su && hullOf(su.ship), def = RR.TRACKS[g.trackIdx];
+    const touch = RR.input.touchMode;
+    ctx.fillStyle = 'rgba(7,7,26,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W - 8, 240), ph = 246;
+    const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
+    panel(ctx, x, y, pw, ph, PAL.pink);
+    text(ctx, e.name, W / 2, y + 7, c.rank === 1 ? PAL.gold : PAL.white, 2, 'center', PAL.plum);
+    text(ctx, '#' + c.rank + ' ON ' + def.name, W / 2, y + 25, PAL.sky, 1, 'center');
+
+    /* the rocket and the race */
+    const tx = hull ? x + 56 : x + 14;
+    if (hull) {
+      const spr = Art.ship(hull.design, 0);
+      ctx.drawImage(spr, x + 14, y + 38, spr.width * 2, spr.height * 2);
+      text(ctx, hull.name, tx, y + 40, PAL.white, 2, 'left', PAL.ink);
+    }
+    text(ctx, 'TIME ' + fmt(e.time), tx, y + 58, PAL.white);
+    text(ctx, 'BEST LAP ' + fmt(e.lap), tx, y + 68, PAL.silver);
+    const place = e.place >= 1 && e.place <= 6 ? ORD[e.place - 1] : '-';
+    text(ctx, place + ' VS ' + ((RR.DIFFS[e.diff] && RR.DIFFS[e.diff].name) || '?') + ' RIVALS', tx, y + 78, DIFF_COL[e.diff] || PAL.silver);
+    const shown = { ship: hull ? hull.id : null, stats: null, items: [] };
+    g.cardShown = shown;
+
+    if (!hull) {
+      text(ctx, 'NO SETUP ON RECORD', W / 2, y + 118, PAL.silver, 1, 'center');
+      text(ctx, 'THIS TIME WAS SET BEFORE THE', W / 2, y + 134, PAL.steel, 1, 'center');
+      text(ctx, 'LEADERBOARD SAVED ROCKETS', W / 2, y + 144, PAL.steel, 1, 'center');
+    } else {
+      /* stats */
+      const tuned = su.stats.reduce(function (a, lv, k) { return a + Math.max(0, lv - hull.base[k]); }, 0);
+      text(ctx, 'STATS', x + 14, y + 90, PAL.steel);
+      text(ctx, tuned ? '+' + tuned + ' POINTS PUT IN' : 'STOCK', x + pw - 14, y + 90, tuned ? PAL.yellow : PAL.steel, 1, 'right');
+      shown.stats = su.stats.slice();
+      RR.STATS.forEach(function (st, k) {
+        const ry = y + 101 + k * 11, lv = su.stats[k], base = hull.base[k], cap = hull.cap[k], bx = x + 86;
+        text(ctx, st.name, x + 14, ry, PAL.silver);
+        for (let n = 0; n < 10; n++) {
+          if (n >= cap) { ctx.fillStyle = PAL.slate; ctx.fillRect(bx + n * 5 + 1, ry + 3, 2, 1); continue; }
+          ctx.fillStyle = n < Math.min(base, lv) ? PAL.silver : n < lv ? PAL.yellow : PAL.dusk;
+          ctx.fillRect(bx + n * 5, ry, 4, 7);
+        }
+        text(ctx, String(lv), bx + 56, ry, lv > base ? PAL.yellow : PAL.white);
+      });
+
+      /* powerups */
+      const used = usedList(su);
+      text(ctx, 'POWERUPS USED', x + 14, y + 160, PAL.steel);
+      if (!used.length) text(ctx, 'NONE - A CLEAN RUN', x + 14, y + 174, PAL.lime);
+      const colW = Math.floor((pw - 28) / 2);
+      used.forEach(function (u, k) {
+        const cx = x + 14 + (k % 2) * colW, ry = y + 173 + Math.floor(k / 2) * 11, T = RR.ITEMS[u[0]];
+        ctx.drawImage(Art.icons[u[0]], cx, ry - 1);
+        text(ctx, T.name, cx + 12, ry, T.color);
+        text(ctx, 'X' + u[1], cx + colW - 8, ry, PAL.white, 1, 'right');
+        shown.items.push(u);
+      });
+    }
+
+    const bw = 90;
+    button(g, ctx, touch ? 'BACK' : 'BACK (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
+      function () { g.closeCard(); }, PAL.lime);
   }
 
   /**

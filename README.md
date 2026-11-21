@@ -42,6 +42,8 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
   - Progress is saved in the browser, like your records.
 - **Zoom** the world in or out in whole-pixel steps, so the pixel art stays sharp. The HUD
   keeps its size at every level, and your choice is remembered.
+- **World top 10** for each course: every row shows the pilot's rocket and the powerups they
+  used; tap a row to see their whole setup.
 - Hull damage, wrecks and respawns, lap and race records, an attract-mode race behind the menu.
 - All art is generated in code at start-up and all sound is synthesised, so there are no
   image or audio files to load.
@@ -59,7 +61,7 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
 | Move the controls | | Pause > MOVE CONTROLS: drag the fire stick and buttons where you like (kept separately for sideways and upright; RESET restores them). Steering needs no spot of its own: it starts wherever you touch |
 | Menu | Arrows, Enter | Tap |
 | Hangar | H on the menu; arrows pick a ship or stat and spend points, Enter closes | HANGAR button, then the arrows and - / + buttons |
-| Other | M mute, C CRT filter, F fullscreen, N pilot name, T world top 10 | FULLSCREEN, PILOT, TOP 10 buttons |
+| Other | M mute, C CRT filter, F fullscreen, N pilot name, T world top 10 (arrows and Enter open a pilot's setup) | FULLSCREEN, PILOT, TOP 10 buttons (tap a pilot for their setup) |
 
 A gamepad also works (stick or d-pad to turn, A to thrust, B to brake, X to fire, Y or LB for
 a do-over, Back to zoom, Start to pause).
@@ -203,13 +205,21 @@ The next pipeline run (or `./deploy.sh`) moves traffic back to the newest revisi
 | `GET /` | the game, from `public/` |
 | `GET /api/health` | `{ ok, store, env, version }`: which environment and commit answered |
 | `GET /api/scores?track=lunar` | top 10 race times for a course. With an `X-Pilot-Id` header it also returns `me`: that player's own row and world rank |
-| `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff, place }` |
+| `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff, place, setup }` |
 
 Leaderboard rows live in Firestore at `rocketracer/{track}/scores/{pid}`. Each player has an
 anonymous id generated in their browser and keeps one row per course, replaced only by a
-faster time. A row records the time, best lap, rival level and `place`: where the pilot finished
-in that race (1 to 6). The top-10 screen shows it, and shows your own row and rank underneath
-when you are not in the top 10.
+faster time. A row records the time, best lap, rival level, `place` (where the pilot finished
+in that race, 1 to 6) and `setup`: `{ ship, stats, items }`, the rocket flown, its five stat
+levels, and how many of each powerup were used. A powerup counts as used when it takes effect:
+nitro, shield and repair on pick-up, a weapon at its first shot, a do-over when it is taken.
+The setup belongs to the record run, so a slower race leaves it alone. Rows from before either
+field existed have `null`.
+
+The top-10 screen shows each pilot's rocket and powerups in the row (the three they used most;
+`+` when there were more), and your own row and rank underneath when you are not in the top 10.
+Tap a row (or pick it with the arrow keys and press Enter) for that pilot's card: the rocket, its
+stat levels (grey: the ship's own, yellow: points put in), and every powerup used.
 
 Configuration, all optional environment variables:
 

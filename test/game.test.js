@@ -220,6 +220,133 @@ test('leaderboard: rows show the race place, and your own row appears below the 
   } finally { await ctx.close(); own.close(); }
 });
 
+/** A server of its own (so other tests' races cannot change its board), with these rows posted first. */
+async function ownBoard(rows) {
+  const own = http.createServer(createApp(memoryStore()));
+  await new Promise((resolve) => own.listen(0, '127.0.0.1', resolve));
+  const url = 'http://127.0.0.1:' + own.address().port;
+  for (const b of rows) {
+    const res = await fetch(url + '/api/scores', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+    assert.strictEqual(res.status, 200, await res.text());
+  }
+  return { own, url };
+}
+
+test('leaderboard: a race sends the rocket flown, its stat levels and the powerups actually used', { skip }, async () => {
+  const { own, url } = await ownBoard([]);
+  const { page, ctx, errors } = await openGame(null, url);
+  try {
+    await page.waitForFunction(() => RR.net.online);
+    const r = await page.evaluate(async () => {
+      const g = RR.game, n = RR.net, read = RR.input.read, out = {};
+      // fly a tuned DART: two points in ACCEL and one in HULL (its own levels are 4 4 4 2 3)
+      g.prog.wins = 2; g.prog.points = 3; g.prog.ship = 1;
+      g.spend(1, 0, 1); g.spend(1, 0, 1); g.spend(1, 3, 1);
+      g.trackIdx = 0; g.startRace(false); g.state = 'play';
+      let fire = false;
+      RR.input.read = () => ({ turn: 0, thrust: 0, brake: 0, fire: fire, aim: null, stick: false });
+      T.run(4.2); // past the countdown, hands off
+      const p = g.player, pk = g.pickups[0];
+      const grab = (type) => { pk.on = true; pk.type = type; p.x = pk.x; p.y = pk.y; p.vx = p.vy = 0; g.step(1 / 120); };
+      const shoot = () => { fire = true; g.step(1 / 120); fire = false; g.step(1 / 120); };
+      grab('nitro'); grab('shield');
+      grab('blaster'); // picked up but never fired: not used
+      grab('missile'); shoot(); T.run(0.6); shoot(); // two missiles from one pick-up: one missile powerup used
+      T.run(0.6); grab('missile'); shoot(); // a second pick-up, fired (once the launcher has reloaded)
+      out.during = Object.assign({}, p.used);
+      grab('rewind'); T.run(1.2); g.tryRewind(); T.run(1.5); // a do-over, taken
+      grab('rewind'); // and one picked up but never taken
+      // nothing more to pick up or fire: the autopilot brings it home
+      g.pickups.forEach((q) => { q.on = false; q.timer = 1e9; });
+      p.weapon = null; p.ammo = 0;
+      RR.input.read = read;
+      p.ai = T.ai();
+      let k = 0; while (!g.playerDone && k++ < 120 * 400) g.step(1 / 120);
+      out.done = g.playerDone;
+      for (let i = 0; i < 100 && !n.result; i++) await new Promise((res) => setTimeout(res, 50));
+      out.result = n.result;
+      out.mine = n.me.lunar && n.me.lunar.setup;
+      out.row = n.boards.lunar && n.boards.lunar[0] && n.boards.lunar[0].setup;
+      return out;
+    });
+    assert.deepStrictEqual(r.during, { nitro: 1, shield: 1, missile: 2 }, 'tallied as they were used');
+    assert.ok(r.done && r.result && !r.result.error, JSON.stringify(r.result));
+    const want = { ship: 'dart', stats: [6, 4, 4, 3, 3], items: { nitro: 1, shield: 1, missile: 2, rewind: 1 } };
+    assert.deepStrictEqual(r.mine, want, 'your own row');
+    assert.deepStrictEqual(r.row, want, 'the top-ten row everyone sees');
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); own.close(); }
+});
+
+test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the arrows and Enter) opens their card', { skip }, async () => {
+  const at = (pid, name, time, setup) => Object.assign({ track: 'lunar', pid: 'card-' + pid.padEnd(8, '0'), name: name, time: time, lap: 14, diff: 2, place: 1 }, setup ? { setup } : {});
+  const { own, url } = await ownBoard([
+    at('a', 'COMET', 44, { ship: 'phoenix', stats: [8, 9, 7, 6, 5], items: { nitro: 3, shield: 1, missile: 2, rewind: 1 } }),
+    at('b', 'ZIPPY', 45, { ship: 'dart', stats: [6, 7, 6, 3, 3], items: { nitro: 1 } }),
+    at('c', 'ROCKY', 46, { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: {} }),
+    at('d', 'OLDIE', 47), // from before setups were saved
+  ]);
+  const { page, ctx, errors } = await openGame(null, url);
+  try {
+    await page.waitForFunction(() => RR.net.online);
+    await page.evaluate(() => { RR.game.trackIdx = 0; RR.game.showBoard(); });
+    await page.waitForFunction(() => RR.net.boards.lunar && RR.net.boards.lunar.length === 4);
+    await page.waitForTimeout(200);
+    const state = () => page.evaluate(() => {
+      const g = RR.game, c = g.boardCard;
+      return { state: g.state, card: c ? { rank: c.rank, name: c.e.name, shown: g.cardShown } : null, sel: g.boardSel };
+    });
+
+    // each row: the rocket, then the powerups most used first (two and a "+" when there are more than three)
+    const strips = await page.evaluate(() => RR.game.boardRows.map((r) => r.strip));
+    assert.deepStrictEqual(strips, [
+      { ship: 'phoenix', icons: ['nitro', 'missile'], more: 2 },
+      { ship: 'dart', icons: ['nitro'], more: 0 },
+      { ship: 'sparrow', icons: [], more: 0 },
+      null,
+    ]);
+
+    // click the top row: their card
+    const box = await page.locator('#hud').boundingBox();
+    const k = box.width / await page.evaluate(() => RR.game.W);
+    const click = async (label) => {
+      const u = await page.evaluate((l) => RR.game.ui.find((b) => b.label === l) || null, label);
+      assert.ok(u, 'on screen: ' + label);
+      await page.mouse.click(box.x + (u.x + u.w / 2) * k, box.y + (u.y + u.h / 2) * k);
+      await page.waitForTimeout(150);
+    };
+    await click('PILOT 1');
+    let s = await state();
+    assert.deepStrictEqual(s.card, { rank: 1, name: 'COMET', shown: {
+      ship: 'phoenix', stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['rewind', 1]],
+    } });
+    await click('BACK (ENTER)');
+    s = await state();
+    assert.deepStrictEqual([s.state, s.card], ['board', null], 'back to the board');
+
+    // keyboard: arrows pick a row, Enter opens it, Esc steps back out one level at a time
+    const key = async (name, times) => { for (let i = 0; i < (times || 1); i++) { await page.keyboard.press(name); await page.waitForTimeout(60); } };
+    await key('ArrowDown', 4); // from the clicked row 1 down to row 4... wrapping to the top
+    assert.strictEqual((await state()).sel, 0);
+    await key('ArrowUp');
+    assert.strictEqual((await state()).sel, 3, 'up from the top wraps to the bottom');
+    await key('Enter');
+    s = await state();
+    assert.deepStrictEqual(s.card, { rank: 4, name: 'OLDIE', shown: { ship: null, stats: null, items: [] } }, 'an old row: no setup on record');
+    await key('Escape');
+    assert.deepStrictEqual([(await state()).state, (await state()).card], ['board', null]);
+    await key('ArrowUp');
+    await key('Enter');
+    s = await state();
+    assert.deepStrictEqual(s.card, { rank: 3, name: 'ROCKY', shown: { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: [] } }, 'a clean run');
+    await key('Enter');
+    assert.strictEqual((await state()).card, null, 'Enter closes the card too');
+    await key('Escape');
+    assert.strictEqual((await state()).state, 'title', 'and Esc the board');
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); own.close(); }
+});
+
 test('do-over: undoes a wreck', { skip }, async () => {
   const { page, ctx, errors } = await openGame();
   try {

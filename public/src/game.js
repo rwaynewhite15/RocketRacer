@@ -274,6 +274,7 @@
       spawn: { x: slot.x, y: slot.y, a: slot.a },
       hp: lo.maxHp, shield: 0, nitro: 0, stun: 0, spinRate: 0, emp: 0, invuln: 0, dead: 0,
       weapon: null, ammo: 0, cool: 0, prevFire: false, stickHeld: false, stickAim: null, launch: null,
+      used: {}, fresh: false, // powerups used this race (for the leaderboard), and a weapon pack not yet fired
       nextCp: 0, cpCount: 0, lap: 0, lapStart: 0, lapTimes: [], bestLap: 0,
       finished: false, finishTime: 0, place: i + 1, progress: 0,
       input: { turn: 0, thrust: 0, brake: 0, fire: false },
@@ -345,6 +346,8 @@
       return s;
     });
     g.player = g.ships[0];
+    // what the player is flying, for the leaderboard (the hangar cannot change it mid-race)
+    g.player.setup = { ship: hull.id, stats: STATS.map(function (st, k) { return G.statLevel(g.prog.ship, k); }) };
     g.order = g.ships.slice();
     g.rocks = tr.rocks.map(makeRock);
     g.pickups = tr.pickups.map(function (p, i) {
@@ -379,9 +382,19 @@
     RR.net.load(RR.TRACKS[this.trackIdx].id);
     RR.audio.sfx('select');
     this.state = 'board';
+    this.boardSel = -1; this.boardCard = null;
   };
   G.closeBoard = function () {
-    if (this.state === 'board') { this.state = 'title'; RR.audio.sfx('select'); }
+    if (this.state === 'board') { this.state = 'title'; this.boardCard = null; RR.audio.sfx('select'); }
+  };
+  /** A pilot's card: their rocket, its stat levels and the powerups they used. `row` is { e, rank }. */
+  G.openCard = function (row) {
+    if (this.state !== 'board' || !row || !row.e) return;
+    this.boardCard = row;
+    RR.audio.sfx('confirm');
+  };
+  G.closeCard = function () {
+    if (this.boardCard) { this.boardCard = null; RR.audio.sfx('select'); }
   };
   /** Sound on/off (M key, or the SOUND button on touch screens). Remembered between visits. */
   G.toggleSound = function () {
@@ -753,6 +766,7 @@
       return;
     }
     p.rewind = 0;
+    tally(p, 'rewind');
     const pts = p.hist.slice();
     pts.push({ x: p.x, y: p.y, angle: p.angle }); // the way back starts from where we are now
     p.rw = {
@@ -926,6 +940,7 @@
       snd(g, 'emp', s.x, s.y);
       if (s === g.player && !g.demo) g.flash = 0.35;
     }
+    if (s.weapon && s.fresh) { tally(s, s.weapon); s.fresh = false; } // a weapon pick-up counts once, at its first shot
     if (s.weapon && --s.ammo <= 0) { s.weapon = null; s.ammo = 0; }
   }
 
@@ -1081,6 +1096,9 @@
 
   /* ------------------------------------------------------------ pickups */
 
+  /** One more use of powerup `type` by ship `s` this race. */
+  function tally(s, type) { s.used[type] = (s.used[type] || 0) + 1; }
+
   function collect(s, p, g) {
     p.on = false;
     p.timer = C.PICK_RESPAWN;
@@ -1088,6 +1106,7 @@
     if (T.ammo) {
       if (s.weapon === p.type) s.ammo = Math.min(T.ammo * 2, s.ammo + T.ammo);
       else { s.weapon = p.type; s.ammo = T.ammo; }
+      s.fresh = true; // counted as used once it is fired
       if (isP) RR.audio.sfx('weapon');
     } else if (p.type === 'nitro') {
       s.nitro = C.NITRO_TIME;
@@ -1100,9 +1119,10 @@
       s.hp = Math.min(s.maxHp, s.hp + 50);
       if (isP) RR.audio.sfx('power');
     } else if (p.type === 'rewind') {
-      s.rewind = 1;
+      s.rewind = 1; // counted as used when the do-over is taken
       if (isP) { RR.audio.sfx('power'); banner(g, 'DO-OVER READY', PAL.violet, 1.6, 3); }
     }
+    if (!T.ammo && p.type !== 'rewind') tally(s, p.type); // nitro, shield and repair act at once
     burst(g, p.x, p.y, 12, 120, T.ammo ? FX.fire : p.type === 'rewind' ? FX.ion : FX.shield, 0.45);
     ringFx(g, p.x, p.y, 6, 20, 0.22, T.color);
     if (isP) floatText(g, p.x, p.y - 12, T.name, T.color);
@@ -1343,7 +1363,10 @@
     if (s.bestLap && (!rec.lap || s.bestLap < rec.lap)) rec.lap = s.bestLap;
     g.best[id] = rec;
     award(g, s.place); // (saves)
-    RR.net.submit(id, { name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx, place: s.place });
+    RR.net.submit(id, {
+      name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx, place: s.place,
+      setup: { ship: s.setup.ship, stats: s.setup.stats.slice(), items: Object.assign({}, s.used) },
+    });
   }
 
   function passCp(s, g, cp) {
@@ -1812,7 +1835,15 @@
       if (d) { if (g.hangarRow === 0) g.hangarBrowse(d); else g.spend(g.hangarShip, g.hangarRow - 1, d); }
       if (hit.ok || hit.pause || hit.hangar) g.closeHangar();
     } else if (g.state === 'board') {
-      if (hit.ok || hit.pause || hit.board || hit.fire) g.closeBoard();
+      const rows = g.boardRows || [], n = rows.length;
+      if (g.boardCard) {
+        if (hit.ok || hit.pause || hit.board || hit.fire) g.closeCard();
+      } else if ((hit.up || hit.down) && n) {
+        // arrows pick a row, Enter opens it; with nothing picked, Enter closes the board as before
+        g.boardSel = hit.up ? (g.boardSel <= 0 ? n - 1 : g.boardSel - 1) : (g.boardSel + 1) % n;
+        RR.audio.sfx('select');
+      } else if (hit.ok && rows[g.boardSel]) g.openCard(rows[g.boardSel]);
+      else if (hit.ok || hit.pause || hit.board || hit.fire) g.closeBoard();
     } else if (g.state === 'play') {
       if (hit.pause) g.pause();
       else if (hit.rewind) g.tryRewind();

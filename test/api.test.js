@@ -4,7 +4,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
-const { createApp, cleanName, validateScore } = require('../server');
+const { createApp, cleanName, validateScore, cleanSetup } = require('../server');
 const { memoryStore } = require('../lib/store');
 
 function start() {
@@ -126,6 +126,55 @@ test('rows carry the finishing place, and a pilot can look up their own row and 
     r = await (await post(base, old)).json();
     assert.deepStrictEqual([r.rank, r.best.place, r.scores[0].place], [1, null, null]);
     assert.strictEqual(JSON.stringify(r).includes('pilot-'), false, 'ids never come back');
+  } finally { server.close(); }
+});
+
+test('each time keeps the setup it was set with: rocket, stat levels and powerups used', async () => {
+  const { server, base } = await start();
+  try {
+    const setup = { ship: 'dart', stats: [6, 7, 5, 3, 4], items: { nitro: 2, missile: 1, mine: 0 } };
+    let r = await (await post(base, run({ pid: 'pilot-setup001', name: 'ZIP', time: 76, setup }))).json();
+    const stored = { ship: 'dart', stats: [6, 7, 5, 3, 4], items: { nitro: 2, missile: 1 } }; // unused items dropped
+    assert.deepStrictEqual(r.best.setup, stored);
+    assert.deepStrictEqual(r.scores[0].setup, stored);
+    assert.deepStrictEqual((await board(base, 'lunar', 'pilot-setup001')).me.setup, stored, 'in your own row too');
+    assert.deepStrictEqual((await board(base, 'lunar')).scores[0].setup, stored, 'and for everyone else');
+
+    // the setup belongs to the record run: a slower race does not change it, a faster one does
+    const other = { ship: 'phoenix', stats: [9, 9, 9, 9, 9], items: { shield: 3 } };
+    r = await (await post(base, run({ pid: 'pilot-setup001', name: 'ZIP', time: 85, setup: other }))).json();
+    assert.deepStrictEqual([r.improved, r.best.setup], [false, stored]);
+    r = await (await post(base, run({ pid: 'pilot-setup001', name: 'ZIP', time: 74, setup: other }))).json();
+    assert.deepStrictEqual([r.improved, r.best.setup], [true, other]);
+
+    // a clean run (no powerups) keeps an empty list; a page from before setups sends none: null
+    r = await (await post(base, run({ pid: 'pilot-setup002', name: 'CLEAN', time: 77, setup: { ship: 'sparrow', stats: [3, 3, 3, 3, 3] } }))).json();
+    assert.deepStrictEqual(r.best.setup, { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: {} });
+    r = await (await post(base, run({ pid: 'pilot-setup003', name: 'OLD', time: 78 }))).json();
+    assert.strictEqual(r.best.setup, null);
+    assert.deepStrictEqual((await board(base, 'lunar')).scores.map((e) => e.name), ['ZIP', 'CLEAN', 'OLD']);
+
+  } finally { server.close(); }
+});
+
+test('setups that are not a known rocket, five stat levels and known powerup counts are turned away', async () => {
+  const { server, base } = await start(); // its own server: this is more posts than the rate limit allows one test
+  try {
+    const bad = [
+      'dart', [], { ship: 'xwing', stats: [3, 3, 3, 3, 3] }, { ship: 'dart' }, { ship: 'dart', stats: [3, 3, 3, 3] },
+      { ship: 'dart', stats: [3, 3, 3, 3, 11] }, { ship: 'dart', stats: [3, 3, 3, 3, 0] }, { ship: 'dart', stats: [3, 3, 3, 3, 2.5] },
+      { ship: 'dart', stats: [3, 3, 3, 3, '3'] }, { ship: 'dart', stats: [3, 3, 3, 3, 3], items: [1] },
+      { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { laser: 1 } }, { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { nitro: -1 } },
+      { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { nitro: 100 } }, { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { nitro: 1.5 } },
+      { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { constructor: 1 } },
+    ];
+    for (const b of bad) assert.strictEqual((await post(base, run({ pid: 'pilot-setup009', setup: b }))).status, 400, JSON.stringify(b));
+    const proto = '{"track":"lunar","pid":"pilot-setup009","name":"X","time":75.5,"lap":24.2,"diff":1,"place":2,' +
+      '"setup":{"ship":"dart","stats":[3,3,3,3,3],"items":{"__proto__":{"nitro":1}}}}';
+    assert.strictEqual((await post(base, proto, true)).status, 400, '__proto__ is not an item');
+    assert.strictEqual((await board(base, 'lunar', 'pilot-setup009')).me, null, 'none of them was stored');
+    assert.deepStrictEqual(cleanSetup({ ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2, rewind: 0 } }),
+      { ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2 } });
   } finally { server.close(); }
 });
 
