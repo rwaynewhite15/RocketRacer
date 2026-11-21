@@ -1085,6 +1085,8 @@ async function phoneRace(viewport) {
   return {
     ctx, page, errors,
     layout: () => page.evaluate(() => RR.touchLayout(RR.game.W, RR.game.H, RR.game.inset)),
+    // the player's rocket on screen (game pixels), as steering sees it (once a frame has placed it)
+    rocket: async () => { await page.waitForFunction(() => RR.input.touch.rocket); return page.evaluate(() => RR.input.touch.rocket); },
     down: (...list) => cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: pts(list) }),
     move: (...list) => cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: pts(list) }),
     up: () => cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }),
@@ -1098,60 +1100,70 @@ async function phoneRace(viewport) {
 }
 const angleGap = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
 
-test('touch: dragging from anywhere steers that way, and the farther the drag the more power, up to a maximum', { skip }, async () => {
+test('touch: steering starts from the rocket: it heads from the rocket towards the thumb, and the farther apart they are the more power, up to a maximum', { skip }, async () => {
   const ph = await phoneRace();
   try {
     const { W, H, DEAD, MAX } = await ph.page.evaluate(() => ({ W: RR.game.W, H: RR.game.H, DEAD: RR.input.DRAG_DEAD, MAX: RR.input.DRAG_MAX }));
-    const drag = () => ph.page.evaluate(() => { const d = RR.input.touch.drag; return d && { x: d.x, y: d.y, dist: d.dist, power: d.power, ang: d.ang, max: d.max }; });
-    const ship = () => ph.page.evaluate(() => { const p = RR.game.player; return { angle: p.angle, speed: Math.hypot(p.vx, p.vy), thrust: RR.input.read(p).thrust, burning: p.thrusting }; });
+    const still = () => ph.page.evaluate(() => { const p = RR.game.player; p.vx = p.vy = 0; p.angVel = 0; });
+    // the steering this frame, with the rocket it was measured from
+    const sample = () => ph.page.evaluate(() => {
+      const t = RR.input.touch, d = t.drag, p = RR.game.player, inp = RR.input.read(p);
+      return { rocket: t.rocket, drag: d && { x: d.x, y: d.y, power: d.power, ang: d.ang, dist: d.dist }, thrust: inp.thrust, angle: p.angle, speed: Math.hypot(p.vx, p.vy) };
+    });
+    const want = (r, fx, fy) => {
+      const m = Math.min(Math.hypot(fx - r.x, fy - r.y), MAX);
+      return { power: m <= DEAD ? 0 : (m - DEAD) / (MAX - DEAD), ang: Math.atan2(fy - r.y, fx - r.x) };
+    };
     const near = (a, b, tol, what) => assert.ok(Math.abs(a - b) <= tol, what + ': ' + a + ' vs ' + b);
 
-    // two quite different starting points: the open middle of the screen, and up in a corner
-    for (const [sx, sy] of [[Math.round(W * 0.4), Math.round(H * 0.5)], [30, 60]]) {
-      await ph.page.evaluate(() => { const p = RR.game.player; p.vx = p.vy = 0; p.angle = 0; p.angVel = 0; });
-      await ph.down([sx, sy]);
-      await ph.page.waitForTimeout(120);
-      let d = await drag(), sh = await ship();
-      assert.ok(d, 'a touch at ' + [sx, sy] + ' starts a drag');
-      assert.deepStrictEqual([d.x, d.y, d.power], [sx, sy, 0], 'it starts where the thumb landed, with no power');
-      assert.deepStrictEqual([sh.thrust, sh.burning], [0, 0], 'so a tap alone burns nothing');
+    await still();
+    await ph.page.waitForTimeout(150);
+    let r = await ph.rocket();
+    assert.ok(r && r.x > 0 && r.x < W && r.y > 0 && r.y < H, 'the rocket is on screen: ' + JSON.stringify(r));
 
-      await ph.move([sx, sy + 31]); // straight down, about half way
-      await ph.page.waitForTimeout(700);
-      d = await drag(); sh = await ship();
-      near(d.power, (31 - DEAD) / (MAX - DEAD), 0.01, 'power follows the distance');
-      near(d.ang, Math.PI / 2, 0.02, 'pointing down');
-      near(sh.thrust, d.power, 0.001, 'the engine runs at that power');
-      near(sh.burning, d.power, 0.001, 'and the rocket burns at it');
-      assert.ok(angleGap(sh.angle, Math.PI / 2) < 0.3, 'the rocket turned to face down: ' + sh.angle);
-      const half = sh.speed;
-
-      await ph.move([sx, sy + MAX]); // exactly at the limit
-      await ph.page.waitForTimeout(100);
-      d = await drag();
-      near(d.power, 1, 0.001, 'full power at the limit');
-      assert.deepStrictEqual([d.x, d.y], [sx, sy], 'the starting point has not moved yet');
-
-      await ph.move([sx, sy + MAX + 50]); // well past it
-      await ph.page.waitForTimeout(900);
-      d = await drag(); sh = await ship();
-      assert.strictEqual(d.power, 1, 'never more than full');
-      near(d.dist, MAX, 0.01, 'capped at the limit');
-      near(d.y, sy + 50, 0.5, 'past the limit the starting point trails the thumb');
-      assert.ok(sh.speed > half * 1.3, 'more power, more speed: ' + Math.round(half) + ' -> ' + Math.round(sh.speed));
-
-      await ph.move([sx, sy + MAX + 30]); // ease back 20
-      await ph.page.waitForTimeout(100);
-      d = await drag();
-      near(d.power, (MAX - 20 - DEAD) / (MAX - DEAD), 0.01, 'easing back lowers the power straight away');
-
+    // a thumb at several distances and ways from the rocket
+    for (const [ox, oy] of [[0, 40], [60, 0], [-30, -30], [0, MAX], [-(MAX + 20), 20]]) {
+      await still();
+      r = await ph.rocket();
+      const fx = r.x + ox, fy = r.y + oy;
+      await ph.down([fx, fy]);
+      await ph.page.waitForTimeout(80);
+      const s = await sample(), w = want(s.rocket, fx, fy);
+      assert.ok(s.drag, 'a touch at ' + [ox, oy] + ' from the rocket steers');
+      assert.deepStrictEqual([s.drag.x, s.drag.y], [s.rocket.x, s.rocket.y], 'measured from the rocket, not from where the thumb landed');
+      near(s.drag.power, w.power, 0.03, 'power from the distance (' + [ox, oy] + ')');
+      near(s.drag.ang, w.ang, 0.03, 'heading for the thumb (' + [ox, oy] + ')');
+      near(s.thrust, s.drag.power, 0.001, 'the engine runs at that power');
       await ph.up();
-      await ph.page.waitForTimeout(100);
-      assert.strictEqual(await drag(), null, 'lifting the thumb ends it');
-      assert.strictEqual((await ship()).thrust, 0);
+      await ph.page.waitForTimeout(60);
     }
 
-    // a touch that starts on a button, the brake or the fire stick is not a steering drag
+    // a thumb on the rocket: no power (coast); far away: never more than full
+    await still();
+    r = await ph.rocket();
+    await ph.down([r.x + 3, r.y + 3]);
+    await ph.page.waitForTimeout(80);
+    let s = await sample();
+    assert.deepStrictEqual([s.drag.power, s.thrust], [0, 0], 'a thumb on the rocket coasts');
+    await ph.move([4, r.y]); // the far edge of the screen
+    await ph.page.waitForTimeout(80);
+    s = await sample();
+    assert.deepStrictEqual([s.drag.power, s.drag.dist], [1, MAX], 'full power, no more, far from the rocket');
+    await ph.up();
+
+    // held off to the right at full power: the rocket turns to face the thumb and speeds up
+    await ph.page.evaluate(() => { const p = RR.game.player; p.vx = p.vy = 0; p.angVel = 0; p.angle = Math.PI / 2; });
+    r = await ph.rocket();
+    await ph.down([Math.min(W - 10, r.x + MAX + 60), r.y]);
+    await ph.page.waitForTimeout(900);
+    s = await sample();
+    assert.ok(angleGap(s.angle, s.drag.ang) < 0.3, 'the rocket turned to face the thumb: ' + s.angle + ' vs ' + s.drag.ang);
+    assert.ok(s.speed > 100, 'and picked up speed: ' + s.speed);
+    await ph.up();
+    await ph.page.waitForTimeout(80);
+    assert.strictEqual((await sample()).drag, null, 'lifting the thumb ends it');
+
+    // a touch that starts on a button, the brake or the fire stick is not steering
     const L = await ph.layout();
     const zoom = await ph.page.evaluate(() => RR.game.ui.find((b) => b.label === 'ZOOM'));
     for (const [what, x, y] of [['the ZOOM button', zoom.x + zoom.w / 2, zoom.y + zoom.h / 2], ['BRAKE', L.brake.x + 20, L.brake.y + 20], ['the fire stick', L.fire.x, L.fire.y]]) {
@@ -1159,94 +1171,94 @@ test('touch: dragging from anywhere steers that way, and the farther the drag th
       await ph.page.waitForTimeout(120);
       await ph.move([x - 40, y + 5]);
       await ph.page.waitForTimeout(120);
-      assert.strictEqual(await drag(), null, 'starting on ' + what);
+      assert.strictEqual((await sample()).drag, null, 'starting on ' + what);
       await ph.up();
       await ph.page.waitForTimeout(80);
     }
 
     // both thumbs at once: one steering, one aiming
-    await ph.down([60, 200], [L.fire.x, L.fire.y]);
+    await still();
+    r = await ph.rocket();
+    await ph.down([4, r.y], [L.fire.x, L.fire.y]);
     await ph.page.waitForTimeout(80);
-    await ph.move([60 + MAX, 200], [L.fire.x, L.fire.y - 30]);
+    await ph.move([4, r.y], [L.fire.x, L.fire.y - 30]);
     await ph.page.waitForTimeout(150);
     const both = await ph.page.evaluate(() => ({ power: RR.input.touch.drag.power, aim: RR.input.touch.aim, fire: RR.input.touch.fire }));
     assert.deepStrictEqual([both.power, both.fire], [1, true]);
-    assert.ok(angleGap(both.aim, -Math.PI / 2) < 0.05, 'aiming up while steering right');
+    assert.ok(angleGap(both.aim, -Math.PI / 2) < 0.05, 'aiming up while steering');
     await ph.up();
     assert.deepStrictEqual(ph.errors, []);
   } finally { await ph.ctx.close(); }
 });
 
-test('touch: a power meter appears with the drag, fills as it lengthens, and tops out at MAX; no circle is drawn round the touch', { skip }, async () => {
+test('touch: a power meter appears by the thumb, fills with the distance from the rocket, and tops out at MAX; the steering line comes out of the rocket; no circle round the touch', { skip }, async () => {
   const ph = await phoneRace();
   try {
     const { W, H, DEAD, MAX } = await ph.page.evaluate(() => ({ W: RR.game.W, H: RR.game.H, DEAD: RR.input.DRAG_DEAD, MAX: RR.input.DRAG_MAX }));
+    const still = () => ph.page.evaluate(() => { const p = RR.game.player; p.vx = p.vy = 0; p.angVel = 0; p.accK = 0; }); // (it stays put on screen)
     // the meter as drawn, plus the colour actually on screen in the middle of each of its segments
     const meter = () => ph.page.evaluate(() => {
-      const m = RR.game.meter;
+      const m = RR.game.meter, d = RR.input.touch.drag;
       if (!m) return null;
-      const c = document.getElementById('hud').getContext('2d'), hex = (d) => '#' + [d[0], d[1], d[2]].map((v) => v.toString(16).padStart(2, '0')).join('');
+      const c = document.getElementById('hud').getContext('2d'), hex = (q) => '#' + [q[0], q[1], q[2]].map((v) => v.toString(16).padStart(2, '0')).join('');
       const segs = [];
       for (let i = 0; i < m.of; i++) segs.push(hex(c.getImageData(m.segX + i * m.segStep + 2, m.segY + 3, 1, 1).data));
-      return Object.assign({ segs, dark: RR.PAL.dusk }, m);
+      return Object.assign({ segs, dark: RR.PAL.dusk, power: d && d.power }, m);
     });
     const litOnScreen = (m) => m.segs.filter((c) => c !== m.dark).length;
+    const inked = (pts) => ph.page.evaluate((pts) => {
+      const c = document.getElementById('hud').getContext('2d');
+      return pts.filter(([x, y]) => x >= 0 && y >= 0 && x < RR.game.W && y < RR.game.H && c.getImageData(Math.round(x), Math.round(y), 1, 1).data[3] > 0);
+    }, pts);
 
     assert.strictEqual(await meter(), null, 'no meter until the screen is touched');
+    await still();
+    await ph.page.waitForTimeout(400);
+    const r = await ph.rocket();
 
-    for (const [sx, sy] of [[Math.round(W * 0.45), Math.round(H * 0.55)], [24, 40], [W - 30, H - 150]]) {
-      await ph.down([sx, sy]);
-      await ph.page.waitForTimeout(120);
-      let m = await meter();
-      assert.ok(m, 'the meter appears on touch at ' + [sx, sy]);
-      assert.deepStrictEqual([m.lit, litOnScreen(m), m.full], [0, 0, false], 'empty to begin with');
-
-      // drag out in steps: the meter only ever grows, and matches the distance
-      const dir = sy > H / 2 ? -1 : 1; // drag up from low on the screen, down from high
-      let last = 0;
-      for (const d of [12, 20, 31, 40, 50, MAX]) {
-        await ph.move([sx, sy + dir * d]);
-        await ph.page.waitForTimeout(90);
-        m = await meter();
-        const want = Math.max(1, Math.round(((d - DEAD) / (MAX - DEAD)) * m.of));
-        assert.strictEqual(m.lit, want, 'at ' + d + ' px the meter reads ' + m.lit + '/' + m.of);
-        assert.strictEqual(litOnScreen(m), m.lit, 'and that many segments are lit on screen: ' + m.segs);
-        assert.ok(m.lit >= last, 'never falling as the drag lengthens');
-        last = m.lit;
-      }
-      assert.deepStrictEqual([m.lit, m.full], [m.of, true], 'full at the limit');
-
-      // no circle round the touch: the screen to the sides of the drag and behind it is left clear
-      // (checked out in the open, where no other part of the HUD is in the way)
-      const open = sx > 80 && sx < W - 80 && sy > H * 0.4 && sy < H * 0.6;
-      const clear = !open ? [] : await ph.page.evaluate(([x, y, R, dir]) => {
-        const c = document.getElementById('hud').getContext('2d'), W = RR.game.W, H = RR.game.H, inked = [];
-        for (const r of [R, R * 0.75, R * 0.5, R * 0.25]) {
-          for (const a of [0, Math.PI, -dir * Math.PI / 2, -dir * Math.PI / 4, -dir * 3 * Math.PI / 4]) {
-            const px = Math.round(x + Math.cos(a) * r), py = Math.round(y + Math.sin(a) * r);
-            if (px < 0 || py < 0 || px >= W || py >= H) continue;
-            if (c.getImageData(px, py, 1, 1).data[3]) inked.push([px, py]);
-          }
-        }
-        return inked;
-      }, [sx, sy, MAX, dir]);
-      assert.deepStrictEqual(clear, [], 'nothing drawn in a circle round the touch');
-
-      await ph.move([sx, sy + dir * (MAX + 40)]);
+    // a thumb straight below the rocket, moving away from it: the meter only ever grows, and matches the power
+    await ph.down([r.x, r.y + 8]);
+    await ph.page.waitForTimeout(100);
+    let m = await meter();
+    assert.ok(m, 'the meter appears on touch');
+    assert.deepStrictEqual([m.lit, litOnScreen(m), m.full], [0, 0, false], 'empty with the thumb on the rocket');
+    let last = 0;
+    for (const d of [20, 40, 60, 80, MAX]) {
+      await ph.move([r.x, r.y + d]);
       await ph.page.waitForTimeout(90);
       m = await meter();
-      assert.deepStrictEqual([m.lit, litOnScreen(m), m.full], [m.of, m.of, true], 'and no more than full past it');
-      assert.ok(m.x >= 0 && m.y >= 0 && m.x + m.w <= W && m.y + m.h <= H, 'the meter stays on screen: ' + JSON.stringify([m.x, m.y, m.w, m.h]));
-
-      await ph.move([sx, sy + dir * (MAX + 40 - 28)]); // ease back half way
-      await ph.page.waitForTimeout(90);
-      m = await meter();
-      assert.deepStrictEqual([m.lit, m.full], [Math.round(((MAX - 28 - DEAD) / (MAX - DEAD)) * m.of), false], 'easing back empties it again');
-
-      await ph.up();
-      await ph.page.waitForTimeout(120);
-      assert.strictEqual(await meter(), null, 'gone when the thumb lifts');
+      assert.ok(Math.abs(m.power - (d - DEAD) / (MAX - DEAD)) < 0.03, 'at ' + d + ' px from the rocket the power is ' + m.power);
+      assert.strictEqual(m.lit, Math.max(1, Math.round(m.power * m.of)), 'the meter reads ' + m.lit + '/' + m.of);
+      assert.strictEqual(litOnScreen(m), m.lit, 'and that many segments are lit on screen: ' + m.segs);
+      assert.ok(m.lit >= last, 'never falling as the thumb moves away');
+      last = m.lit;
+      assert.ok(m.y + m.h <= r.y + d - 30 || m.y >= r.y + d + 30, 'beside the thumb, not under it');
     }
+    assert.deepStrictEqual([m.lit, m.full], [m.of, true], 'full at the limit');
+
+    // the line runs out of the rocket towards the thumb: inked just below the rocket, along the way
+    const fx = r.x, fy = Math.min(H - 20, r.y + MAX + 50);
+    await ph.move([fx, fy]);
+    await ph.page.waitForTimeout(100);
+    m = await meter();
+    assert.deepStrictEqual([m.lit, litOnScreen(m), m.full], [m.of, m.of, true], 'no more than full past it');
+    const along = [];
+    for (let k = 14; k < MAX - 4; k++) along.push([fx, r.y + k]);
+    assert.ok((await inked(along)).length > 10, 'a line comes out of the rocket towards the thumb');
+    // no circle round the thumb: clear to its sides and below it
+    const ring = [];
+    for (const rad of [10, 18, 26]) for (const a of [0, Math.PI, Math.PI / 2, Math.PI / 4, 3 * Math.PI / 4]) ring.push([fx + Math.cos(a) * rad, fy + Math.sin(a) * rad]);
+    assert.deepStrictEqual(await inked(ring), [], 'nothing drawn in a circle round the touch');
+    assert.ok(m.x >= 0 && m.y >= 0 && m.x + m.w <= W && m.y + m.h <= H, 'the meter stays on screen: ' + JSON.stringify([m.x, m.y, m.w, m.h]));
+
+    await ph.move([r.x, r.y + MAX / 2]); // back towards the rocket: the meter empties again
+    await ph.page.waitForTimeout(90);
+    m = await meter();
+    assert.ok(!m.full && m.lit === Math.max(1, Math.round(m.power * m.of)) && m.lit < m.of, 'easing back empties it: ' + m.lit);
+
+    await ph.up();
+    await ph.page.waitForTimeout(120);
+    assert.strictEqual(await meter(), null, 'gone when the thumb lifts');
     assert.deepStrictEqual(ph.errors, []);
   } finally { await ph.ctx.close(); }
 });
@@ -1441,25 +1453,27 @@ test('iPad with a keyboard: keys and touch fly the rocket together or apart; a k
     const MAX = await page.evaluate(() => RR.input.DRAG_MAX);
     const st = () => page.evaluate(() => {
       const I = RR.input, inp = I.read(RR.game.player), d = I.touch.drag;
-      return { touch: I.touchMode, power: d && d.power, ang: d && d.ang, turn: inp.turn, thrust: inp.thrust, fire: inp.fire };
+      return { touch: I.touchMode, power: d && d.power, ang: d && d.ang, rocket: I.touch.rocket, turn: inp.turn, thrust: inp.thrust, fire: inp.fire };
     });
+    const towards = (s, x, y) => Math.atan2(y - s.rocket.y, x - s.rocket.x); // from the rocket to the thumb
     assert.strictEqual((await st()).touch, true, 'a tablet starts with the touch controls');
 
-    // drag to steer, Space to fire: the drag carries on through the key press
-    await ph.down([200, 200]);
-    await wait(100);
-    await ph.move([200 + MAX + 10, 200]); // past the limit: full power
+    // steer with a thumb, Space to fire: the steering carries on through the key press
+    let r = await ph.rocket();
+    await ph.down([r.x + MAX + 20, r.y]); // beyond the limit from the rocket: full power
     await wait(150);
     assert.strictEqual((await st()).power, 1, 'flying with a drag');
     await kb.down('Space');
     await wait(150);
     let s = await st();
     assert.deepStrictEqual([s.touch, s.power, s.thrust, s.fire], [true, 1, 1, true], 'Space fires, and the drag and the touch controls stay');
-    await ph.move([210, 200 + MAX + 10]); // the thumb swings round to point down (from where the start point trailed to)
+    r = await ph.rocket();
+    const below = [r.x, r.y + MAX + 20];
+    await ph.move(below); // the thumb swings round below the rocket
     await wait(150);
     s = await st();
     assert.strictEqual(s.power, 1, 'still steering after the key press');
-    assert.ok(angleGap(s.ang, Math.PI / 2) < 0.02, 'and it follows the thumb: ' + s.ang);
+    assert.ok(angleGap(s.ang, towards(s, ...below)) < 0.03, 'and it follows the thumb: ' + s.ang);
     await kb.up('Space');
     await ph.up();
 
@@ -1491,13 +1505,13 @@ test('iPad with a keyboard: keys and touch fly the rocket together or apart; a k
     await kb.up('ArrowUp');
 
     // a thumb anywhere brings the touch controls back, and steers straight away
-    await ph.down([300, 300]);
-    await wait(100);
-    await ph.move([300, 300 - MAX - 10]);
+    r = await ph.rocket();
+    const above = [r.x, r.y - MAX - 20];
+    await ph.down(above);
     await wait(150);
     s = await st();
     assert.deepStrictEqual([s.touch, s.power, s.thrust], [true, 1, 1], 'touch is back');
-    assert.ok(angleGap(s.ang, -Math.PI / 2) < 0.02, 'steering up: ' + s.ang);
+    assert.ok(angleGap(s.ang, towards(s, ...above)) < 0.03, 'steering towards the thumb: ' + s.ang);
     await ph.up();
 
     // tapping buttons (pause, resume) is not flying with the touch controls: a key right after still clears them
@@ -1559,9 +1573,9 @@ test('iPad keyboard: the game holds the keyboard focus, knows keys by the names 
     // a held turn key out-steers a drag that wants the other way (the drag keeps the engine going)
     await page.evaluate(() => { const p = RR.game.player; p.angle = -Math.PI / 2; p.angVel = 0; }); // nose up
     const MAX = await page.evaluate(() => RR.input.DRAG_MAX);
-    await ph.down([300, 300]);
+    const rk = await ph.rocket();
+    await ph.down([rk.x + MAX + 20, rk.y]); // a thumb to the right of the rocket: on its own it turns right
     await wait(80);
-    await ph.move([300 + MAX + 10, 300]); // drag right: the drag alone turns right
     await wait(60);
     await page.evaluate(() => { const p = RR.game.player; p.angle = -Math.PI / 2; p.angVel = 0; });
     let r = await inp();
@@ -1576,7 +1590,7 @@ test('iPad keyboard: the game holds the keyboard focus, knows keys by the names 
     await wait(80);
 
     // a touch whose lift never arrived (a system gesture took it) is cleared once every finger is off
-    await page.evaluate(() => { RR.input.pointers[777] = { x: 200 + RR.input.DRAG_MAX, y: 200, sx: 200, sy: 200, role: 'steer', touch: true }; });
+    await page.evaluate(() => { RR.input.pointers[777] = { x: 4, y: 200, sx: 4, sy: 200, role: 'steer', touch: true }; /* the screen's edge, far from the rocket */ });
     await wait(60);
     assert.ok(await page.evaluate(() => RR.input.touch.drag && RR.input.touch.drag.power === 1), 'the stuck touch is steering');
     await ph.down([500, 300]);
@@ -1591,4 +1605,35 @@ test('iPad keyboard: the game holds the keyboard focus, knows keys by the names 
     assert.strictEqual(await focused(), 'hud');
     assert.deepStrictEqual(ph.errors, []);
   } finally { await ph.ctx.close(); }
+});
+
+test('key test (?keys): lists the key events the page hears, and can hold the keyboard with a hidden text box', { skip }, async () => {
+  const { page, ctx, errors } = await openGame(null, base + '/?keys');
+  try {
+    assert.strictEqual(await page.evaluate(() => RR.input.keyTest), true);
+    await page.keyboard.down('ArrowLeft');
+    await page.waitForTimeout(80);
+    const log = await page.evaluate(() => RR.input.keyLog[0]);
+    assert.deepStrictEqual([log.type, log.key, log.code, log.kc, log.act, log.to], ['keydown', 'ArrowLeft', 'ArrowLeft', 37, 'left', '#hud']);
+    await page.keyboard.up('ArrowLeft');
+    const ui = await page.evaluate(() => RR.game.ui.map((u) => u.label));
+    assert.ok(ui.includes('FOCUS THE GAME') && ui.includes('FOCUS A TEXT BOX'), 'its two buttons are on screen');
+    // the hidden text box: it takes the focus, and the keys still fly the game from it
+    await page.evaluate(() => RR.input.focusTrap(true));
+    await page.waitForTimeout(80);
+    await page.keyboard.down('ArrowRight');
+    await page.waitForTimeout(80);
+    const t = await page.evaluate(() => ({ focus: document.activeElement.id, right: !!RR.input.down.right, to: RR.input.keyLog[0].to }));
+    assert.deepStrictEqual(t, { focus: 'keytrap', right: true, to: '#keytrap' });
+    await page.keyboard.up('ArrowRight');
+    await page.evaluate(() => RR.input.focusTrap(false));
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'hud', 'and gives it back to the game');
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+
+  // without ?keys: nothing of it
+  const plain = await openGame();
+  try {
+    assert.deepStrictEqual(await plain.page.evaluate(() => [RR.input.keyTest, !!RR.input.keyLog, RR.game.ui.some((u) => u.label === 'FOCUS A TEXT BOX')]), [false, false, false]);
+  } finally { await plain.ctx.close(); }
 });

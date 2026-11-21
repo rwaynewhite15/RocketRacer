@@ -2127,7 +2127,9 @@
   /** Called once per animation frame with the real elapsed time. */
   G.frame = function (dt) {
     const g = this, I = RR.input;
-    I.updateTouch(g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null, g.ui);
+    const me = g.player, v = g.view; // the rocket on screen, as last drawn: touch steering is measured from it
+    const rocket = v && me && g.state === 'play' ? { x: (me.x - v.cx) * g.zoomScale, y: (me.y - v.cy) * g.zoomScale } : null;
+    I.updateTouch(g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null, g.ui, rocket);
     if (g.state === 'layout') dragControls(g);
     if (!I.typing) { I.pollPad(); handleUI(g); }
     if (g.toast) { g.toast.t += dt; if (g.toast.t >= g.toast.dur) g.toast = null; }
