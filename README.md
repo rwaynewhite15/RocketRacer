@@ -74,7 +74,7 @@ and a second runs online multiplayer over WebSockets.
 
 | | Keyboard | Phone / tablet |
 |---|---|---|
-| Fly | Arrow keys or WASD (turn, thrust, brake/reverse) | Touch where to fly: steering always starts from the rocket. It heads from where it is on screen towards your thumb, and the farther your thumb is from the rocket, the more engine power (a thumb on the rocket coasts; full power about a third of a phone screen away). A line runs out of the rocket the way it is heading, as long as the power, and a power meter appears by your thumb; move closer to throttle down, lift to coast |
+| Fly | Arrow keys or WASD (turn, thrust, brake/reverse) | Touch anywhere and drag. The rocket heads the way you drag, and the farther you drag from where you started, the more engine power. A power meter appears by your thumb and fills to MAX (about a thumb's width of travel); ease back to throttle down, lift to coast |
 | Fire weapon | Space (or X / J): fires the way the rocket points; hold it for the blaster's automatic fire | Fire stick. Blaster: automatic, firing all the time you hold the stick, straight ahead until you drag it, then the way you drag. Missiles: hold the stick, drag the way to fire (a faint dashed line shows the aim and corner marks show the rival it will lock onto), and let go to launch; a quick tap launches straight ahead. Mines drop behind and EMP spreads all round as soon as you touch the stick |
 | Brake | Down / S | BRAKE button |
 | Gate deferral | E or Shift | DEFER button (appears while you hold one) |
@@ -95,13 +95,6 @@ the touch controls off the screen once your thumbs have been off them for 10 sec
 anywhere to bring them back. A held turn key overrides a drag's steering. (iPad keyboards often
 have no Esc key: P pauses. If the keys do nothing at first, tap the game once: Safari on iPad
 only sends keys to a page that has been touched since it opened.)
-
-If a keyboard does nothing, open the game with `?keys` on the end of the address (for example
-`https://<the game>/?keys`). A panel lists every key event the page receives (key, code, what
-the game makes of it, and which element had the focus), with two buttons that hold the
-keyboard in different ways: FOCUS THE GAME (the normal way) and FOCUS A TEXT BOX (a hidden text
-field that asks for no on-screen keyboard, for browsers that only pass keys to an editable
-spot).
 
 On phones the game uses larger pixels, keeps the HUD clear of notches, and can be added to
 the home screen as a full-screen app. Landscape gives the best view.

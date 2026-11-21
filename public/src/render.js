@@ -624,17 +624,18 @@
     const pw = dr.power, full = pw >= 0.999, blink = Math.floor(T * 8) & 1;
     const col = pw < 0.6 ? PAL.lime : pw < 0.8 ? PAL.yellow : PAL.orange;
     const hot = blink ? PAL.white : PAL.orange;
-    const tx = dr.x + dr.dx, ty = dr.y + dr.dy; // the thumb
+    const ex = dr.x + dr.dx, ey = dr.y + dr.dy;
 
-    // out of the rocket, the way it is heading, as long as the power (no ring or disc round the touch)
-    if (dr.dist > 2) RR.line(ctx, dr.x, dr.y, dr.x + Math.cos(dr.ang) * dr.dist, dr.y + Math.sin(dr.ang) * dr.dist, col, 2);
+    // no ring or disc round the touch: just where it began and the way it points
+    if (dr.dist > 2) RR.line(ctx, dr.x, dr.y, ex, ey, col, 2);
+    RR.disc(ctx, dr.x, dr.y, 2, PAL.white);
 
-    // the meter: ten segments, green to orange, beside the thumb but clear of it
+    // the meter: ten segments, green to orange, well clear of the thumb
     const n = 10, mw = n * 6 - 1 + 8, mh = 22;
     const lit = pw <= 0 ? 0 : Math.max(1, Math.round(pw * n));
-    const mx = Math.round(clamp(tx - mw / 2, ins.l + 2, W - ins.r - mw - 2));
-    let my = Math.round(ty - mh - 36);
-    if (my < ins.t + 2) my = Math.round(Math.min(ty + 36, H - ins.b - mh - 2));
+    const mx = Math.round(clamp(dr.x - mw / 2, ins.l + 2, W - ins.r - mw - 2));
+    let my = Math.round(dr.y - dr.max - mh - 20);
+    if (my < ins.t + 2) my = Math.round(Math.min(dr.y + dr.max + 20, H - ins.b - mh - 2));
     panel(ctx, mx, my, mw, mh, full ? hot : PAL.slate);
     text(ctx, 'POWER', mx + 4, my + 3, PAL.silver);
     text(ctx, full ? 'MAX' : Math.round(pw * 100) + '%', mx + mw - 4, my + 3, full ? hot : col, 1, 'right');
@@ -654,8 +655,8 @@
     if (t.drag) {
       if (t.drag.power > 0) p.dragged = true;
     } else if (!p.dragged && g.phase === 'race' && Math.floor(g.t * 2) & 1) {
-      text(ctx, 'TOUCH WHERE TO FLY', ins.l + 8, H - ins.b - 26, PAL.silver, 1, 'left', PAL.ink);
-      text(ctx, 'FARTHER FROM THE ROCKET = MORE POWER', ins.l + 8, H - ins.b - 16, PAL.silver, 1, 'left', PAL.ink);
+      text(ctx, 'DRAG ANYWHERE TO FLY', ins.l + 8, H - ins.b - 26, PAL.silver, 1, 'left', PAL.ink);
+      text(ctx, 'FARTHER = MORE POWER', ins.l + 8, H - ins.b - 16, PAL.silver, 1, 'left', PAL.ink);
     }
 
     /* fire stick: the blaster fires while held (ahead, or the way it is pushed); missiles go on letting go */
@@ -1388,32 +1389,5 @@
       text(ctx, g.toast.text, W / 2, ty, PAL.cyan, 2, 'center', PAL.ink);
     }
     if (RR.audio.muted && g.state !== 'play') text(ctx, 'SOUND OFF', W / 2, H - 9 - g.inset.b, PAL.steel, 1, 'center', PAL.ink);
-    if (RR.input.keyTest) drawKeyTest(g, ctx, W);
   };
-
-  /** ?keys: what the page hears from the keyboard (see input.js). */
-  function drawKeyTest(g, ctx, W) {
-    const I = RR.input, el = document.activeElement, y0 = 40 + g.inset.t;
-    const focus = !el || el === document.body ? 'NOTHING' : el.id ? '#' + el.id : el.tagName;
-    const held = Object.keys(I.down).filter(function (k) { return I.down[k]; }).join(' ') || '-';
-    const lines = [
-      ['KEY TEST: TAP THE GAME, THEN PRESS THE ARROW KEYS', PAL.yellow],
-      ['FOCUS ' + focus + '   PAGE FOCUSED ' + (document.hasFocus() ? 'YES' : 'NO') + '   EVENTS ' + I.keyCount, PAL.white],
-      ['HELD ' + held + (I.typing ? '   (TYPING: KEYS OFF)' : ''), PAL.lime],
-    ];
-    I.keyLog.forEach(function (e) {
-      lines.push([e.type + ' ' + e.mods + 'KEY ' + JSON.stringify(e.key) + ' CODE ' + JSON.stringify(e.code) + ' ' + e.kc +
-        (e.data != null ? ' DATA ' + JSON.stringify(e.data) : '') + (e.act ? ' = ' + e.act : '') + ' ON ' + e.to, PAL.silver]);
-    });
-    if (!I.keyLog.length) lines.push(['NO KEY EVENTS YET', PAL.alarm]);
-    const w = Math.min(W - 8, Math.max(260, 12 + Math.max.apply(null, lines.map(function (l) { return RR.textW(String(l[0]).toUpperCase()); }))));
-    const x = Math.round(W / 2 - w / 2), h = 9 * 10 + 34; // room for all six events, so the buttons stay put
-    ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
-    ctx.fillStyle = 'rgba(7,7,26,0.92)';
-    ctx.fillRect(x, y0, w, h);
-    lines.forEach(function (l, i) { text(ctx, l[0], x + 5, y0 + 5 + i * 10, l[1]); });
-    const by = y0 + h - 22, bw = 120;
-    button(g, ctx, 'FOCUS THE GAME', Math.round(W / 2 - bw - 4), by, bw, 16, function () { I.focusTrap(false); }, PAL.cyan);
-    button(g, ctx, 'FOCUS A TEXT BOX', Math.round(W / 2 + 4), by, bw, 16, function () { I.focusTrap(true); }, PAL.orange);
-  }
 })();

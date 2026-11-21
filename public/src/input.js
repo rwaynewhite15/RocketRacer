@@ -6,11 +6,11 @@
  *   RR.input.taps          -> pointer presses this frame, in game pixels
  *
  * Touch play:
- *   steering    touch anywhere that is not another control. It always
- *               starts from the rocket: the rocket heads from where it is on
- *               screen towards the thumb, and the farther the thumb is from
- *               the rocket the more engine power, from none within DRAG_DEAD
- *               (a thumb on the rocket coasts) to full at DRAG_MAX.
+ *   steering    touch anywhere that is not another control and drag. The
+ *               direction of the drag is where the rocket heads; how far you
+ *               drag from where you started is the engine power, rising to
+ *               full at DRAG_MAX. Past that the start point trails the thumb,
+ *               so easing back always lowers the power straight away.
  *   fire stick  fixed in place (movable in Pause > Move controls). The
  *               blaster is automatic: it fires all the time the stick is
  *               held, straight ahead until the stick is pushed, then the way
@@ -83,48 +83,6 @@
   }
   I.codeOf = codeOf;
 
-  /*
-   * Key test: open the game with ?keys on the address for a readout of every
-   * key event the page receives (drawn by render.js), to find out what a
-   * particular keyboard and browser send. FOCUS A TEXT BOX tries the other
-   * way of holding the keyboard: a hidden text box that asks for no
-   * on-screen keyboard (iPad Safari may only pass keys to an editable spot).
-   */
-  I.keyTest = /[?&]keys\b/.test((window.location && window.location.search) || '');
-  if (I.keyTest) {
-    I.keyLog = []; I.keyCount = 0;
-    ['keydown', 'keyup', 'keypress', 'beforeinput', 'input'].forEach(function (type) {
-      document.addEventListener(type, function (e) {
-        I.keyCount++;
-        const t = e.target, to = t && t.id ? '#' + t.id : (t && t.tagName) || '?';
-        const mods = (e.shiftKey ? 'SHIFT ' : '') + (e.ctrlKey ? 'CTRL ' : '') + (e.altKey ? 'ALT ' : '') + (e.metaKey ? 'CMD ' : '');
-        I.keyLog.unshift({
-          type: type, key: e.key, code: e.code, kc: e.keyCode, data: e.data, to: to, mods: mods,
-          act: type.indexOf('key') === 0 ? KEYS[codeOf(e)] || '' : '',
-        });
-        if (I.keyLog.length > 6) I.keyLog.pop();
-        if (type === 'input' && t && t.id === 'keytrap') t.value = '';
-      }, true);
-    });
-    I.trap = function () {
-      let f = document.getElementById('keytrap');
-      if (!f) {
-        f = document.createElement('input');
-        f.id = 'keytrap'; f.type = 'text'; f.setAttribute('inputmode', 'none');
-        f.setAttribute('autocomplete', 'off'); f.setAttribute('autocapitalize', 'off'); f.setAttribute('aria-hidden', 'true');
-        f.style.cssText = 'position:fixed;left:0;top:0;width:2px;height:2px;opacity:0.01;font-size:16px;border:0;padding:0';
-        document.body.appendChild(f);
-      }
-      return f;
-    };
-    /** Hold the keyboard with the hidden text box (on) or the game itself (off), from now on. */
-    I.focusTrap = function (on) {
-      I.useTrap = on;
-      I.focus();
-      I.focusSoon = true; // and again as the finger lifts: iPad Safari only focuses a text box inside a tap
-    };
-  }
-
   window.addEventListener('keydown', function (e) {
     if (I.typing || e.ctrlKey || e.metaKey || e.altKey) return;
     const k = KEYS[codeOf(e)];
@@ -155,7 +113,6 @@
   ['pointerup', 'touchend', 'click'].forEach(function (ev) {
     window.addEventListener(ev, function () {
       RR.audio.init();
-      if (I.focusSoon) { I.focusSoon = false; I.focus(); }
       if (RR.game && RR.game.onGestureEnd) RR.game.onGestureEnd();
     }, { passive: true });
   });
@@ -172,7 +129,7 @@
    * focused gets none. Not while an HTML text field is taking the typing.
    */
   I.focus = function () {
-    const c = I.useTrap ? I.trap() : I.canvas; // (the hidden text box: only in the ?keys test)
+    const c = I.canvas;
     if (!c || I.typing || document.activeElement === c) return;
     try { c.focus({ preventScroll: true }); } catch (e) { /* not focusable */ }
   };
@@ -236,20 +193,25 @@
   }
 
   const AIM_DEADZONE = 0.3; // fire stick pushed less than this: fire straight ahead
-  const DRAG_DEAD = 12; // game pixels round the rocket with no power: a thumb on the rocket coasts
-  const DRAG_MAX = 96; // game pixels from the rocket for full power
+  const DRAG_DEAD = 6; // game pixels a steering touch must move before it does anything, so a tap is not a burn
+  const DRAG_MAX = 56; // game pixels from the starting point for full power
   I.DRAG_DEAD = DRAG_DEAD; I.DRAG_MAX = DRAG_MAX;
 
   /**
-   * The steering for one finger, measured from `o`, the rocket on screen:
-   * the way from the rocket to the thumb, and power 0..1 from how far apart
-   * they are (`dist` stops at DRAG_MAX; `dx`, `dy` reach the thumb itself).
+   * The steering drag for one finger: direction, and power 0..1 from how far
+   * it is from where it started. Beyond DRAG_MAX the start point is pulled
+   * along behind the thumb.
    */
-  function dragState(p, o) {
-    const dx = p.x - o.x, dy = p.y - o.y, m = Math.hypot(dx, dy), d = Math.min(m, DRAG_MAX);
+  function dragState(p) {
+    let dx = p.x - p.sx, dy = p.y - p.sy, m = Math.hypot(dx, dy);
+    if (m > DRAG_MAX) {
+      const k = (m - DRAG_MAX) / m;
+      p.sx += dx * k; p.sy += dy * k;
+      dx = p.x - p.sx; dy = p.y - p.sy; m = DRAG_MAX;
+    }
     return {
-      x: o.x, y: o.y, dx: dx, dy: dy, dist: d, max: DRAG_MAX, ang: Math.atan2(dy, dx),
-      power: d <= DRAG_DEAD ? 0 : (d - DRAG_DEAD) / (DRAG_MAX - DRAG_DEAD),
+      x: p.sx, y: p.sy, dx: dx, dy: dy, dist: m, max: DRAG_MAX, ang: Math.atan2(dy, dx),
+      power: m <= DRAG_DEAD ? 0 : (m - DRAG_DEAD) / (DRAG_MAX - DRAG_DEAD),
     };
   }
 
@@ -262,15 +224,13 @@
    * Work out the touch controls for this frame. `L` is RR.touchLayout() while
    * racing, or null when touch controls are not on screen; `buttons` are the
    * on-screen buttons (pause, zoom, defer), which a steering drag must not
-   * start on; `rocket` is where the player's rocket is on screen (steering
-   * is measured from it). A finger keeps the role (steer / fire / brake) of
-   * wherever it first landed.
+   * start on. A finger keeps the role (steer / fire / brake) of wherever it
+   * first landed.
    */
-  I.updateTouch = function (L, buttons, rocket) {
+  I.updateTouch = function (L, buttons) {
     const t = I.touch;
     t.fire = t.brake = false;
     t.drag = t.aimStick = t.aim = null;
-    t.rocket = rocket || null;
     if (!L) {
       for (const id in I.pointers) I.pointers[id].role = 'menu';
       return;
@@ -285,7 +245,7 @@
       }
       if (p.role === 'steer' || p.role === 'fire' || p.role === 'brake') I.controlAt = performance.now();
       if (p.role === 'brake') t.brake = true;
-      else if (p.role === 'steer' && !t.drag && rocket) t.drag = dragState(p, rocket);
+      else if (p.role === 'steer' && !t.drag) t.drag = dragState(p);
       else if (p.role === 'fire' && !t.aimStick) {
         t.fire = true;
         t.aimStick = stickState(p, L.fire);
