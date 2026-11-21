@@ -38,7 +38,7 @@
     Enter: 'ok', NumpadEnter: 'ok',
     Escape: 'pause', KeyP: 'pause',
     KeyM: 'mute', KeyC: 'crt', KeyR: 'restart', KeyQ: 'quit',
-    KeyN: 'name', KeyT: 'board', KeyF: 'full', KeyH: 'hangar',
+    KeyN: 'name', KeyT: 'board', KeyF: 'full', KeyH: 'hangar', KeyO: 'online',
     KeyE: 'rewind', ShiftLeft: 'rewind', ShiftRight: 'rewind',
     KeyZ: 'zoom', Equal: 'zoomIn', NumpadAdd: 'zoomIn', Minus: 'zoomOut', NumpadSubtract: 'zoomOut',
   };

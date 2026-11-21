@@ -75,6 +75,14 @@
     box.addEventListener('keydown', function (e) { if (e.key === 'Escape') G.closeName(false); });
   }
 
+  /* room code for online play (shown by RR.mp.askCode) */
+  const codebox = document.getElementById('codebox');
+  if (codebox) {
+    codebox.addEventListener('submit', function (e) { e.preventDefault(); RR.mp.closeCode(true); });
+    document.getElementById('codecancel').addEventListener('click', function () { RR.mp.closeCode(false); });
+    codebox.addEventListener('keydown', function (e) { if (e.key === 'Escape') RR.mp.closeCode(false); });
+  }
+
   RR.input.attach(hud);
   G.init(); // loads the saved zoom level...
   resize(); // ...which sizes the layers

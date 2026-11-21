@@ -13,6 +13,7 @@
     boards: {}, // track id -> [{ name, time, lap, diff, place, setup }] (setup is null on rows from before it was recorded)
     me: {}, // track id -> this player's own row plus world `rank`, or null if they have no time yet
     env: 'production', version: '', // which deployment we are talking to (see /api/health)
+    mp: null, // where online play is (see /api/config): a wss:// URL or a path on this server; null when it is off
     failed: {}, // track id -> true when the last fetch of that board failed
     result: null, // outcome of the last submission: { track, rank, improved } | { error }
     busy: false,
@@ -36,6 +37,7 @@
 
   N.init = function () {
     if (!window.fetch || window.location.protocol === 'file:') return;
+    api('config').then(function (d) { N.mp = d && typeof d.mp === 'string' ? d.mp : null; }).catch(function () { N.mp = null; });
     api('health').then(function (d) {
       N.online = !!(d && d.ok);
       if (d && typeof d.env === 'string') N.env = d.env;

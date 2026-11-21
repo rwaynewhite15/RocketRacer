@@ -786,6 +786,7 @@
     const spare = g.pointsLeft(g.prog.ship) + g.prog.upts, items = []; // stat and upgrade points waiting to be spent
     items.push(['HANGAR' + (touch ? '' : ' (H)') + (spare > 0 ? ' +' + spare : ''), function () { g.openHangar(); },
       spare > 0 && Math.floor(T * 3) & 1 ? PAL.white : PAL.yellow]);
+    if (RR.mp.available()) items.push(['ONLINE' + (touch ? '' : ' (O)'), function () { RR.mp.open(); }, PAL.lime]);
     if (net.online) {
       items.push(['PILOT ' + g.name + (touch ? '' : ' (N)'), function () { g.editName(); }, PAL.cyan]);
       if (!fight) items.push(['TOP 10' + (touch ? '' : ' (T)'), function () { g.showBoard(); }, PAL.pink]);
@@ -1180,6 +1181,113 @@
       function () { g.closeHangar(); }, PAL.lime);
   }
 
+  /* -------------------------------------------------------------- online */
+
+  const modeName = function (mode) { return (RR.MODES.find(function (m) { return m.id === mode; }) || RR.MODES[0]).name; };
+  const placeName = function (mode, track) { const list = mode === 'race' ? RR.TRACKS : RR.ARENAS; return (list[track] || list[0]).name; };
+
+  /** The ONLINE screen: find or make a room, then wait in its lobby until everyone is READY. */
+  function drawOnline(g, ctx, W, H) {
+    const M = RR.mp, touch = RR.input.touchMode, room = M.room, T = g.t;
+    ctx.fillStyle = 'rgba(7,7,26,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W - 8, 250), ph = 232;
+    const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
+    panel(ctx, x, y, pw, ph, PAL.lime);
+    text(ctx, 'ONLINE', W / 2, y + 7, PAL.lime, 2, 'center', PAL.plum);
+    const status = M.error || M.notice || (M.status === 'connecting' ? 'CONNECTING...' : M.status === 'online' ? '' : M.status === 'lost' ? 'CONNECTION LOST' : '');
+    if (status) text(ctx, status, W / 2, y + 25, M.error ? PAL.alarm : PAL.silver, 1, 'center');
+    const bw = Math.min(150, pw - 40), bx = Math.round(W / 2 - bw / 2);
+
+    if (!room) {
+      const mode = RR.MODES[g.modeIdx].id, track = mode === 'race' ? g.trackIdx : g.arenaIdx;
+      text(ctx, modeName(mode) + ' - ' + placeName(mode, track), W / 2, y + 44, PAL.white, 1, 'center');
+      text(ctx, RR.DIFFS[g.diffIdx].name + ' BOTS IN EMPTY SEATS', W / 2, y + 56, PAL.steel, 1, 'center');
+      button(g, ctx, touch ? 'QUICK MATCH' : 'QUICK MATCH (ENTER)', bx, y + 74, bw, 20, function () { M.quick(); }, PAL.lime);
+      button(g, ctx, 'CREATE ROOM', bx, y + 100, bw, 20, function () { M.create(); }, PAL.yellow);
+      button(g, ctx, 'JOIN ROOM', bx, y + 126, bw, 20, function () { M.askCode(); }, PAL.cyan);
+      text(ctx, 'QUICK MATCH: RACE ANYONE IN A ROOM', W / 2, y + 156, PAL.steel, 1, 'center');
+      text(ctx, 'CREATE ROOM: A CODE FOR YOUR FRIENDS', W / 2, y + 167, PAL.steel, 1, 'center');
+      text(ctx, 'PICK THE MODE AND COURSE ON THE MENU', W / 2, y + 178, PAL.steel, 1, 'center');
+    } else {
+      // the room: its code, what it races, who is in it
+      if (room.priv) {
+        text(ctx, 'ROOM ' + room.code, W / 2, y + 38, PAL.gold, 2, 'center', PAL.plum);
+        text(ctx, 'FRIENDS JOIN WITH THIS CODE', W / 2, y + 56, PAL.steel, 1, 'center');
+      } else text(ctx, 'QUICK MATCH', W / 2, y + 42, PAL.gold, 2, 'center', PAL.plum);
+      text(ctx, modeName(room.mode) + ' - ' + placeName(room.mode, room.track), W / 2, y + 68, PAL.white, 1, 'center');
+      const shown = [];
+      for (let k = 0; k < 6; k++) {
+        const h = room.humans[k], ry = y + 82 + k * 12;
+        if (!h) { text(ctx, (k + 1) + '  ' + 'BOT (' + RR.DIFFS[room.diff].name + ')', x + 24, ry, PAL.slate); continue; }
+        const you = k === M.you;
+        if (you) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 8, ry - 2, pw - 16, 11); }
+        text(ctx, String(k + 1), x + 24, ry, you ? PAL.yellow : PAL.silver);
+        ctx.drawImage(Art.shipMini(h.design, h.team), x + 36, ry - 2);
+        text(ctx, h.name + (you ? ' (YOU)' : ''), x + 50, ry, you ? PAL.yellow : PAL.white);
+        const tag = !h.connected ? 'AWAY' : h.waiting ? 'NEXT RACE' : h.ready ? 'READY' : '...';
+        text(ctx, tag, x + pw - 14, ry, h.ready ? PAL.lime : !h.connected ? PAL.alarm : PAL.steel, 1, 'right');
+        shown.push([h.name, tag]);
+      }
+      g.onlineShown = shown;
+      const racing = room.state !== 'lobby';
+      text(ctx, room.state === 'race' ? 'A RACE IS ON - YOU ARE IN THE NEXT ONE' : racing ? 'NEXT RACE IN A MOMENT' : 'STARTS WHEN EVERYONE IS READY',
+        W / 2, y + 158, room.state === 'race' ? PAL.orange : PAL.steel, 1, 'center');
+      const ready = M.isReady();
+      if (!racing) {
+        button(g, ctx, ready ? 'NOT READY' : touch ? 'READY' : 'READY (ENTER)', bx, y + 172, bw, 20, function () { M.ready(!ready); },
+          ready ? PAL.steel : Math.floor(T * 2) & 1 ? PAL.white : PAL.lime);
+      }
+    }
+    const lw = 80;
+    button(g, ctx, touch ? 'BACK' : 'BACK (ESC)', Math.round(W / 2 - lw / 2), y + ph - 23, lw, 17, function () { M.leave(); }, PAL.orange);
+  }
+
+  /** Over an online race: the connection, and the menu (the race goes on behind it). */
+  function drawOnlineRace(g, ctx, W, H) {
+    const M = RR.mp, touch = RR.input.touchMode;
+    if (M.notice || M.status === 'lost') text(ctx, M.notice || 'CONNECTION LOST', W / 2, H * 0.3, PAL.alarm, 1, 'center', PAL.ink);
+    if (!touch && g.state === 'play') text(ctx, M.rtt + ' MS', W - 6 - g.inset.r, H - 10 - g.inset.b, M.rtt > 150 ? PAL.orange : PAL.steel, 1, 'right', PAL.ink);
+    if (!g.mpMenu || g.state !== 'play') return;
+    ctx.fillStyle = 'rgba(7,7,26,0.6)';
+    ctx.fillRect(0, 0, W, H);
+    const y = Math.round(H / 2 - 50), bw = 140, bx = Math.round(W / 2 - bw / 2);
+    text(ctx, 'ONLINE', W / 2, y, PAL.white, 3, 'center', PAL.plum);
+    text(ctx, 'THE RACE GOES ON', W / 2, y + 26, PAL.silver, 1, 'center', PAL.ink);
+    button(g, ctx, touch ? 'BACK TO THE RACE' : 'BACK TO THE RACE (P)', bx, y + 42, bw, 20, function () { g.mpMenu = false; }, PAL.lime);
+    const snd = (RR.audio.muted ? 'SOUND OFF' : 'SOUND ON') + (touch ? '' : '  (M)');
+    button(g, ctx, snd, bx, y + 66, bw, 20, function () { g.toggleSound(); }, RR.audio.muted ? PAL.steel : PAL.lime);
+    button(g, ctx, touch ? 'LEAVE THE ROOM' : 'LEAVE THE ROOM (Q)', bx, y + 90, bw, 20, function () { M.leave(); }, PAL.orange);
+  }
+
+  /** The results of an online race or fight, then back to the room. */
+  function drawOnlineResults(g, ctx, W, H) {
+    const M = RR.mp, list = M.results || [], touch = RR.input.touchMode, fight = g.combat;
+    ctx.fillStyle = 'rgba(7,7,26,0.6)';
+    ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W - 8, 240), ph = 64 + list.length * 12 + 44;
+    const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
+    const mine = list.find(function (r) { return r.you; });
+    panel(ctx, x, y, pw, ph, mine ? PLACE_COL[mine.place - 1] : PAL.white);
+    text(ctx, mine ? ORD[mine.place - 1] + ' PLACE' : 'RESULTS', W / 2, y + 7, mine ? PLACE_COL[mine.place - 1] : PAL.white, 2, 'center', PAL.plum);
+    text(ctx, fight ? 'KILLS  DEATHS' : 'TIME', x + pw - 12, y + 30, PAL.steel, 1, 'right');
+    list.forEach(function (r, k) {
+      const ry = y + 42 + k * 12, col = r.you ? PAL.yellow : r.human ? PAL.white : PAL.silver;
+      if (r.you) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 6, ry - 2, pw - 12, 11); }
+      text(ctx, ORD[r.place - 1] || String(r.place), x + 12, ry, PLACE_COL[r.place - 1] || PAL.silver);
+      text(ctx, r.name + (r.human ? '' : ' (BOT)'), x + 40, ry, col);
+      text(ctx, fight ? r.kills + '      ' + r.deaths : r.time != null ? fmt(r.time) : 'DNF', x + pw - 12, ry, col, 1, 'right');
+    });
+    const rw = M.reward, by = y + 46 + list.length * 12;
+    if (rw) {
+      text(ctx, (rw.pts ? '+' + rw.pts + ' STAT POINT' + (rw.pts > 1 ? 'S' : '') + '  ' : rw.capped ? 'STAT POINTS MAXED  ' : '') + '+' + rw.credits + ' CREDITS',
+        W / 2, by, rw.pts ? PAL.yellow : PAL.gold, 1, 'center');
+    }
+    const bw = Math.floor((pw - 30) / 2);
+    button(g, ctx, touch ? 'NEXT RACE' : 'NEXT RACE (ENTER)', x + 10, y + ph - 26, bw, 19, function () { M.backToRoom(); }, PAL.lime);
+    button(g, ctx, 'LEAVE', x + 20 + bw, y + ph - 26, bw, 19, function () { M.leave(); }, PAL.orange);
+  }
+
   function drawPause(g, ctx, W, H) {
     ctx.fillStyle = 'rgba(7,7,26,0.6)';
     ctx.fillRect(0, 0, W, H);
@@ -1274,10 +1382,13 @@
     if (g.state === 'title') drawTitle(g, ctx, W, H);
     else if (g.state === 'board') drawBoard(g, ctx, W, H);
     else if (g.state === 'hangar') drawHangar(g, ctx, W, H);
+    else if (g.state === 'online') drawOnline(g, ctx, W, H);
     else {
       drawHUD(g, ctx, W, H);
       if (RR.input.touchMode && g.state === 'play') drawTouch(g, ctx, W, H);
+      if (g.online) drawOnlineRace(g, ctx, W, H);
       if (g.state === 'paused') drawPause(g, ctx, W, H);
+      else if (g.state === 'mpresults') drawOnlineResults(g, ctx, W, H);
       else if (g.state === 'layout') drawLayout(g, ctx, W, H);
       else if (g.state === 'results') drawResults(g, ctx, W, H);
     }

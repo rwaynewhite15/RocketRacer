@@ -538,6 +538,61 @@
     g.state = 'play';
   };
 
+  /* ------------------------------------------------- online, on a player's screen */
+
+  /**
+   * One 1/120 s step of an online game on a player's screen. Only the
+   * player's own ship is simulated here (see G.predictShip); the rest of
+   * the world comes from the server's snapshots (RR.mp).
+   */
+  G.onlineStep = function (dt) {
+    const g = this, p = g.player;
+    g.t += dt;
+    if (g.flash > 0) g.flash -= dt * 2;
+    if (g.msg) { g.msg.t += dt; if (g.msg.t >= g.msg.dur) g.msg = null; }
+    for (let i = g.feed.length - 1; i >= 0; i--) {
+      g.feed[i].t += dt;
+      if (g.feed[i].t > 5) g.feed.splice(i, 1);
+    }
+    for (const a of g.rocks) a.rot += a.rs * dt; // asteroids tumble here; the server only moves them
+    if (!g.combat && g.phase === 'race' && p.dead <= 0 && !p.finished) { // "wrong way"
+      const cp = g.track.cps[p.nextCp], dx = cp.x - p.x, dy = cp.y - p.y;
+      const sp = Math.hypot(p.vx, p.vy), d = Math.hypot(dx, dy) || 1;
+      if (sp > 90 && (p.vx * dx + p.vy * dy) / (sp * d) < -0.45) p.wrong += dt;
+      else p.wrong = Math.max(0, p.wrong - dt * 3);
+    }
+    if (p.gone && (!g.spec || g.spec.gone)) g.spec = g.order.find(function (s) { return !s.gone; }) || null;
+    updateFx(g, dt);
+    updateCamera(g, dt);
+  };
+
+  /**
+   * Fly ship `s` one step with these controls: the player's own ship,
+   * predicted so it answers at once, and replayed on top of each snapshot.
+   * Replays (`quiet`) make no exhaust; nothing here does damage.
+   */
+  G.predictShip = function (s, inp, dt, quiet) {
+    const g = this, i = s.input;
+    i.turn = inp.turn; i.thrust = inp.thrust; i.brake = inp.brake; i.fire = inp.fire; i.aim = inp.aim; i.stick = inp.stick;
+    g.predicting = true;
+    const parts = g.parts.length;
+    updateShip(s, g, dt, true);
+    if (quiet) g.parts.length = parts;
+    g.predicting = false;
+  };
+
+  /** Online: what the player earned in a race or fight that just ended (once). */
+  G.awardOnline = function (place) {
+    award(this, place);
+    return this.reward;
+  };
+
+  /** Online: back to the room's lobby (the attract race plays behind it). */
+  G.toOnlineLobby = function () {
+    this.startRace(true);
+    this.state = 'online';
+  };
+
   /** Online: a bot flies ship `s` while its player is away (on), or hands it back when they return (off). */
   G.botTakeover = function (s, on) {
     if (on) { if (!s.ai) { s.ai = makeAI(DIFFS[this.diffIdx] || DIFFS[1]); s.botFlown = !s.finished; } return; }
@@ -724,6 +779,7 @@
     RR.input.typing = false;
   };
   G.pause = function () {
+    if (this.online) { this.mpMenu = !this.mpMenu; return; } // online the race goes on: a menu instead
     if (this.state !== 'play') return;
     this.state = 'paused';
     RR.audio.music({ on: false });
@@ -769,6 +825,7 @@
   /** Positional sound: fades with distance from the camera; silent in demo. */
   function snd(g, name, x, y, v) {
     if (g.demo) return;
+    if (g.online && !g.server && !g.replaying) return; // online, sounds arrive as the server's events
     if (g.server) { g.events.push(['s', name, Math.round(x || 0), Math.round(y || 0), v === undefined ? 1 : +v.toFixed(2)]); return; }
     let vol = v === undefined ? 1 : v;
     if (x !== undefined) vol *= clamp(1.2 - Math.hypot(x - g.cam.x, y - g.cam.y) / 460, 0, 1);
@@ -781,7 +838,7 @@
   }
 
   function burst(g, x, y, n, speed, ramp, life, size) {
-    if (!near(g, x, y, 120)) return;
+    if (g.predicting || !near(g, x, y, 120)) return;
     for (let i = 0; i < n; i++) {
       const a = Math.random() * TAU, v = speed * (0.25 + Math.random() * 0.75);
       // size 0 = start chunky and shrink with age (see drawParts)
@@ -820,6 +877,7 @@
   /* ----------------------------------------------------- damage + death */
 
   function hurt(s, g, dmg, by) {
+    if (g.online && !g.server) return; // online, the server decides every hit
     if (s.dead > 0 || s.invuln > 0 || s.shield > 0) return;
     if (by && by !== s) { s.hitBy = by; s.hitT = g.t; }
     s.hp -= dmg;
@@ -938,7 +996,7 @@
   }
   RR.pathAt = pathAt;
   RR.fx = {
-    snd: function (name, x, y, v) { snd(G, name, x, y, v); },
+    snd: function (name, x, y, v) { G.replaying = true; snd(G, name, x, y, v); G.replaying = false; },
     boom: function (x, y, k) { boom(G, x, y, k); },
     burst: function (x, y, n, speed, kind, life, size) { burst(G, x, y, n, speed, FX[kind] || FX.spark, life, size); },
     ring: function (x, y, r0, r1, dur, color) { ringFx(G, x, y, r0, r1, dur, color); },
@@ -953,6 +1011,10 @@
    */
   G.tryRewind = function (who) {
     const g = this, p = who || g.player, me = p === g.player;
+    if (g.online && !g.server) { // the server takes it, if it can
+      if (me && p.rewind > 0 && g.phase === 'race' && !p.finished && p.dead <= 0) RR.mp.rewind();
+      return false;
+    }
     if (g.demo || g.state !== 'play' || g.phase !== 'race' || (me ? g.playerDone : p.finished) || p.rw || p.rewind <= 0) return false;
     if (p.hist.length < Math.round(C.REWIND_MIN / C.HIST_DT) + 1) {
       if (me) { floatText(g, p.x, p.y - 16, 'TOO SOON', PAL.silver); RR.audio.sfx('deny'); }
@@ -1550,6 +1612,7 @@
   function finish(s, g) {
     s.finished = true;
     s.finishTime = g.raceTime;
+    if (g.online && !g.server) return;
     if (g.server) { // autopilot takes the victory lap; the room reads the time
       if (s.human) s.ai = makeAI(DEMO_DIFF);
       g.events.push(['F', s.idx]);
@@ -2047,6 +2110,7 @@
       else if (hit.name) g.editName();
       else if (hit.board) g.showBoard();
       else if (hit.hangar) g.openHangar();
+      else if (hit.online && RR.mp.available()) RR.mp.open();
     } else if (g.state === 'hangar') {
       // row 0 is the ship, rows 1.. its stats; then (on the powerups page) BUY, and a row per powerup
       const buy = STATS.length + 1, rows = buy + 1 + POWER.length;
@@ -2073,6 +2137,14 @@
         RR.audio.sfx('select');
       } else if (hit.ok && rows[g.boardSel]) g.openCard(rows[g.boardSel]);
       else if (hit.ok || hit.pause || hit.board || hit.fire) g.closeBoard();
+    } else if (g.state === 'play' && g.online) {
+      if (hit.pause) g.mpMenu = !g.mpMenu; // the world goes on: a menu, not a pause
+      else if (hit.quit && g.mpMenu) RR.mp.leave();
+      else if (hit.rewind) g.tryRewind();
+    } else if (g.state === 'online') {
+      RR.mp.keys(hit);
+    } else if (g.state === 'mpresults') {
+      if (hit.ok || hit.pause) RR.mp.backToRoom();
     } else if (g.state === 'play') {
       if (hit.pause) g.pause();
       else if (hit.rewind) g.tryRewind();
@@ -2096,12 +2168,15 @@
     if (!I.typing) { I.pollPad(); handleUI(g); }
     if (g.toast) { g.toast.t += dt; if (g.toast.t >= g.toast.dur) g.toast = null; }
 
-    g.acc += dt;
-    let n = 0;
-    while (g.acc >= C.STEP) {
-      g.acc -= C.STEP;
-      if (++n > 14) { g.acc = 0; break; } // never spiral after a long stall
-      g.step(C.STEP);
+    if (g.online) RR.mp.frame(dt); // online: the server runs the world; this screen predicts and draws it
+    else {
+      g.acc += dt;
+      let n = 0;
+      while (g.acc >= C.STEP) {
+        g.acc -= C.STEP;
+        if (++n > 14) { g.acc = 0; break; } // never spiral after a long stall
+        g.step(C.STEP);
+      }
     }
 
     const p = g.player;

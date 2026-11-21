@@ -91,7 +91,7 @@ noscript {
 }
 
 /* Pilot-name dialog: plain HTML so phones can bring up their keyboard. */
-#namebox {
+#namebox, #codebox {
   position: fixed;
   left: 50%;
   top: 22%;
@@ -109,17 +109,17 @@ noscript {
   text-align: center;
 }
 
-#namebox[hidden] {
+#namebox[hidden], #codebox[hidden] {
   display: none;
 }
 
-#namebox label {
+#namebox label, #codebox label {
   display: block;
   margin-bottom: 10px;
   color: #ffcd75;
 }
 
-#namebox input {
+#namebox input, #codebox input {
   box-sizing: border-box;
   width: 100%;
   padding: 10px 8px;
@@ -137,11 +137,11 @@ noscript {
   user-select: text;
 }
 
-#namebox input:focus {
+#namebox input:focus, #codebox input:focus {
   border-color: #ffcd75;
 }
 
-#namebox p {
+#namebox p, #codebox p {
   margin: 10px 0 14px;
   color: #94b0c2;
   font-size: 12px;
@@ -149,12 +149,12 @@ noscript {
   letter-spacing: 0.02em;
 }
 
-#namebox .row {
+#namebox .row, #codebox .row {
   display: flex;
   gap: 10px;
 }
 
-#namebox button {
+#namebox button, #codebox button {
   flex: 1;
   min-height: 44px;
   padding: 8px;
@@ -167,11 +167,11 @@ noscript {
   touch-action: manipulation;
 }
 
-#namebox button[type="button"] {
+#namebox button[type="button"], #codebox button[type="button"] {
   border-color: #566c86;
   color: #94b0c2;
 }
 
-#namebox button:active {
+#namebox button:active, #codebox button:active {
   background: #333c57;
 }
