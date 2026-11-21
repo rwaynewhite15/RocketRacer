@@ -301,11 +301,16 @@
 
   /** What the stat levels of ship `i` come to in the simulation. */
   function loadout(i) {
-    const m = STATS.map(function (st, k) { return 1 + st.step * (G.statLevel(i, k) - STAT_MID); });
+    return loadoutOf(STATS.map(function (st, k) { return G.statLevel(i, k); }));
+  }
+  /** What a list of five stat levels comes to in the simulation. */
+  function loadoutOf(levels) {
+    const m = STATS.map(function (st, k) { return 1 + st.step * (levels[k] - STAT_MID); });
     // top speed is thrust / drag, so more speed at the same acceleration means less drag
     return { accK: m[0], dragK: m[0] / m[1], turnK: m[2], maxHp: Math.round(C.MAXHP * m[3]), dmg: m[4] };
   }
   RR.loadout = loadout;
+  RR.loadoutOf = loadoutOf;
   const STOCK = { accK: 1, dragK: 1, turnK: 1, maxHp: C.MAXHP, dmg: 1 };
 
   G.openHangar = function () {
@@ -437,6 +442,7 @@
     const diff = demo ? DEMO_DIFF : DIFFS[g.diffIdx];
     const hull = HULLS[g.prog.ship], turn = Math.floor(Math.random() * 6);
     g.demo = demo;
+    g.online = false; g.server = false; g.events = [];
     g.laps = demo ? 1e9 : tr.laps;
     g.ships = RACERS.map(function (r, i) {
       // racing, the player starts at the back; in an arena everyone gets a random spawn point
@@ -470,6 +476,66 @@
     g.zone = g.royale ? { r: tr.radius * 1.42, r0: tr.radius * 1.42 } : null; // starts around the whole arena
     g.over = false; g.elimN = 0; g.feed = []; g.spec = null; g.reward = null;
     g.state = demo ? 'title' : 'play';
+  };
+
+  /*
+   * An online race or fight. The multiplayer server runs it headless (with
+   * `server` set: every human ship takes its controls from `netInput`, and
+   * effects become `events` for the players' screens); each player's game
+   * builds the same world with `me` = their own seat, to draw and predict.
+   *   opts: { mode, track, diff, me, server,
+   *           seats: [{ name, team, design, hull, human, stats, levels }] }
+   * `track` is a course index for a Grand Prix, an arena index for a fight.
+   */
+  G.startOnline = function (opts) {
+    const g = this, seats = opts.seats, turn = opts.turn || 0;
+    g.modeIdx = Math.max(0, MODES.findIndex(function (m) { return m.id === opts.mode; }));
+    g.mode = MODES[g.modeIdx].id;
+    g.combat = g.mode !== 'race';
+    g.royale = g.mode === 'royale';
+    if (g.combat) g.arenaIdx = opts.track; else g.trackIdx = opts.track;
+    const tr = (g.track = g.combat ? RR.getArena(opts.track) : RR.getTrack(opts.track));
+    const diff = DIFFS[opts.diff] || DIFFS[1];
+    g.diffIdx = DIFFS.indexOf(diff);
+    g.demo = false;
+    g.online = true;
+    g.server = !!opts.server;
+    g.events = [];
+    g.laps = tr.laps;
+    g.ships = seats.map(function (seat, i) {
+      const slot = tr.grid[(i + turn) % tr.grid.length];
+      const s = makeShip(i, { name: seat.name, team: seat.team, design: seat.design }, slot,
+        seat.human ? loadoutOf(seat.stats) : STOCK);
+      s.human = !!seat.human;
+      if (s.human) {
+        s.plv = Object.assign({}, seat.levels);
+        s.setup = { ship: seat.hull, stats: seat.stats.slice(), levels: Object.assign({}, seat.levels) };
+        s.netInput = { turn: 0, thrust: 0, brake: 0, fire: false, aim: null, stick: false };
+      } else {
+        s.ai = makeAI(diff);
+        if (g.combat) s.dmg = diff.dmg;
+      }
+      if (g.royale) s.dmg *= C.ROYALE_DMG;
+      return s;
+    });
+    // the server has no player of its own: a stand-in nobody is ever compared equal to
+    g.player = g.server ? { x: tr.center ? tr.center.x : 0, y: tr.center ? tr.center.y : 0, progress: 0, gone: false, dead: 0, hist: [] }
+      : g.ships[opts.me];
+    g.order = g.ships.slice();
+    g.rocks = tr.rocks.map(makeRock);
+    g.pickups = tr.pickups.map(function (p, i) {
+      return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind, g.combat), on: true, timer: 0, ph: i * 1.7 };
+    });
+    g.shots = []; g.mines = []; g.waves = []; g.parts = []; g.rings = []; g.texts = [];
+    g.raceTime = 0;
+    g.phase = 'countdown';
+    g.count = 3.9;
+    g.cam.x = g.player.x; g.cam.y = g.player.y;
+    g.shake = 0; g.flash = 0; g.msg = null;
+    g.playerDone = false; g.doneT = 0; g.newRecord = false;
+    g.zone = g.royale ? { r: tr.radius * 1.42, r0: tr.radius * 1.42 } : null;
+    g.over = false; g.elimN = 0; g.feed = []; g.spec = null; g.reward = null;
+    g.state = 'play';
   };
 
   G.begin = function () {
@@ -695,13 +761,14 @@
   /** Positional sound: fades with distance from the camera; silent in demo. */
   function snd(g, name, x, y, v) {
     if (g.demo) return;
+    if (g.server) { g.events.push(['s', name, Math.round(x || 0), Math.round(y || 0), v === undefined ? 1 : +v.toFixed(2)]); return; }
     let vol = v === undefined ? 1 : v;
     if (x !== undefined) vol *= clamp(1.2 - Math.hypot(x - g.cam.x, y - g.cam.y) / 460, 0, 1);
     if (vol > 0.03) RR.audio.sfx(name, vol);
   }
 
   function part(g, x, y, vx, vy, life, size, ramp, drag, layer) {
-    if (g.parts.length > 1500) return;
+    if (g.server || g.parts.length > 1500) return;
     g.parts.push({ x: x, y: y, vx: vx, vy: vy, life: life, max: life, size: size, ramp: ramp, drag: drag || 0, layer: layer || 0 });
   }
 
@@ -716,10 +783,12 @@
   }
 
   function ringFx(g, x, y, r0, r1, dur, color) {
+    if (g.server) return;
     g.rings.push({ x: x, y: y, r0: r0, r1: r1, t: 0, dur: dur, color: color });
   }
 
   function boom(g, x, y, k) {
+    if (g.server) { g.events.push(['b', Math.round(x), Math.round(y), +k.toFixed(2)]); return; }
     burst(g, x, y, Math.round(30 * k), 210 * k, FX.fire, 0.75, 0);
     burst(g, x, y, Math.round(10 * k), 70 * k, FX.smoke, 1.1, 3);
     ringFx(g, x, y, 4, 36 * k, 0.32, PAL.white);
@@ -736,6 +805,7 @@
   }
 
   function floatText(g, x, y, text, color) {
+    if (g.server) return;
     g.texts.push({ x: x, y: y, text: text, color: color, t: 0, dur: 1 });
   }
 
@@ -792,6 +862,7 @@
     victim.deaths++;
     if (killer) killer.kills++;
     g.feed.push({ a: killer ? killer.name : '', b: victim.name, zone: !killer && victim.zoned, t: 0 });
+    if (g.server) g.events.push(['k', killer ? killer.idx : -1, victim.idx, !killer && victim.zoned ? 1 : 0]);
     if (g.feed.length > 3) g.feed.shift();
     if (killer === g.player && !g.demo && !g.playerDone) {
       banner(g, 'WRECKED ' + victim.name + '!', PAL.yellow, 1.3, 3);
@@ -858,19 +929,26 @@
     return { x: P.x + (Q.x - P.x) * a, y: P.y + (Q.y - P.y) * a, angle: P.angle + angDiff(Q.angle, P.angle) * a };
   }
   RR.pathAt = pathAt;
+  RR.fx = {
+    snd: function (name, x, y, v) { snd(G, name, x, y, v); },
+    boom: function (x, y, k) { boom(G, x, y, k); },
+    burst: function (x, y, n, speed, kind, life, size) { burst(G, x, y, n, speed, FX[kind] || FX.spark, life, size); },
+    ring: function (x, y, r0, r1, dur, color) { ringFx(G, x, y, r0, r1, dur, color); },
+    text: function (x, y, text, color) { floatText(G, x, y, text, color); },
+    banner: function (text, color, dur, scale) { banner(G, text, color, dur, scale); },
+  };
 
   /**
    * Spend the do-over: the ship becomes a ghost that retraces its recorded
    * path backwards, then picks up flying from where it was 3 seconds ago.
    * The race clock and everyone else keep going, so it costs real time.
    */
-  G.tryRewind = function () {
-    const g = this, p = g.player;
-    if (g.demo || g.state !== 'play' || g.phase !== 'race' || g.playerDone || p.rw || p.rewind <= 0) return;
+  G.tryRewind = function (who) {
+    const g = this, p = who || g.player, me = p === g.player;
+    if (g.demo || g.state !== 'play' || g.phase !== 'race' || (me ? g.playerDone : p.finished) || p.rw || p.rewind <= 0) return false;
     if (p.hist.length < Math.round(C.REWIND_MIN / C.HIST_DT) + 1) {
-      floatText(g, p.x, p.y - 16, 'TOO SOON', PAL.silver);
-      RR.audio.sfx('deny');
-      return;
+      if (me) { floatText(g, p.x, p.y - 16, 'TOO SOON', PAL.silver); RR.audio.sfx('deny'); }
+      return false;
     }
     p.rewind--; // an upgraded do-over pick-up holds more than one
     tally(p, 'rewind');
@@ -882,11 +960,13 @@
     };
     // `dead` makes every other system (collisions, pickups, gates, weapons) ignore the ghost
     p.dead = 1e9; p.vx = p.vy = 0; p.angVel = 0; p.thrusting = 0;
+    if (g.server) { g.events.push(['r', p.idx]); return true; }
     g.flash = 0.3; g.msg = null;
     ringFx(g, p.x, p.y, 8, 40, 0.35, PAL.violet);
     RR.audio.sfx('rewind');
     RR.audio.music({ tempo: 0.5 });
     RR.input.buzz(60);
+    return true;
   };
 
   function stepRewind(s, g, dt) {
@@ -913,6 +993,7 @@
     s.lapTimes.length = t.nLaps; s.bestLap = t.bestLap; // gates and laps passed in the meantime don't count
     s.dead = 0; s.stun = 0; s.emp = 0; s.invuln = C.REWIND_INVULN;
     s.hist.length = 0; s.histT = 0;
+    if (g.server) { g.events.push(['R', s.idx]); return; } // each player's screen shows its own landing
     g.cam.x = s.x; g.cam.y = s.y;
     g.flash = 0.4;
     burst(g, s.x, s.y, 22, 160, FX.ion, 0.6);
@@ -1212,6 +1293,7 @@
   function collect(s, p, g) {
     p.on = false;
     p.timer = C.PICK_RESPAWN;
+    if (g.server) g.events.push(['p', g.pickups.indexOf(p), s.idx, p.type]);
     const T = ITEMS[p.type], isP = s === g.player && !g.demo, k = powerFor(s, p.type);
     if (T.ammo) {
       // the same weapon again tops it up, to twice a pick-up at most, and never takes ammo away
@@ -1460,6 +1542,11 @@
   function finish(s, g) {
     s.finished = true;
     s.finishTime = g.raceTime;
+    if (g.server) { // autopilot takes the victory lap; the room reads the time
+      if (s.human) s.ai = makeAI(DEMO_DIFF);
+      g.events.push(['F', s.idx]);
+      return;
+    }
     if (s !== g.player || g.demo) return;
     g.playerDone = true;
     g.doneT = 0;
@@ -1554,7 +1641,7 @@
   /** The player's part in a combat event is settled: either it ended, or they are out of a battle royale. */
   function playerResult(g) {
     const p = g.player;
-    if (g.demo || g.playerDone) return;
+    if (g.demo || g.server || g.playerDone) return;
     g.playerDone = true;
     g.doneT = 0;
     rankCombat(g);
@@ -1753,6 +1840,13 @@
     aiFire(s, g, dt);
   }
 
+  /** Online: the human furthest round the course, still racing (the rivals pace themselves on them). */
+  function leadHuman(g) {
+    let best = null;
+    for (const s of g.ships) if (s.human && !s.finished && (!best || s.progress > best.progress)) best = s;
+    return best;
+  }
+
   function think(s, g, dt) {
     const ai = s.ai, inp = s.input, tr = g.track, cps = tr.cps, N = cps.length;
     inp.turn = 0; inp.thrust = 0; inp.brake = 0; inp.fire = false; inp.aim = null;
@@ -1760,8 +1854,9 @@
     if (g.combat) { thinkCombat(s, g, dt); return; }
 
     // rubber band: ease off when well ahead of the player, push when behind
-    if (!g.demo && !g.playerDone && s !== g.player) {
-      s.speedMult = ai.skill * (1 - ai.rubber * clamp((s.progress - g.player.progress) / 1.5, -1, 1));
+    const ref = g.server ? leadHuman(g) : g.player;
+    if (!g.demo && !g.playerDone && ref && s !== ref && !s.human) {
+      s.speedMult = ai.skill * (1 - ai.rubber * clamp((s.progress - ref.progress) / 1.5, -1, 1));
     } else s.speedMult = ai.skill;
 
     const cp = cps[s.nextCp];
@@ -1836,6 +1931,7 @@
   }
 
   function updateCamera(g, dt) {
+    if (g.server) return;
     const f = g.player.gone && g.spec ? g.spec : g.player; // out of a battle royale: watch a survivor
     if (f.rw) { // the ghost moves too fast for a smoothed camera
       g.cam.x = f.x; g.cam.y = f.y;
@@ -1858,8 +1954,9 @@
     if (racing) g.raceTime += dt;
     for (const s of g.ships) {
       if (s.ai) think(s, g, dt);
+      else if (s.remote) continue; // online: another player's ship, drawn from the server's snapshots
       else {
-        const inp = RR.input.read(s);
+        const inp = s.netInput || RR.input.read(s);
         s.input.turn = inp.turn; s.input.thrust = inp.thrust; s.input.brake = inp.brake; s.input.fire = inp.fire;
         s.input.aim = inp.aim; s.input.stick = inp.stick;
       }
@@ -1877,6 +1974,10 @@
     if (g.combat) updateCombat(g, dt);
     else rank(g);
 
+    if (g.server) { // every human can take a do-over
+      if (!g.combat && racing) for (const s of g.ships) if (s.human && !s.rw && s.dead <= 0 && !s.finished) recordHistory(s, dt);
+      return;
+    }
     // "wrong way" when the player keeps flying away from the next gate
     const p = g.player;
     if (!g.demo && !g.combat && racing && !p.rw && p.dead <= 0 && !g.playerDone) recordHistory(p, dt);
