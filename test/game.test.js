@@ -1067,6 +1067,50 @@ test('full screen: iPads skip Safari\'s full screen (a downward swipe, which ste
   }
 });
 
+test('iPhone Home Screen app: the page is made screen-tall (iOS 26 cut off the bottom otherwise) without ever scrolling, and the game refits when the window changes size unannounced', { skip }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 402, height: 874 }, hasTouch: true, isMobile: true, deviceScaleFactor: 3 }); // an iPhone 17 Pro
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.stack || e.message));
+  try {
+    await page.goto(base + '/');
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    // the rule, as written in style.css: only for an installed app (standalone or fullscreen display)
+    const rule = await page.evaluate(() => {
+      for (const sh of document.styleSheets) for (const r of sh.cssRules) {
+        if (r.media && /display-mode: standalone/.test(r.media.mediaText)) return { media: r.media.mediaText, css: r.cssRules[0].cssText };
+      }
+      return null;
+    });
+    assert.ok(rule && /fullscreen/.test(rule.media), 'a rule for installed apps: ' + JSON.stringify(rule));
+    assert.match(rule.css, /^html \{ min-height: min\(100lvh, calc\(100% \+ env\(safe-area-inset-top, 0px\)\)\); \}$/);
+    assert.strictEqual(await page.evaluate(() => getComputedStyle(document.documentElement).minHeight), '0px', 'off in a browser tab');
+
+    // applied (Chrome can't pretend to be an installed app), with the iPhone's status bar and home indicator insets
+    const cdp = await ctx.newCDPSession(page);
+    await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 62, topMax: 62, bottom: 34, bottomMax: 34 } });
+    await page.evaluate((css) => { const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st); }, rule.css);
+    await page.waitForTimeout(200);
+    const on = await page.evaluate(() => ({ h: document.documentElement.getBoundingClientRect().height, sh: document.documentElement.scrollHeight, ih: innerHeight }));
+    assert.strictEqual(on.h, 874, 'the page is the screen\'s height, and capped there: ' + on.h);
+    assert.strictEqual(on.sh, on.ih, 'the page never grows past the screen, so it cannot scroll');
+    await page.mouse.wheel(0, 400);
+    await page.evaluate(() => window.scrollTo(0, 500));
+    assert.strictEqual(await page.evaluate(() => window.scrollY), 0, 'and does not scroll');
+    const fit = await page.evaluate(() => ({ H: RR.game.H, base: RR.game.baseScale, inset: RR.game.inset.b, cssH: parseFloat(document.getElementById('hud').style.height) }));
+    assert.ok(fit.cssH >= 874 - fit.base / 3 && fit.cssH <= 874 + fit.base / 3, 'the game fills the screen top to bottom: ' + fit.cssH);
+    assert.ok(fit.inset > 0, 'and keeps its controls above the home indicator');
+
+    // iOS can change the window's size with no resize event: the game notices on its own
+    const before = await page.evaluate(() => RR.game.H);
+    await page.evaluate(() => Object.defineProperty(window, 'innerHeight', { get: () => 812, configurable: true }));
+    await page.waitForFunction((h) => RR.game.H < h, before, { timeout: 2000 });
+    const after = await page.evaluate(() => ({ H: RR.game.H, cssH: parseFloat(document.getElementById('hud').style.height) }));
+    assert.ok(Math.abs(after.cssH - 812) < 2, 'refitted to the new height: ' + after.cssH);
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 /* --------------------------------------------------------- touch sticks */
 
 /** A phone (or a tablet, given its screen size) with a race under way, and helpers to put thumbs on the screen (game-pixel coordinates). */

@@ -87,10 +87,12 @@
   G.init(); // loads the saved zoom level...
   resize(); // ...which sizes the layers
 
-  let last = performance.now();
+  let last = performance.now(), fitW = window.innerWidth, fitH = window.innerHeight;
   function frame(now) {
     const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
     last = now;
+    // iOS can change the window's size without a resize event (a Home Screen app at launch): fit again
+    if (window.innerWidth !== fitW || window.innerHeight !== fitH) { fitW = window.innerWidth; fitH = window.innerHeight; resize(); }
     G.frame(dt);
     G.render(wctx, hctx);
     window.requestAnimationFrame(frame);

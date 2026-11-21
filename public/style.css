@@ -12,6 +12,21 @@ body {
   overscroll-behavior: none;
 }
 
+/*
+ * iOS 26 Home Screen app: with the status bar see-through (black-translucent
+ * and viewport-fit=cover), WebKit lays the page out one status bar short
+ * (62 pt on an iPhone 17 Pro) and draws nothing below that, so the bottom of
+ * the game was cut off. It only does so while the page is no taller than the
+ * short screen (WebKit bug 301108), so make the page at least screen-tall.
+ * The min() keeps it from growing past the screen where the top inset is 0
+ * (WebKit bug 316008). Elsewhere this changes nothing.
+ */
+@media (display-mode: standalone), (display-mode: fullscreen) {
+  html {
+    min-height: min(100lvh, calc(100% + env(safe-area-inset-top, 0px)));
+  }
+}
+
 body {
   -webkit-user-select: none;
   user-select: none;

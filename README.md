@@ -105,6 +105,11 @@ a page cannot switch off. Use Share > Add to Home Screen instead; the game then 
 window, with no browser bars and no swipe-to-exit. The title screen says so, and F says so on an
 iPad keyboard.
 
+iOS 26 lays a Home Screen app out one status bar short (and draws nothing below that) while the
+page is no taller than that short screen, which cut off the bottom of the game. `style.css`
+makes the page at least screen-tall in an installed app, capped at the screen so it never
+scrolls, and the game refits whenever the window's size changes, even without a resize event.
+
 ## Online multiplayer
 
 ONLINE on the menu (when the game's server says online play is available):
