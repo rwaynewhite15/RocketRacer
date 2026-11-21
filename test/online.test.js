@@ -11,6 +11,7 @@ const http = require('http');
 const { createApp } = require('../server');
 const { memoryStore } = require('../lib/store');
 const { attachMultiplayer } = require('../lib/mp');
+const { createMpServer } = require('../mp-server');
 
 let chromium = null;
 try { ({ chromium } = require('playwright')); } catch (e) { /* skipped below */ }
@@ -219,4 +220,28 @@ test('online: a fight online - the kill feed and the menu (the fight goes on beh
     await A.page.waitForFunction(() => RR.game.state === 'title');
     assert.deepStrictEqual([A.errors, B.errors], [[], []]);
   } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
+});
+
+test('online: with online play as its own service at another address (as on Cloud Run), the game connects and races', { skip }, async () => {
+  // the online-play service on one port, the game's on another, told where it is by MP_URL
+  const mp = createMpServer(memoryStore(), {});
+  await new Promise((r) => mp.listen(0, '127.0.0.1', r));
+  const keep = process.env.MP_URL;
+  process.env.MP_URL = 'ws://127.0.0.1:' + mp.address().port + '/ws';
+  const web = http.createServer(createApp(memoryStore()));
+  await new Promise((r) => web.listen(0, '127.0.0.1', r));
+  const url = 'http://127.0.0.1:' + web.address().port + '/';
+  const A = await player(url, 'ALICE'), B = await player(url, 'BOB');
+  try {
+    const csp = (await fetch(url)).headers.get('content-security-policy');
+    assert.match(csp, new RegExp("connect-src 'self' ws://127\\.0\\.0\\.1:" + mp.address().port + ';'), 'the page may connect to it: ' + csp);
+    await intoRace(A, B);
+    await A.page.waitForFunction(() => RR.game.phase === 'race', null, { timeout: 6000 });
+    assert.strictEqual(mp.hub.stats().players, 2, 'both are on the online-play service');
+    assert.deepStrictEqual([A.errors, B.errors], [[], []]);
+  } finally {
+    await A.ctx.close(); await B.ctx.close();
+    if (keep === undefined) delete process.env.MP_URL; else process.env.MP_URL = keep;
+    web.close(); mp.hub.shutdown(); mp.close();
+  }
 });

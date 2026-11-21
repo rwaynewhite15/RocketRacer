@@ -199,6 +199,28 @@ test('online races timed by the multiplayer server are stored with the same chec
   } finally { server.close(); }
 });
 
+test('the page may connect only to itself, and to online play when it is a separate service', async () => {
+  const keep = process.env.MP_URL;
+  try {
+    delete process.env.MP_URL;
+    let { server, base } = await start();
+    let csp = (await fetch(base + '/')).headers.get('content-security-policy');
+    server.close();
+    assert.match(csp, /connect-src 'self';/);
+    process.env.MP_URL = 'wss://rocketracer-mp-staging-abc-uc.a.run.app/ws';
+    ({ server, base } = await start());
+    csp = (await fetch(base + '/')).headers.get('content-security-policy');
+    assert.match(csp, /connect-src 'self' wss:\/\/rocketracer-mp-staging-abc-uc\.a\.run\.app;/);
+    assert.match((await fetch(base + '/api/health')).headers.get('content-security-policy'), /wss:\/\/rocketracer-mp-staging/, 'on every response');
+    server.close();
+    process.env.MP_URL = 'javascript:alert(1)';
+    ({ server, base } = await start());
+    csp = (await fetch(base + '/')).headers.get('content-security-policy');
+    server.close();
+    assert.match(csp, /connect-src 'self';/, 'anything but a ws(s) address is ignored');
+  } finally { if (keep === undefined) delete process.env.MP_URL; else process.env.MP_URL = keep; }
+});
+
 test('rate-limits a flood of submissions', async () => {
   const { server, base } = await start();
   try {

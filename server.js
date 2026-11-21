@@ -68,12 +68,29 @@ const MIME = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
-const SECURITY_HEADERS = {
-  'X-Content-Type-Options': 'nosniff',
-  'Referrer-Policy': 'no-referrer',
-  'Content-Security-Policy':
-    "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'",
-};
+/**
+ * Headers on every response. The page may only load and connect to its own
+ * address, plus, when online play runs as a separate service (MP_URL), that
+ * service's WebSocket address: without it the browser refuses to connect.
+ */
+const headerCache = new Map();
+function securityHeaders() {
+  const mp = process.env.MP_URL || '';
+  if (!headerCache.has(mp)) {
+    let extra = '';
+    try {
+      const u = new URL(mp);
+      if (u.protocol === 'wss:' || u.protocol === 'ws:') extra = ' ' + u.protocol + '//' + u.host;
+    } catch (e) { /* not set, or not a URL: same origin only */ }
+    headerCache.set(mp, {
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy':
+        "default-src 'self'; connect-src 'self'" + extra + "; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'self'",
+    });
+  }
+  return headerCache.get(mp);
+}
 
 /* ------------------------------------------------------------- static */
 
@@ -108,7 +125,7 @@ function serveStatic(files, req, res, pathname) {
     // unchanged file costs one tiny 304.
     'Cache-Control': 'no-cache',
     Vary: 'Accept-Encoding',
-  }, SECURITY_HEADERS);
+  }, securityHeaders());
   if (req.headers['if-none-match'] === f.etag) { res.writeHead(304, headers); return res.end(); }
   let body = f.buf;
   if (f.gz && /\bgzip\b/.test(req.headers['accept-encoding'] || '')) {
@@ -125,7 +142,7 @@ function serveStatic(files, req, res, pathname) {
 function send(res, status, type, body) {
   res.writeHead(status, Object.assign({
     'Content-Type': type, 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-store',
-  }, SECURITY_HEADERS));
+  }, securityHeaders()));
   res.end(body);
 }
 
