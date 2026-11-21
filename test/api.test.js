@@ -132,16 +132,16 @@ test('rows carry the finishing place, and a pilot can look up their own row and 
 test('each time keeps the setup it was set with: rocket, stat levels and powerups used', async () => {
   const { server, base } = await start();
   try {
-    const setup = { ship: 'dart', stats: [6, 7, 5, 3, 4], items: { nitro: 2, missile: 1, mine: 0 } };
+    const setup = { ship: 'dart', stats: [6, 7, 5, 3, 4], items: { nitro: 2, missile: 1, mine: 0 }, bought: { rewind: 1, emp: 0 } };
     let r = await (await post(base, run({ pid: 'pilot-setup001', name: 'ZIP', time: 76, setup }))).json();
-    const stored = { ship: 'dart', stats: [6, 7, 5, 3, 4], items: { nitro: 2, missile: 1 } }; // unused items dropped
+    const stored = { ship: 'dart', stats: [6, 7, 5, 3, 4], items: { nitro: 2, missile: 1 }, bought: { rewind: 1 } }; // zero counts dropped
     assert.deepStrictEqual(r.best.setup, stored);
     assert.deepStrictEqual(r.scores[0].setup, stored);
     assert.deepStrictEqual((await board(base, 'lunar', 'pilot-setup001')).me.setup, stored, 'in your own row too');
     assert.deepStrictEqual((await board(base, 'lunar')).scores[0].setup, stored, 'and for everyone else');
 
     // the setup belongs to the record run: a slower race does not change it, a faster one does
-    const other = { ship: 'phoenix', stats: [9, 9, 9, 9, 9], items: { shield: 3 } };
+    const other = { ship: 'phoenix', stats: [9, 9, 9, 9, 9], items: { shield: 3 }, bought: {} };
     r = await (await post(base, run({ pid: 'pilot-setup001', name: 'ZIP', time: 85, setup: other }))).json();
     assert.deepStrictEqual([r.improved, r.best.setup], [false, stored]);
     r = await (await post(base, run({ pid: 'pilot-setup001', name: 'ZIP', time: 74, setup: other }))).json();
@@ -149,7 +149,7 @@ test('each time keeps the setup it was set with: rocket, stat levels and powerup
 
     // a clean run (no powerups) keeps an empty list; a page from before setups sends none: null
     r = await (await post(base, run({ pid: 'pilot-setup002', name: 'CLEAN', time: 77, setup: { ship: 'sparrow', stats: [3, 3, 3, 3, 3] } }))).json();
-    assert.deepStrictEqual(r.best.setup, { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: {} });
+    assert.deepStrictEqual(r.best.setup, { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: {}, bought: {} });
     r = await (await post(base, run({ pid: 'pilot-setup003', name: 'OLD', time: 78 }))).json();
     assert.strictEqual(r.best.setup, null);
     assert.deepStrictEqual((await board(base, 'lunar')).scores.map((e) => e.name), ['ZIP', 'CLEAN', 'OLD']);
@@ -167,14 +167,16 @@ test('setups that are not a known rocket, five stat levels and known powerup cou
       { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { laser: 1 } }, { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { nitro: -1 } },
       { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { nitro: 100 } }, { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { nitro: 1.5 } },
       { ship: 'dart', stats: [3, 3, 3, 3, 3], items: { constructor: 1 } },
+      { ship: 'dart', stats: [3, 3, 3, 3, 3], bought: [1] }, { ship: 'dart', stats: [3, 3, 3, 3, 3], bought: { laser: 1 } },
+      { ship: 'dart', stats: [3, 3, 3, 3, 3], bought: { missile: -1 } },
     ];
     for (const b of bad) assert.strictEqual((await post(base, run({ pid: 'pilot-setup009', setup: b }))).status, 400, JSON.stringify(b));
     const proto = '{"track":"lunar","pid":"pilot-setup009","name":"X","time":75.5,"lap":24.2,"diff":1,"place":2,' +
       '"setup":{"ship":"dart","stats":[3,3,3,3,3],"items":{"__proto__":{"nitro":1}}}}';
     assert.strictEqual((await post(base, proto, true)).status, 400, '__proto__ is not an item');
     assert.strictEqual((await board(base, 'lunar', 'pilot-setup009')).me, null, 'none of them was stored');
-    assert.deepStrictEqual(cleanSetup({ ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2, rewind: 0 } }),
-      { ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2 } });
+    assert.deepStrictEqual(cleanSetup({ ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2, rewind: 0 }, bought: { nitro: 1 } }),
+      { ship: 'hammer', stats: [1, 2, 3, 4, 5], items: { emp: 2 }, bought: { nitro: 1 } });
   } finally { server.close(); }
 });
 

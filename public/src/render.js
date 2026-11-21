@@ -878,9 +878,9 @@
    */
   const hullOf = function (id) { return RR.HULLS.filter(function (h) { return h.id === id; })[0] || null; };
 
-  /** Powerups a setup used, most-used first: [[type, count], ...] in RR.ITEMS order on ties. */
-  function usedList(su) {
-    const order = Object.keys(RR.ITEMS), items = (su && su.items) || {};
+  /** Powerups in one of a setup's lists, most first: [[type, count], ...] in RR.ITEMS order on ties. */
+  function usedList(su, which) {
+    const order = Object.keys(RR.ITEMS), items = (su && su[which || 'items']) || {};
     return order.filter(function (k) { return items[k] > 0; })
       .map(function (k) { return [k, items[k]]; })
       .sort(function (a, b) { return b[1] - a[1] || order.indexOf(a[0]) - order.indexOf(b[0]); });
@@ -888,17 +888,27 @@
 
   /**
    * A leaderboard row's setup in a few pixels: the rocket, small, then up to
-   * three powerup icons (+ when there were more). Rows from before setups
-   * were recorded get a dash. Returns what it drew, for the tests.
+   * three powerup icons (+ when there were more). Bought powerups come first,
+   * underlined in gold; then the ones picked up on the track. Rows from before
+   * setups were recorded get a dash. Returns what it drew, for the tests.
    */
   function setupStrip(ctx, su, x, y) {
     const hull = su && hullOf(su.ship);
     if (!hull) { text(ctx, '-', x + 2, y, PAL.steel); return null; }
     ctx.drawImage(Art.shipMini(hull.design, 0), x, y - 2);
-    const used = usedList(su), shown = used.slice(0, used.length > 3 ? 2 : 3);
-    shown.forEach(function (u, k) { ctx.drawImage(Art.icons[u[0]], x + 11 + k * 10, y - 1); });
-    if (used.length > shown.length) text(ctx, '+', x + 11 + shown.length * 10 + 1, y, PAL.silver);
-    return { ship: hull.id, icons: shown.map(function (u) { return u[0]; }), more: used.length - shown.length };
+    const bought = usedList(su, 'bought').map(function (u) { return u[0]; });
+    const all = bought.map(function (k) { return [k, true]; }).concat(usedList(su).map(function (u) { return [u[0], false]; }));
+    const shown = all.slice(0, all.length > 3 ? 2 : 3);
+    shown.forEach(function (u, k) {
+      const ix = x + 11 + k * 10;
+      ctx.drawImage(Art.icons[u[0]], ix, y - 1);
+      if (u[1]) { ctx.fillStyle = PAL.gold; ctx.fillRect(ix, y + 9, 9, 1); }
+    });
+    if (all.length > shown.length) text(ctx, '+', x + 11 + shown.length * 10 + 1, y, PAL.silver);
+    return {
+      ship: hull.id, bought: shown.filter(function (u) { return u[1]; }).map(function (u) { return u[0]; }),
+      icons: shown.filter(function (u) { return !u[1]; }).map(function (u) { return u[0]; }), more: all.length - shown.length,
+    };
   }
 
   /**
@@ -975,7 +985,11 @@
       text(ctx, touch ? 'TAP A PILOT TO SEE THEIR ROCKET' : 'ARROWS + ENTER: SEE A PILOT\'S ROCKET', W / 2, y + ph - 34, PAL.sky, 1, 'center');
     }
     if (g.boardSel >= rows.length) g.boardSel = -1;
-    text(ctx, 'R ROOKIE  P PILOT  A ACE', W / 2, y + ph - 45, PAL.steel, 1, 'center');
+    // the key: rival levels, and the gold line under a powerup bought in the hangar
+    const key = 'R ROOKIE  P PILOT  A ACE    BOUGHT', kx = Math.round(W / 2 - RR.textW(key, 1) / 2);
+    text(ctx, key, kx, y + ph - 45, PAL.steel);
+    ctx.fillStyle = PAL.gold;
+    ctx.fillRect(kx + RR.textW('R ROOKIE  P PILOT  A ACE  ', 1) - 1, y + ph - 39, 9, 1);
     const bw = 90;
     button(g, ctx, touch ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
       function () { g.closeBoard(); }, PAL.lime);
@@ -991,7 +1005,7 @@
     const touch = RR.input.touchMode;
     ctx.fillStyle = 'rgba(7,7,26,0.72)';
     ctx.fillRect(0, 0, W, H);
-    const pw = Math.min(W - 8, 240), ph = 246;
+    const pw = Math.min(W - 8, 240), ph = 244;
     const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
     panel(ctx, x, y, pw, ph, PAL.pink);
     text(ctx, e.name, W / 2, y + 7, c.rank === 1 ? PAL.gold : PAL.white, 2, 'center', PAL.plum);
@@ -1008,7 +1022,7 @@
     text(ctx, 'BEST LAP ' + fmt(e.lap), tx, y + 68, PAL.silver);
     const place = e.place >= 1 && e.place <= 6 ? ORD[e.place - 1] : '-';
     text(ctx, place + ' VS ' + ((RR.DIFFS[e.diff] && RR.DIFFS[e.diff].name) || '?') + ' RIVALS', tx, y + 78, DIFF_COL[e.diff] || PAL.silver);
-    const shown = { ship: hull ? hull.id : null, stats: null, items: [] };
+    const shown = { ship: hull ? hull.id : null, stats: null, items: [], bought: [] };
     g.cardShown = shown;
 
     if (!hull) {
@@ -1018,11 +1032,11 @@
     } else {
       /* stats */
       const tuned = su.stats.reduce(function (a, lv, k) { return a + Math.max(0, lv - hull.base[k]); }, 0);
-      text(ctx, 'STATS', x + 14, y + 90, PAL.steel);
-      text(ctx, tuned ? '+' + tuned + ' POINTS PUT IN' : 'STOCK', x + pw - 14, y + 90, tuned ? PAL.yellow : PAL.steel, 1, 'right');
+      text(ctx, 'STATS', x + 14, y + 88, PAL.steel);
+      text(ctx, tuned ? '+' + tuned + ' POINTS PUT IN' : 'STOCK', x + pw - 14, y + 88, tuned ? PAL.yellow : PAL.steel, 1, 'right');
       shown.stats = su.stats.slice();
       RR.STATS.forEach(function (st, k) {
-        const ry = y + 101 + k * 11, lv = su.stats[k], base = hull.base[k], cap = hull.cap[k], bx = x + 86;
+        const ry = y + 98 + k * 10, lv = su.stats[k], base = hull.base[k], cap = hull.cap[k], bx = x + 86;
         text(ctx, st.name, x + 14, ry, PAL.silver);
         for (let n = 0; n < 10; n++) {
           if (n >= cap) { ctx.fillStyle = PAL.slate; ctx.fillRect(bx + n * 5 + 1, ry + 3, 2, 1); continue; }
@@ -1032,13 +1046,22 @@
         text(ctx, String(lv), bx + 56, ry, lv > base ? PAL.yellow : PAL.white);
       });
 
-      /* powerups */
-      const used = usedList(su);
-      text(ctx, 'POWERUPS USED', x + 14, y + 160, PAL.steel);
-      if (!used.length) text(ctx, 'NONE - A CLEAN RUN', x + 14, y + 174, PAL.lime);
+      /* powerups: bought in the hangar, then picked up on the track */
+      const used = usedList(su), bought = usedList(su, 'bought');
+      text(ctx, 'BOUGHT', x + 14, y + 152, PAL.steel);
+      if (!bought.length) text(ctx, 'NOTHING', x + 60, y + 152, PAL.lime);
+      bought.forEach(function (u, k) {
+        const bx = x + 60 + k * 80;
+        ctx.drawImage(Art.icons[u[0]], bx, y + 151);
+        ctx.fillStyle = PAL.gold; ctx.fillRect(bx, y + 161, 9, 1);
+        text(ctx, RR.ITEMS[u[0]].name, bx + 12, y + 152, PAL.gold);
+        shown.bought.push(u);
+      });
+      text(ctx, 'PICKED UP AND USED', x + 14, y + 166, PAL.steel);
+      if (!used.length) text(ctx, bought.length ? 'NONE' : 'NONE - A CLEAN RUN', x + 14, y + 178, PAL.lime);
       const colW = Math.floor((pw - 28) / 2);
       used.forEach(function (u, k) {
-        const cx = x + 14 + (k % 2) * colW, ry = y + 173 + Math.floor(k / 2) * 11, T = RR.ITEMS[u[0]];
+        const cx = x + 14 + (k % 2) * colW, ry = y + 178 + Math.floor(k / 2) * 10, T = RR.ITEMS[u[0]];
         ctx.drawImage(Art.icons[u[0]], cx, ry - 1);
         text(ctx, T.name, cx + 12, ry, T.color);
         text(ctx, 'X' + u[1], cx + colW - 8, ry, PAL.white, 1, 'right');
@@ -1061,11 +1084,11 @@
     const i = g.hangarShip, h = RR.HULLS[i], open = g.shipUnlocked(i), left = g.pointsLeft(i);
     ctx.fillStyle = 'rgba(7,7,26,0.72)';
     ctx.fillRect(0, 0, W, H);
-    const pw = Math.min(W - 8, 250), ph = 216;
+    const pw = Math.min(W - 8, 250), ph = 246;
     const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
     panel(ctx, x, y, pw, ph, PAL.yellow);
     text(ctx, 'HANGAR', W / 2, y + 7, PAL.yellow, 2, 'center', PAL.plum);
-    text(ctx, 'WINS ' + g.prog.wins + '    STAT POINTS ' + g.prog.points, W / 2, y + 25, PAL.silver, 1, 'center');
+    text(ctx, 'WINS ' + g.prog.wins + '   STAT POINTS ' + g.prog.points + '   CREDITS ' + g.prog.credits, W / 2, y + 25, PAL.silver, 1, 'center');
     const mark = function (ry, hh) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry, pw - 10, hh); };
 
     /* the ship */
@@ -1105,6 +1128,25 @@
     });
     text(ctx, open ? 'POINTS LEFT FOR THIS SHIP: ' + left : 'WIN RACES AND FIGHTS TO UNLOCK', W / 2, ry + 1,
       open && left > 0 ? PAL.yellow : PAL.steel, 1, 'center');
+
+    /* the shop: one powerup, bought with credits, to start the next Grand Prix with */
+    const kit = g.prog.kit && RR.SHOP.filter(function (s) { return s.id === g.prog.kit; })[0];
+    const ly = y + 196, onShop = g.hangarRow === ST.length + 1 && !touch;
+    if (onShop) mark(ly - 4, 28);
+    text(ctx, 'NEXT RACE', x + 10, ly, onShop ? PAL.yellow : PAL.silver);
+    const sx = x + 70, sw = pw - 80;
+    panel(ctx, sx, ly - 4, sw, 15, kit ? PAL.gold : PAL.steel);
+    text(ctx, '<', sx + 6, ly, PAL.yellow, 1, 'center');
+    text(ctx, '>', sx + sw - 6, ly, PAL.yellow, 1, 'center');
+    if (kit) {
+      ctx.drawImage(Art.icons[kit.id], sx + 14, ly - 1);
+      text(ctx, RR.ITEMS[kit.id].name, sx + 26, ly, RR.ITEMS[kit.id].color);
+      text(ctx, kit.price + ' CR', sx + sw - 14, ly, PAL.gold, 1, 'right');
+    } else text(ctx, 'EMPTY', sx + sw / 2, ly, PAL.steel, 1, 'center');
+    text(ctx, kit ? 'BOUGHT: ' + kit.does : 'BUY A POWERUP FOR YOUR NEXT GRAND PRIX', W / 2, ly + 15,
+      kit ? PAL.gold : PAL.steel, 1, 'center');
+    g.ui.push({ x: sx, y: ly - 6, w: sw / 2, h: 19, label: 'SHOP <', act: function () { g.shopCycle(-1); } });
+    g.ui.push({ x: sx + sw / 2, y: ly - 6, w: sw / 2, h: 19, label: 'SHOP >', act: function () { g.shopCycle(1); } });
 
     const bw = 96;
     button(g, ctx, touch ? 'DONE' : 'DONE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 23, bw, 17,
@@ -1169,8 +1211,8 @@
     if (rw) {
       const fresh = rw.unlocked.length && Math.floor(T) & 1;
       text(ctx, fresh ? 'NEW SHIP IN THE HANGAR: ' + rw.unlocked.join(' ')
-        : rw.pts ? '+' + rw.pts + ' STAT POINT' + (rw.pts > 1 ? 'S' : '') + ' FOR THE HANGAR' : 'TOP 3 EARNS STAT POINTS',
-        W / 2, ry + 24, fresh ? PAL.lime : rw.pts ? PAL.yellow : PAL.steel, 1, 'center');
+        : (rw.pts ? '+' + rw.pts + ' STAT POINT' + (rw.pts > 1 ? 'S' : '') + '  ' : '') + '+' + rw.credits + ' CREDITS',
+        W / 2, ry + 24, fresh ? PAL.lime : rw.pts ? PAL.yellow : PAL.gold, 1, 'center');
     }
     if (net.online && !g.combat) {
       const r = net.result;

@@ -45,6 +45,12 @@ async function openGame(viewport, baseUrl) {
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   await page.goto((baseUrl || base) + '/');
   await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+  await addHelpers(page);
+  return { page, ctx, errors };
+}
+
+/** `window.T`: test helpers in the page (again after a reload). */
+async function addHelpers(page) {
   await page.evaluate(() => {
     const g = RR.game, S = 1 / 120;
     window.T = {
@@ -54,7 +60,6 @@ async function openGame(viewport, baseUrl) {
       fresh(track) { g.trackIdx = track; g.startRace(false); g.player.ai = T.ai(); g.state = 'play'; T.run(4.2); }, // past the countdown
     };
   });
-  return { page, ctx, errors };
 }
 
 test('boots to the title screen without errors', { skip }, async () => {
@@ -271,7 +276,7 @@ test('leaderboard: a race sends the rocket flown, its stat levels and the poweru
     });
     assert.deepStrictEqual(r.during, { nitro: 1, shield: 1, missile: 2 }, 'tallied as they were used');
     assert.ok(r.done && r.result && !r.result.error, JSON.stringify(r.result));
-    const want = { ship: 'dart', stats: [6, 4, 4, 3, 3], items: { nitro: 1, shield: 1, missile: 2, rewind: 1 } };
+    const want = { ship: 'dart', stats: [6, 4, 4, 3, 3], items: { nitro: 1, shield: 1, missile: 2, rewind: 1 }, bought: {} };
     assert.deepStrictEqual(r.mine, want, 'your own row');
     assert.deepStrictEqual(r.row, want, 'the top-ten row everyone sees');
     assert.deepStrictEqual(errors, []);
@@ -300,9 +305,9 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     // each row: the rocket, then the powerups most used first (two and a "+" when there are more than three)
     const strips = await page.evaluate(() => RR.game.boardRows.map((r) => r.strip));
     assert.deepStrictEqual(strips, [
-      { ship: 'phoenix', icons: ['nitro', 'missile'], more: 2 },
-      { ship: 'dart', icons: ['nitro'], more: 0 },
-      { ship: 'sparrow', icons: [], more: 0 },
+      { ship: 'phoenix', bought: [], icons: ['nitro', 'missile'], more: 2 },
+      { ship: 'dart', bought: [], icons: ['nitro'], more: 0 },
+      { ship: 'sparrow', bought: [], icons: [], more: 0 },
       null,
     ]);
 
@@ -318,7 +323,7 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     await click('PILOT 1');
     let s = await state();
     assert.deepStrictEqual(s.card, { rank: 1, name: 'COMET', shown: {
-      ship: 'phoenix', stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['rewind', 1]],
+      ship: 'phoenix', stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['rewind', 1]], bought: [],
     } });
     await click('BACK (ENTER)');
     s = await state();
@@ -332,19 +337,147 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     assert.strictEqual((await state()).sel, 3, 'up from the top wraps to the bottom');
     await key('Enter');
     s = await state();
-    assert.deepStrictEqual(s.card, { rank: 4, name: 'OLDIE', shown: { ship: null, stats: null, items: [] } }, 'an old row: no setup on record');
+    assert.deepStrictEqual(s.card, { rank: 4, name: 'OLDIE', shown: { ship: null, stats: null, items: [], bought: [] } }, 'an old row: no setup on record');
     await key('Escape');
     assert.deepStrictEqual([(await state()).state, (await state()).card], ['board', null]);
     await key('ArrowUp');
     await key('Enter');
     s = await state();
-    assert.deepStrictEqual(s.card, { rank: 3, name: 'ROCKY', shown: { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: [] } }, 'a clean run');
+    assert.deepStrictEqual(s.card, { rank: 3, name: 'ROCKY', shown: { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: [], bought: [] } }, 'a clean run');
     await key('Enter');
     assert.strictEqual((await state()).card, null, 'Enter closes the card too');
     await key('Escape');
     assert.strictEqual((await state()).state, 'title', 'and Esc the board');
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); own.close(); }
+});
+
+test('hangar shop: events pay credits, a powerup bought with them goes into the next Grand Prix, and the leaderboard shows it as bought', { skip }, async () => {
+  const { own, url } = await ownBoard([]);
+  const { page, ctx, errors } = await openGame(null, url);
+  try {
+    await page.waitForFunction(() => RR.net.online);
+    // a race on autopilot pays credits by finishing place, times the rival level
+    const paid = await page.evaluate(() => {
+      const g = RR.game;
+      g.prog.credits = 0;
+      T.fresh(1); // on another course, so this time cannot become the record the rest of the test reads
+      let k = 0; while (!g.playerDone && k++ < 120 * 400) g.step(1 / 120);
+      const place = g.player.place, want = Math.round([100, 70, 50, 40, 30, 30][place - 1] * [1, 1.5, 2][g.diffIdx]);
+      return { got: g.reward.credits, want: want, credits: g.prog.credits };
+    });
+    assert.ok(paid.want > 0);
+    assert.deepStrictEqual([paid.got, paid.credits], [paid.want, paid.want]);
+
+    // in the hangar with 100 credits: each step to the next item refunds the last; what costs too much is skipped
+    await page.evaluate(() => { const g = RR.game; g.prog.credits = 100; g.prog.kit = null; g.toTitle(); g.openHangar(); });
+    await page.waitForTimeout(150);
+    const box = await page.locator('#hud').boundingBox();
+    const k = box.width / await page.evaluate(() => RR.game.W);
+    const click = async (label) => {
+      const u = await page.evaluate((l) => RR.game.ui.find((b) => b.label === l) || null, label);
+      assert.ok(u, 'on screen: ' + label);
+      await page.mouse.click(box.x + (u.x + u.w / 2) * k, box.y + (u.y + u.h / 2) * k);
+      await page.waitForTimeout(80);
+    };
+    const shop = () => page.evaluate(() => [RR.game.prog.kit, RR.game.prog.credits]);
+    const seen = [];
+    for (let i = 0; i < 7; i++) { await click('SHOP >'); seen.push(await shop()); }
+    assert.deepStrictEqual(seen, [['nitro', 40], ['shield', 20], ['blaster', 40], ['mine', 30], ['missile', 10], ['emp', 0], [null, 100]],
+      'the DO-OVER (150) is skipped, and EMPTY gives everything back');
+    // the keyboard: up from the ship wraps to the shop row; left goes back through the list
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForTimeout(60);
+    assert.deepStrictEqual(await shop(), ['emp', 0]);
+    await page.keyboard.press('ArrowLeft');
+    await page.waitForTimeout(60);
+    assert.deepStrictEqual(await shop(), ['missile', 10]);
+    await page.reload();
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6 && RR.net.online);
+    await addHelpers(page);
+    assert.deepStrictEqual(await shop(), ['missile', 10], 'kept after a reload');
+
+    // the next Grand Prix starts armed with it, and it is spent
+    const r = await page.evaluate(async () => {
+      const g = RR.game, n = RR.net, read = RR.input.read, out = {};
+      g.trackIdx = 0; g.startRace(false); g.state = 'play';
+      const p = g.player;
+      out.start = { kit: g.prog.kit, credits: g.prog.credits, weapon: p.weapon, ammo: p.ammo, bought: Object.assign({}, p.bought) };
+      let fire = false;
+      RR.input.read = () => ({ turn: 0, thrust: 0, brake: 0, fire: fire, aim: null, stick: false });
+      T.run(4.2);
+      const shoot = () => { fire = true; g.step(1 / 120); fire = false; g.step(1 / 120); };
+      const before = g.shots.length;
+      shoot();
+      out.fired = g.shots.length - before;
+      out.usedAfterBought = Object.assign({}, p.used); // the bought missile is not a track pick-up
+      T.run(0.6);
+      const pk = g.pickups[0];
+      pk.on = true; pk.type = 'missile'; p.x = pk.x; p.y = pk.y; p.vx = p.vy = 0; g.step(1 / 120);
+      shoot(); // a missile picked up on the track, fired
+      g.pickups.forEach((q) => { q.on = false; q.timer = 1e9; });
+      p.weapon = null; p.ammo = 0;
+      RR.input.read = read;
+      p.ai = T.ai();
+      let k = 0; while (!g.playerDone && k++ < 120 * 400) g.step(1 / 120);
+      for (let i = 0; i < 100 && !n.result; i++) await new Promise((res) => setTimeout(res, 50));
+      out.setup = n.me.lunar && n.me.lunar.setup;
+      out.next = g.prog.kit;
+      g.toTitle(); g.showBoard();
+      return out;
+    });
+    assert.deepStrictEqual(r.start, { kit: null, credits: 10, weapon: 'missile', ammo: 2, bought: { missile: 1 } });
+    assert.strictEqual(r.fired, 1, 'the bought missile fires');
+    assert.deepStrictEqual(r.usedAfterBought, {});
+    assert.strictEqual(r.next, null, 'spent: the next race starts with nothing');
+    assert.deepStrictEqual(r.setup, { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: { missile: 1 }, bought: { missile: 1 } });
+
+    // on the board: the bought one first, marked; on the card, in its own line
+    await page.waitForFunction(() => RR.game.boardRows && RR.game.boardRows.length === 1);
+    assert.deepStrictEqual(await page.evaluate(() => RR.game.boardRows[0].strip), { ship: 'sparrow', bought: ['missile'], icons: ['missile'], more: 0 });
+    await click('PILOT 1');
+    assert.deepStrictEqual(await page.evaluate(() => RR.game.cardShown),
+      { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: [['missile', 1]], bought: [['missile', 1]] });
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); own.close(); }
+});
+
+test('hangar shop: a bought nitro or shield kicks in at GO, a bought do-over is ready and not counted as picked up, and fights leave the purchase for the next race', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  try {
+    const r = await page.evaluate(() => {
+      const g = RR.game, out = {};
+      const start = (kit) => { g.prog.kit = kit; g.modeIdx = 0; g.trackIdx = 0; g.startRace(false); g.state = 'play'; return g.player; };
+      let p = start('nitro');
+      T.run(1);
+      out.nitroWaits = p.nitro;
+      T.run(3.2);
+      out.nitroAtGo = p.nitro > 0;
+      p = start('shield');
+      T.run(1);
+      out.shieldWaits = p.shield;
+      T.run(3.2);
+      out.shieldAtGo = p.shield > 0;
+      p = start('rewind');
+      out.rewindReady = p.rewind;
+      T.run(5.4);
+      g.tryRewind();
+      T.run(1.5);
+      out.rewind = { used: Object.assign({}, p.used), bought: Object.assign({}, p.bought), taken: p.rewind };
+      // a fight does not spend it
+      g.prog.kit = 'missile'; g.modeIdx = 1; g.startRace(false);
+      out.fight = { kit: g.prog.kit, weapon: g.player.weapon, bought: Object.assign({}, g.player.bought) };
+      g.modeIdx = 0;
+      return out;
+    });
+    assert.deepStrictEqual([r.nitroWaits, r.nitroAtGo], [0, true], 'nitro waits for GO');
+    assert.deepStrictEqual([r.shieldWaits, r.shieldAtGo], [0, true], 'so does the shield');
+    assert.strictEqual(r.rewindReady, 1, 'a do-over ready from the start');
+    assert.deepStrictEqual(r.rewind, { used: {}, bought: { rewind: 1 }, taken: 0 }, 'taken, and on the record as bought only');
+    assert.deepStrictEqual(r.fight, { kit: 'missile', weapon: null, bought: {} }, 'kept for the next Grand Prix');
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
 });
 
 test('do-over: undoes a wreck', { skip }, async () => {
@@ -461,13 +594,16 @@ test('hangar: races earn stat points, wins unlock ships, upgrades stop at the sh
     await page.reload();
     await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
     const kept = await page.evaluate(() => ({ p: RR.game.prog, design: RR.game.player.design }));
-    assert.deepStrictEqual(kept.p, { wins: 2, points: 20, ship: 1, up: { sparrow: [0, 3, 0, 1, 0], dart: [0, 0, 0, 0, 0], hammer: [0, 0, 0, 0, 0], phoenix: [0, 0, 0, 0, 0] } });
+    const { credits, kit, ...rest } = kept.p;
+    assert.deepStrictEqual(rest, { wins: 2, points: 20, ship: 1, up: { sparrow: [0, 3, 0, 1, 0], dart: [0, 0, 0, 0, 0], hammer: [0, 0, 0, 0, 0], phoenix: [0, 0, 0, 0, 0] } });
+    assert.ok(Number.isInteger(credits) && credits > 0, 'the race paid credits too: ' + credits);
+    assert.strictEqual(kit, null);
     assert.strictEqual(kept.design, 1, 'the attract mode flies the chosen ship');
 
     // ...and a doctored save is cut back to what the rules allow
     await page.evaluate(() => {
       const s = JSON.parse(localStorage.getItem('rocketracer.v1'));
-      s.prog = { wins: 1, points: 2, ship: 3, up: { sparrow: [9, 9, 9, 9, 9], dart: [1, 0, 0, 0, 0] } };
+      s.prog = { wins: 1, points: 2, ship: 3, up: { sparrow: [9, 9, 9, 9, 9], dart: [1, 0, 0, 0, 0] }, credits: -50, kit: 'laser' };
       localStorage.setItem('rocketracer.v1', JSON.stringify(s));
     });
     await page.reload();
@@ -476,6 +612,7 @@ test('hangar: races earn stat points, wins unlock ships, upgrades stop at the sh
     assert.strictEqual(fixed.ship, 0, 'cannot fly a locked ship');
     assert.deepStrictEqual(fixed.up.sparrow, [0, 0, 0, 0, 0], 'more upgrades than points: wiped');
     assert.deepStrictEqual(fixed.up.dart, [1, 0, 0, 0, 0]);
+    assert.deepStrictEqual([fixed.credits, fixed.kit], [0, null], 'no debt, and no made-up powerup');
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
 });

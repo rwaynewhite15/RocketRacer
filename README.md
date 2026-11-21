@@ -39,11 +39,18 @@ backend: one Cloud Run service serves the game and a global leaderboard stored i
     points you have earned, and points can be taken back and moved at any time.
   - Wins unlock better ships with higher ceilings: the Dart (2 wins), the Hammer (5) and the
     Phoenix (9). The starting Sparrow flies exactly like the rivals' ships.
+  - **The shop**: every finished event pays credits by place (100 for a win down to 30),
+    times 1.5 against Pilot rivals and 2 against Ace. In the hangar's NEXT RACE slot, spend
+    them on one powerup to start your next Grand Prix with: NITRO 60 (a boost at GO), SHIELD
+    80 (shielded at GO), BLASTER 60, MINE 70, MISSILE 90, EMP 100 (start holding the weapon)
+    or DO-OVER 150 (one ready from the start). It is paid for when picked, refunded if you
+    switch or go back to EMPTY, and used up when the race starts. Fights leave it for the
+    next race.
   - Progress is saved in the browser, like your records.
 - **Zoom** the world in or out in whole-pixel steps, so the pixel art stays sharp. The HUD
   keeps its size at every level, and your choice is remembered.
 - **World top 10** for each course: every row shows the pilot's rocket and the powerups they
-  used; tap a row to see their whole setup.
+  used, with bought ones marked; tap a row to see their whole setup.
 - Hull damage, wrecks and respawns, lap and race records, an attract-mode race behind the menu.
 - All art is generated in code at start-up and all sound is synthesised, so there are no
   image or audio files to load.
@@ -211,15 +218,17 @@ Leaderboard rows live in Firestore at `rocketracer/{track}/scores/{pid}`. Each p
 anonymous id generated in their browser and keeps one row per course, replaced only by a
 faster time. A row records the time, best lap, rival level, `place` (where the pilot finished
 in that race, 1 to 6) and `setup`: `{ ship, stats, items }`, the rocket flown, its five stat
-levels, and how many of each powerup were used. A powerup counts as used when it takes effect:
-nitro, shield and repair on pick-up, a weapon at its first shot, a do-over when it is taken.
+levels, how many of each powerup were picked up on the track and used (`items`), and what was
+bought in the hangar for that race (`bought`). A track powerup counts as used when it takes
+effect: nitro, shield and repair on pick-up, a weapon at its first shot, a do-over when taken.
 The setup belongs to the record run, so a slower race leaves it alone. Rows from before either
 field existed have `null`.
 
-The top-10 screen shows each pilot's rocket and powerups in the row (the three they used most;
-`+` when there were more), and your own row and rank underneath when you are not in the top 10.
-Tap a row (or pick it with the arrow keys and press Enter) for that pilot's card: the rocket, its
-stat levels (grey: the ship's own, yellow: points put in), and every powerup used.
+The top-10 screen shows each pilot's rocket and powerups in the row (a bought one first,
+underlined in gold, then the ones they used most; `+` when there were more), and your own row
+and rank underneath when you are not in the top 10. Tap a row (or pick it with the arrow keys
+and press Enter) for that pilot's card: the rocket, its stat levels (grey: the ship's own,
+yellow: points put in), what they bought, and every powerup they picked up and used.
 
 Configuration, all optional environment variables:
 

@@ -36,7 +36,8 @@ const TRACKS = {
 const MAX_RACE = 3600;
 
 /*
- * A time's setup: the rocket, its five stat levels, and the powerups used.
+ * A time's setup: the rocket, its five stat levels, the powerups picked up
+ * and used on the track (`items`), and any bought in the hangar (`bought`).
  * It is only shown on the leaderboard, so it is checked for shape, not
  * against each ship's limits. Keep the lists in step with RR.HULLS, RR.STATS
  * and RR.ITEMS in public/src/game.js.
@@ -175,11 +176,13 @@ function setupError(s) {
   if (!SHIPS.includes(s.ship)) return 'Unknown ship';
   if (!Array.isArray(s.stats) || s.stats.length !== STAT_COUNT ||
     !s.stats.every((v) => Number.isInteger(v) && v >= 1 && v <= STAT_MAX)) return 'Bad stats';
-  if (s.items != null) {
-    if (!isMap(s.items)) return 'Bad items';
-    for (const k of Object.keys(s.items)) {
+  // items: picked up on the track and used; bought: bought in the hangar for this race
+  for (const list of [s.items, s.bought]) {
+    if (list == null) continue;
+    if (!isMap(list)) return 'Bad items';
+    for (const k of Object.keys(list)) {
       if (!ITEMS.includes(k)) return 'Unknown item';
-      const v = s.items[k];
+      const v = list[k];
       if (!Number.isInteger(v) || v < 0 || v > ITEM_MAX) return 'Bad item count';
     }
   }
@@ -189,9 +192,12 @@ function setupError(s) {
 /** A setup that passed setupError, reduced to exactly what is stored (unused items dropped). */
 function cleanSetup(s) {
   if (s == null) return null;
-  const items = {};
-  for (const k of ITEMS) if (s.items && s.items[k] > 0) items[k] = s.items[k];
-  return { ship: s.ship, stats: s.stats.slice(), items };
+  const pick = (list) => {
+    const out = {};
+    for (const k of ITEMS) if (list && list[k] > 0) out[k] = list[k];
+    return out;
+  };
+  return { ship: s.ship, stats: s.stats.slice(), items: pick(s.items), bought: pick(s.bought) };
 }
 
 /** Give up on a slow backend call so a request never hangs on Firestore. */

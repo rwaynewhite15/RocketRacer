@@ -61,6 +61,24 @@
    * points can raise each stat as far as its `cap` - better ships, unlocked by
    * winning, have higher ceilings.
    */
+  /*
+   * The hangar shop. Credits, earned in every event, buy one powerup to start
+   * your next Grand Prix with. It is paid for when picked (pick another, or
+   * EMPTY, to get the credits back) and used up as that race is set up.
+   * The leaderboard shows what was bought apart from what was picked up.
+   */
+  const SHOP = (RR.SHOP = [
+    { id: 'nitro', price: 60, does: 'BOOST OFF THE LINE' },
+    { id: 'shield', price: 80, does: 'SHIELDED START' },
+    { id: 'blaster', price: 60, does: 'START ARMED' },
+    { id: 'mine', price: 70, does: 'START ARMED' },
+    { id: 'missile', price: 90, does: 'START ARMED' },
+    { id: 'emp', price: 100, does: 'START ARMED' },
+    { id: 'rewind', price: 150, does: 'A DO-OVER READY AT GO' },
+  ]);
+  const shopItem = function (id) { return SHOP.filter(function (s) { return s.id === id; })[0] || null; };
+  const PAY = [100, 70, 50, 40, 30, 30], PAY_MULT = [1, 1.5, 2]; // credits by finishing place, times the rival level
+
   const STAT_MID = 3;
   const STATS = (RR.STATS = [
     { name: 'ACCEL', step: 0.04 },
@@ -110,7 +128,7 @@
     demo: true, trackIdx: 0, diffIdx: 1, menuRow: 0,
     modeIdx: 0, arenaIdx: 0, mode: 'race', combat: false, royale: false,
     zone: null, over: false, feed: [], spec: null, reward: null,
-    prog: { wins: 0, points: 0, ship: 0, up: {} }, // unlocks and upgrades
+    prog: { wins: 0, points: 0, ship: 0, up: {}, credits: 0, kit: null }, // unlocks, upgrades, credits and the bought powerup
     hangarRow: 0, hangarShip: 0,
     ships: [], order: [], rocks: [], pickups: [], shots: [], mines: [], waves: [],
     parts: [], rings: [], texts: [],
@@ -175,6 +193,8 @@
     if (!p || typeof p !== 'object') return;
     pr.wins = count(p.wins);
     pr.points = count(p.points);
+    pr.credits = count(p.credits);
+    pr.kit = shopItem(p.kit) ? p.kit : null;
     HULLS.forEach(function (h, i) {
       const saved = p.up && p.up[h.id], up = upgrades(i);
       let spent = 0;
@@ -208,6 +228,27 @@
     save();
     return true;
   };
+  /**
+   * Change what the loadout slot holds: d = 1 the next item, -1 the one
+   * before, skipping any you cannot afford (EMPTY is always there). The item
+   * it held is refunded, so this is buying and selling back in one.
+   */
+  G.shopCycle = function (d) {
+    const pr = this.prog, opts = [null].concat(SHOP.map(function (s) { return s.id; })), n = opts.length;
+    const cur = opts.indexOf(pr.kit), back = pr.kit ? shopItem(pr.kit).price : 0;
+    for (let k = 1; k < n; k++) {
+      const o = opts[((cur + d * k) % n + n) % n], price = o ? shopItem(o).price : 0;
+      if (price > pr.credits + back) continue;
+      pr.credits += back - price;
+      pr.kit = o;
+      RR.audio.sfx(o ? 'power' : 'select');
+      save();
+      return true;
+    }
+    RR.audio.sfx('deny');
+    return false;
+  };
+
   /** What the stat levels of ship `i` come to in the simulation. */
   function loadout(i) {
     const m = STATS.map(function (st, k) { return 1 + st.step * (G.statLevel(i, k) - STAT_MID); });
@@ -241,10 +282,12 @@
   function award(g, place) {
     const pr = g.prog, had = HULLS.map(function (h, i) { return g.shipUnlocked(i); });
     const pts = Math.max(0, 4 - place) + (place === 1 ? g.diffIdx : 0);
+    const credits = Math.round(PAY[place - 1] * PAY_MULT[g.diffIdx]);
     pr.points += pts;
+    pr.credits += credits;
     if (place === 1) pr.wins++;
     g.reward = {
-      pts: pts,
+      pts: pts, credits: credits,
       unlocked: HULLS.filter(function (h, i) { return !had[i] && g.shipUnlocked(i); }).map(function (h) { return h.name; }),
     };
     save();
@@ -274,7 +317,8 @@
       spawn: { x: slot.x, y: slot.y, a: slot.a },
       hp: lo.maxHp, shield: 0, nitro: 0, stun: 0, spinRate: 0, emp: 0, invuln: 0, dead: 0,
       weapon: null, ammo: 0, cool: 0, prevFire: false, stickHeld: false, stickAim: null, launch: null,
-      used: {}, fresh: false, // powerups used this race (for the leaderboard), and a weapon pack not yet fired
+      used: {}, fresh: false, // powerups picked up and used this race (for the leaderboard), and a weapon pick-up not yet fired
+      bought: {}, atGo: null, rewindBought: false, // the hangar loadout: what it was, and what waits for GO
       nextCp: 0, cpCount: 0, lap: 0, lapStart: 0, lapTimes: [], bestLap: 0,
       finished: false, finishTime: 0, place: i + 1, progress: 0,
       input: { turn: 0, thrust: 0, brake: 0, fire: false },
@@ -348,6 +392,14 @@
     g.player = g.ships[0];
     // what the player is flying, for the leaderboard (the hangar cannot change it mid-race)
     g.player.setup = { ship: hull.id, stats: STATS.map(function (st, k) { return G.statLevel(g.prog.ship, k); }) };
+    // the powerup bought in the hangar goes into this Grand Prix, and is spent
+    const kit = !demo && !g.combat ? g.prog.kit : null;
+    if (kit) {
+      g.prog.kit = null;
+      g.player.bought[kit] = 1;
+      startKit(g.player, kit);
+      save();
+    }
     g.order = g.ships.slice();
     g.rocks = tr.rocks.map(makeRock);
     g.pickups = tr.pickups.map(function (p, i) {
@@ -364,6 +416,14 @@
     g.over = false; g.elimN = 0; g.feed = []; g.spec = null; g.reward = null;
     g.state = demo ? 'title' : 'play';
   };
+
+  /** A bought powerup, ready at the start. Weapons are in hand, a do-over is charged, nitro and shield wait for GO. */
+  function startKit(s, kit) {
+    const T = ITEMS[kit];
+    if (T.ammo) { s.weapon = kit; s.ammo = T.ammo; s.fresh = false; } // bought, so not counted as a track pick-up
+    else if (kit === 'rewind') { s.rewind = 1; s.rewindBought = true; }
+    else s.atGo = kit;
+  }
 
   G.begin = function () {
     if (RR.input.touchMode && this.autoFull) this.wantFull = true;
@@ -766,7 +826,8 @@
       return;
     }
     p.rewind = 0;
-    tally(p, 'rewind');
+    if (!p.rewindBought) tally(p, 'rewind'); // a bought one is on the record as bought
+    p.rewindBought = false;
     const pts = p.hist.slice();
     pts.push({ x: p.x, y: p.y, angle: p.angle }); // the way back starts from where we are now
     p.rw = {
@@ -1119,7 +1180,7 @@
       s.hp = Math.min(s.maxHp, s.hp + 50);
       if (isP) RR.audio.sfx('power');
     } else if (p.type === 'rewind') {
-      s.rewind = 1; // counted as used when the do-over is taken
+      s.rewind = 1; s.rewindBought = false; // counted as used when the do-over is taken
       if (isP) { RR.audio.sfx('power'); banner(g, 'DO-OVER READY', PAL.violet, 1.6, 3); }
     }
     if (!T.ammo && p.type !== 'rewind') tally(s, p.type); // nitro, shield and repair act at once
@@ -1365,7 +1426,7 @@
     award(g, s.place); // (saves)
     RR.net.submit(id, {
       name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx, place: s.place,
-      setup: { ship: s.setup.ship, stats: s.setup.stats.slice(), items: Object.assign({}, s.used) },
+      setup: { ship: s.setup.ship, stats: s.setup.stats.slice(), items: Object.assign({}, s.used), bought: Object.assign({}, s.bought) },
     });
   }
 
@@ -1794,6 +1855,16 @@
         g.phase = 'race';
         RR.audio.sfx('go');
         banner(g, 'GO!', PAL.lime, 0.9, 6);
+        const p = g.player; // a bought nitro or shield kicks in now
+        if (p.atGo === 'nitro') {
+          p.nitro = C.NITRO_TIME;
+          p.vx += Math.cos(p.angle) * 90; p.vy += Math.sin(p.angle) * 90;
+          RR.audio.sfx('nitro');
+        } else if (p.atGo === 'shield') {
+          p.shield = C.SHIELD_TIME;
+          RR.audio.sfx('shield');
+        }
+        p.atGo = null;
       }
     }
     simulate(g, dt);
@@ -1828,11 +1899,15 @@
       else if (hit.board) g.showBoard();
       else if (hit.hangar) g.openHangar();
     } else if (g.state === 'hangar') {
-      // row 0 is the ship, rows 1.. are its stats
-      const rows = STATS.length + 1;
+      // row 0 is the ship, rows 1.. are its stats, and the last row is the loadout slot
+      const rows = STATS.length + 2, shop = rows - 1;
       if (hit.up || hit.down) { g.hangarRow = (g.hangarRow + (hit.up ? rows - 1 : 1)) % rows; RR.audio.sfx('select'); }
       const d = hit.left ? -1 : hit.right ? 1 : 0;
-      if (d) { if (g.hangarRow === 0) g.hangarBrowse(d); else g.spend(g.hangarShip, g.hangarRow - 1, d); }
+      if (d) {
+        if (g.hangarRow === 0) g.hangarBrowse(d);
+        else if (g.hangarRow === shop) g.shopCycle(d);
+        else g.spend(g.hangarShip, g.hangarRow - 1, d);
+      }
       if (hit.ok || hit.pause || hit.hangar) g.closeHangar();
     } else if (g.state === 'board') {
       const rows = g.boardRows || [], n = rows.length;
