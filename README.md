@@ -40,7 +40,8 @@ and a second runs online multiplayer over WebSockets.
     home by itself after 25 seconds. First to 3 captures wins, or the most when the 5-minute
     clock runs out. Every ship has the cannon, there is no friendly fire, and wrecks respawn
     beside their own base. The power-ups are the Grand Prix's, with **Replace Flag** (a gold
-    capsule) instead of the gate deferral: E / Shift, or the FLAG button, sends your flag
+    capsule, no more than two of them on the map at once) instead of the gate deferral: E /
+    Shift, or the FLAG button, sends your flag
     straight home even while an enemy is carrying it (your deferral upgrade sets how many it
     holds). An arrow at the screen's edge points to the job in hand: their flag, home while
     you carry it, or whoever has stolen yours. Each team's AI keeps one ship guarding the base;

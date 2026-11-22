@@ -29,6 +29,7 @@
     ROYALE_DMG: 0.6, // ...and with one life each, weapons hit softer so it is not over in seconds
     // capture the flag: touch reach, the capture zone round a base, how long a dropped flag lies, the win, the clock
     FLAG_R: 30, BASE_R: 100, FLAG_RETURN: 25, CTF_CAPS: 3, CTF_TIME: 300,
+    REFLAG_MAX: 2, // ...and no more than this many Replace Flags lying on the map at once
   });
 
   const ITEMS = (RR.ITEMS = {
@@ -428,8 +429,10 @@
     return a;
   }
 
-  function roll(kind, g) {
-    const table = ROLL[(g.ctf ? 'F' : g.combat ? 'C' : '') + kind];
+  /** What a pick-up spot holds next. `noReflag`: anything but a Replace Flag (the map has its share). */
+  function roll(kind, g, noReflag) {
+    let table = ROLL[(g.ctf ? 'F' : g.combat ? 'C' : '') + kind];
+    if (noReflag) table = table.filter(function (t) { return t[0] !== 'reflag'; });
     let total = 0, i;
     for (i = 0; i < table.length; i++) total += table[i][1];
     let r = Math.random() * total;
@@ -509,6 +512,7 @@
     g.pickups = tr.pickups.map(function (p, i) {
       return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind, g), on: true, timer: 0, ph: i * 1.7 };
     });
+    capReflags(g);
     g.shots = []; g.mines = []; g.waves = []; g.parts = []; g.rings = []; g.texts = [];
     g.raceTime = 0;
     g.phase = demo ? 'race' : 'countdown';
@@ -572,6 +576,7 @@
     g.pickups = tr.pickups.map(function (p, i) {
       return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind, g), on: true, timer: 0, ph: i * 1.7 };
     });
+    capReflags(g);
     g.shots = []; g.mines = []; g.waves = []; g.parts = []; g.rings = []; g.texts = [];
     g.raceTime = 0;
     g.phase = 'countdown';
@@ -941,6 +946,19 @@
   }
 
   /* ----------------------------------------------------- damage + death */
+
+  /** Capture the flag: is there room on the map for another Replace Flag (not counting spot `except`)? */
+  function reflagRoom(g, except) {
+    let n = 0;
+    for (const q of g.pickups) if (q !== except && q.on && q.type === 'reflag') n++;
+    return n < C.REFLAG_MAX;
+  }
+  /** At the start: any Replace Flags past REFLAG_MAX become something else. */
+  function capReflags(g) {
+    if (!g.ctf) return;
+    let n = 0;
+    for (const p of g.pickups) if (p.type === 'reflag' && ++n > C.REFLAG_MAX) p.type = roll(p.kind, g, true);
+  }
 
   /** Capture the flag: are a and b on the same team? (Never outside it.) */
   function ally(g, a, b) { return !!(g.ctf && a && b && a.side === b.side); }
@@ -1553,7 +1571,7 @@
     for (const p of g.pickups) {
       if (!p.on) {
         p.timer -= dt;
-        if (p.timer <= 0) { p.on = true; p.type = roll(p.kind, g); ringFx(g, p.x, p.y, 16, 4, 0.2, PAL.white); }
+        if (p.timer <= 0) { p.on = true; p.type = roll(p.kind, g, g.ctf && !reflagRoom(g, p)); ringFx(g, p.x, p.y, 16, 4, 0.2, PAL.white); }
         continue;
       }
       for (const s of g.ships) {

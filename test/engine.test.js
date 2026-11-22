@@ -101,14 +101,28 @@ test('engine: capture the flag - two teams on a huge map, the race\'s powerups w
   assert.deepStrictEqual(G.ships.map((s) => s.team), [0, 1, 0, 1, 0, 1], 'painted in their team\'s colours');
   assert.deepStrictEqual(G.flags.map((f) => [f.state, f.x, f.y]), G.track.bases.map((h) => ['home', h.x, h.y]), 'each flag on its base');
   assert.ok(G.track.bases[0].x < G.track.bases[1].x - 5000, 'the bases far apart');
-  // the powerups: the race's, with Replace Flag where the deferral was
+  // the powerups: the race's, with Replace Flag where the deferral was - and never more than REFLAG_MAX of those on the map
+  const MAX = RR.CFG.REFLAG_MAX, onMap = () => G.pickups.filter((p) => p.on && p.type === 'reflag').length;
+  assert.ok(MAX >= 1 && MAX <= 3, 'a limited number: ' + MAX);
+  assert.ok(onMap() <= MAX, 'at the start: ' + onMap());
   const seen = new Set();
+  let most = 0, full = 0;
   for (let i = 0; i < 400; i++) {
     for (const p of G.pickups) { p.on = false; p.timer = 0; }
     G.step(STEP);
     for (const p of G.pickups) seen.add(p.kind + ':' + p.type);
+    most = Math.max(most, onMap());
+    if (onMap() === MAX) full++;
   }
   assert.deepStrictEqual([...seen].sort(), ['P:nitro', 'P:reflag', 'P:repair', 'P:shield', 'W:blaster', 'W:emp', 'W:mine', 'W:missile']);
+  assert.strictEqual(most, MAX, 'never more than ' + MAX + ' Replace Flags on the map at once');
+  assert.ok(full > 100, 'and the limit is often reached (so it is what holds them back): ' + full);
+  // the start of a match holds to it too, however the spots roll
+  for (let k = 0; k < 20; k++) {
+    const e = createEngine();
+    e.G.startOnline({ server: true, mode: 'ctf', track: 0, diff: 1, seats: [0, 1, 2, 3, 4, 5].map((i) => seat(i)) });
+    assert.ok(e.G.pickups.filter((p) => p.type === 'reflag').length <= MAX);
+  }
 });
 
 test('engine: capture the flag - take, drop, return (by touch and by time), capture only with your own flag home, Replace Flag, no friendly fire, first to 3', () => {
