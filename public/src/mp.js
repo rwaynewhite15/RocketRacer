@@ -161,6 +161,7 @@
   function results(m) {
     const G = RR.game;
     M.results = m.list;
+    M.score = m.score || null; // capture the flag: red's and blue's captures
     M.resultsShown = 0;
     const mine = m.list.find(function (r) { return r.you; });
     M.reward = mine ? G.awardOnline(mine.place) : null;
@@ -188,7 +189,7 @@
   }
   function game() {
     const G = RR.game, mode = RR.MODES[G.modeIdx].id;
-    return { mode: mode, track: mode === 'race' ? G.trackIdx : G.arenaIdx, diff: G.diffIdx };
+    return { mode: mode, track: G.mapIdx(), diff: G.diffIdx };
   }
   M.quick = function () { act(Object.assign({ t: 'quick', setup: setup() }, game())); };
   M.create = function () { act(Object.assign({ t: 'create', setup: setup() }, game())); };
@@ -348,7 +349,7 @@
   function copyState(s, st) {
     s.hp = st.hp; s.maxHp = st.maxHp;
     s.shield = st.shield; s.nitro = st.nitro; s.stun = st.stun; s.emp = st.emp; s.invuln = st.invuln; s.spinRate = st.spinRate;
-    s.weapon = st.weapon; s.ammo = st.ammo; s.defer = st.defer;
+    s.weapon = st.weapon; s.ammo = st.ammo; s.defer = st.defer; s.reflag = st.reflag; s.caps = st.caps;
     s.lap = st.lap; s.nextCp = st.nextCp; s.cpCount = st.cpCount; s.place = st.place;
     s.lapStart = st.lapStart; s.bestLap = st.bestLap; s.progress = st.progress;
     s.finished = st.finished; s.finishTime = st.finishTime;
@@ -405,6 +406,17 @@
     for (let k = 0; k < G.pickups.length && k < b.pickups.length; k++) {
       G.pickups[k].on = b.pickups[k].on; G.pickups[k].type = b.pickups[k].type || G.pickups[k].type;
     }
+    // capture the flag: the flags (a carried one is drawn on its carrier), who carries what, and the score
+    if (G.ctf && G.flags) {
+      for (const sh of G.ships) sh.flag = null;
+      for (let k = 0; k < G.flags.length && k < b.flags.length; k++) {
+        const f = G.flags[k], fb = b.flags[k], fa = a.flags[k] || fb;
+        f.state = fb.state;
+        f.carrier = fb.state === 'carried' && fb.carrier >= 0 ? G.ships[fb.carrier] || null : null;
+        if (f.carrier) { f.carrier.flag = f; f.x = f.carrier.x; f.y = f.carrier.y; } else { f.x = lerp(fa.x, fb.x); f.y = lerp(fa.y, fb.y); }
+      }
+      G.caps = b.caps.slice();
+    }
     for (let k = 0; k < G.rocks.length && k < b.rocks.length; k++) {
       const r = G.rocks[k], ra = a.rocks[k], rb = b.rocks[k];
       r.dead = rb.dead;
@@ -446,6 +458,7 @@
         }
         break;
       }
+      case 'f': fx.flag(e[1], e[2], e[3]); break; // capture the flag: a flag taken, dropped, returned, replaced or captured
       case 'k': {
         const killer = G.ships[e[1]], victim = G.ships[e[2]];
         if (!victim) break;

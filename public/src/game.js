@@ -27,6 +27,8 @@
     KILL_TARGET: 5, DOGFIGHT_TIME: 180,
     ZONE_GRACE: 12, ZONE_SHRINK: 110, ZONE_DMG: 14, // battle royale: the zone closes to nothing
     ROYALE_DMG: 0.6, // ...and with one life each, weapons hit softer so it is not over in seconds
+    // capture the flag: touch reach, the capture zone round a base, how long a dropped flag lies, the win, the clock
+    FLAG_R: 30, BASE_R: 100, FLAG_RETURN: 25, CTF_CAPS: 3, CTF_TIME: 300,
   });
 
   const ITEMS = (RR.ITEMS = {
@@ -38,6 +40,7 @@
     mine: { name: 'MINE', color: PAL.alarm, ammo: 3 },
     emp: { name: 'EMP', color: PAL.violet, ammo: 1 },
     defer: { name: 'DEFERRAL', color: PAL.violet }, // gate deferral: the gate ahead counts as passed
+    reflag: { name: 'REPLACE FLAG', color: PAL.gold }, // capture the flag: your flag home, wherever it is
   });
   const ROLL = {
     P: [['nitro', 38], ['shield', 26], ['repair', 22], ['defer', 14]],
@@ -45,12 +48,21 @@
     // combat modes: every ship already has a cannon, and there are no gates to defer
     CP: [['nitro', 30], ['shield', 35], ['repair', 35]],
     CW: [['missile', 45], ['mine', 25], ['emp', 30]],
+    // capture the flag: the race's powerups, with Replace Flag where the deferral was
+    FP: [['nitro', 38], ['shield', 26], ['repair', 22], ['reflag', 14]],
+    FW: [['blaster', 35], ['missile', 30], ['mine', 20], ['emp', 15]],
   };
 
   const MODES = (RR.MODES = [
     { id: 'race', name: 'GRAND PRIX', go: 'RACE' },
     { id: 'dogfight', name: 'DOGFIGHT', go: 'FIGHT', rule: 'FIRST TO 5 KILLS - 3:00 LIMIT' },
     { id: 'royale', name: 'BATTLE ROYALE', go: 'FIGHT', rule: 'ONE LIFE - THE ZONE CLOSES IN' },
+    { id: 'ctf', name: 'CAPTURE THE FLAG', go: 'FIGHT', rule: 'RED V BLUE - BRING THEIR FLAG HOME' },
+  ]);
+  // capture the flag's two teams: ship i flies for side i % 2
+  const SIDES = (RR.SIDES = [
+    { name: 'RED', color: '#e5404f', light: '#ff9d8f' },
+    { name: 'BLUE', color: '#3b82f6', light: '#9bd8ff' },
   ]);
 
   /*
@@ -394,6 +406,7 @@
       input: { turn: 0, thrust: 0, brake: 0, fire: false },
       ai: null, speedMult: 1, thrusting: 0, exh: 0, smk: 0, hitFlash: 0, out: false, wrong: 0,
       defer: 0, // gate deferrals held
+      side: 0, flag: null, caps: 0, reflag: 0, // capture the flag: team, the flag carried, captures, Replace Flags held
     };
   }
 
@@ -415,8 +428,8 @@
     return a;
   }
 
-  function roll(kind, combat) {
-    const table = ROLL[(combat ? 'C' : '') + kind];
+  function roll(kind, g) {
+    const table = ROLL[(g.ctf ? 'F' : g.combat ? 'C' : '') + kind];
     let total = 0, i;
     for (i = 0; i < table.length; i++) total += table[i][1];
     let r = Math.random() * total;
@@ -438,6 +451,24 @@
     G.startRace(true);
   };
 
+  /**
+   * Capture the flag: every ship's side (i % 2: red, blue), the AI's jobs
+   * (the last of each team guards the base, the rest go for the flag), and
+   * both flags standing on their bases. Elsewhere: no flags.
+   */
+  function setupTeams(g) {
+    g.caps = [0, 0];
+    g.flags = null;
+    if (!g.ctf) return;
+    for (const s of g.ships) {
+      s.side = s.idx % 2;
+      if (s.ai) s.ai.role = s.idx >= 4 ? 'defend' : 'attack';
+    }
+    g.flags = g.track.bases.map(function (b, side) {
+      return { side: side, home: b, x: b.x, y: b.y, state: 'home', carrier: null, dropT: 0 };
+    });
+  }
+
   /** Reset the world. `demo` runs an all-AI race behind the title screen. */
   G.startRace = function (demo) {
     const g = this;
@@ -445,8 +476,9 @@
     RR.input.gasLatch = false; // and GAS starts off
     g.mode = MODES[g.modeIdx].id;
     g.combat = g.mode !== 'race';
+    g.ctf = g.mode === 'ctf';
     g.royale = g.mode === 'royale' && !demo; // the attract mode just brawls on, with respawns
-    const tr = (g.track = g.combat ? RR.getArena(g.arenaIdx) : RR.getTrack(g.trackIdx));
+    const tr = (g.track = RR.getMap(g.mode, g.combat ? g.arenaIdx : g.trackIdx));
     const diff = demo ? DEMO_DIFF : DIFFS[g.diffIdx];
     const hull = HULLS[g.prog.ship], turn = Math.floor(Math.random() * 6);
     g.demo = demo;
@@ -454,15 +486,18 @@
     g.laps = demo ? 1e9 : tr.laps;
     g.ships = RACERS.map(function (r, i) {
       // racing, the player starts at the back; in an arena everyone gets a random spawn point
-      const slot = tr.grid[g.combat ? (i + turn) % 6 : i === 0 ? 5 : i - 1];
-      const s = i === 0 ? makeShip(i, { name: r.name, team: r.team, design: hull.design }, slot, loadout(g.prog.ship))
-        : makeShip(i, r, slot, STOCK);
+      // (capture the flag: each team beside its own base, in its own colours)
+      const slot = tr.grid[g.ctf ? i : g.combat ? (i + turn) % 6 : i === 0 ? 5 : i - 1];
+      const team = g.ctf ? i % 2 : r.team;
+      const s = i === 0 ? makeShip(i, { name: r.name, team: team, design: hull.design }, slot, loadout(g.prog.ship))
+        : makeShip(i, { name: r.name, team: team, design: r.design }, slot, STOCK);
       if (demo || i > 0) s.ai = makeAI(diff);
       if (g.combat && i > 0) s.dmg = diff.dmg;
       if (g.royale) s.dmg *= C.ROYALE_DMG;
       return s;
     });
     g.player = g.ships[0];
+    setupTeams(g);
     // what the player is flying, for the leaderboard (the hangar cannot change it mid-race)
     g.player.setup = {
       ship: hull.id, stats: STATS.map(function (st, k) { return G.statLevel(g.prog.ship, k); }),
@@ -472,7 +507,7 @@
     g.order = g.ships.slice();
     g.rocks = tr.rocks.map(makeRock);
     g.pickups = tr.pickups.map(function (p, i) {
-      return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind, g.combat), on: true, timer: 0, ph: i * 1.7 };
+      return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind, g), on: true, timer: 0, ph: i * 1.7 };
     });
     g.shots = []; g.mines = []; g.waves = []; g.parts = []; g.rings = []; g.texts = [];
     g.raceTime = 0;
@@ -501,9 +536,10 @@
     g.modeIdx = Math.max(0, MODES.findIndex(function (m) { return m.id === opts.mode; }));
     g.mode = MODES[g.modeIdx].id;
     g.combat = g.mode !== 'race';
+    g.ctf = g.mode === 'ctf';
     g.royale = g.mode === 'royale';
     if (g.combat) g.arenaIdx = opts.track; else g.trackIdx = opts.track;
-    const tr = (g.track = g.combat ? RR.getArena(opts.track) : RR.getTrack(opts.track));
+    const tr = (g.track = RR.getMap(g.mode, opts.track));
     const diff = DIFFS[opts.diff] || DIFFS[1];
     g.diffIdx = DIFFS.indexOf(diff);
     g.demo = false;
@@ -512,8 +548,8 @@
     g.events = [];
     g.laps = tr.laps;
     g.ships = seats.map(function (seat, i) {
-      const slot = tr.grid[(i + turn) % tr.grid.length];
-      const s = makeShip(i, { name: seat.name, team: seat.team, design: seat.design }, slot,
+      const slot = tr.grid[g.ctf ? i : (i + turn) % tr.grid.length];
+      const s = makeShip(i, { name: seat.name, team: g.ctf ? i % 2 : seat.team, design: seat.design }, slot,
         seat.human ? loadoutOf(seat.stats) : STOCK);
       s.human = !!seat.human;
       if (s.human) {
@@ -528,12 +564,13 @@
       return s;
     });
     // the server has no player of its own: a stand-in nobody is ever compared equal to
-    g.player = g.server ? { x: tr.center ? tr.center.x : 0, y: tr.center ? tr.center.y : 0, progress: 0, gone: false, dead: 0 }
+    g.player = g.server ? { x: tr.center ? tr.center.x : 0, y: tr.center ? tr.center.y : 0, progress: 0, gone: false, dead: 0, side: -1 }
       : g.ships[opts.me];
+    setupTeams(g);
     g.order = g.ships.slice();
     g.rocks = tr.rocks.map(makeRock);
     g.pickups = tr.pickups.map(function (p, i) {
-      return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind, g.combat), on: true, timer: 0, ph: i * 1.7 };
+      return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind, g), on: true, timer: 0, ph: i * 1.7 };
     });
     g.shots = []; g.mines = []; g.waves = []; g.parts = []; g.rings = []; g.texts = [];
     g.raceTime = 0;
@@ -820,11 +857,16 @@
     this.startRace(true);
     save();
   };
-  /** Next course, or next arena in the combat modes. */
+  /** Where the event on the menu is held: its course, arena or flag map (an index into RR.mapsFor(mode)). */
+  G.mapIdx = function () {
+    const mode = MODES[this.modeIdx].id, n = RR.mapsFor(mode).length;
+    return (mode === 'race' ? this.trackIdx : this.arenaIdx) % n;
+  };
+  /** Next course, or next arena (or flag map) in the combat modes. */
   G.setTrack = function (d) {
     if (this.modeIdx !== 0) {
-      const m = RR.ARENAS.length;
-      this.arenaIdx = (this.arenaIdx + d + m) % m;
+      const m = RR.mapsFor(MODES[this.modeIdx].id).length;
+      this.arenaIdx = (this.mapIdx() + d + m) % m;
     } else {
       const n = RR.TRACKS.length;
       this.trackIdx = (this.trackIdx + d + n) % n;
@@ -900,6 +942,9 @@
 
   /* ----------------------------------------------------- damage + death */
 
+  /** Capture the flag: are a and b on the same team? (Never outside it.) */
+  function ally(g, a, b) { return !!(g.ctf && a && b && a.side === b.side); }
+
   function hurt(s, g, dmg, by) {
     if (g.online && !g.server) return; // online, the server decides every hit
     if (s.dead > 0 || s.invuln > 0 || s.shield > 0) return;
@@ -912,6 +957,7 @@
   /** A weapon hit: impulse, optional spin-out, damage. Shields soak it up. */
   function zap(s, g, dmg, stun, ix, iy, by) {
     if (s.dead > 0 || s.invuln > 0) return;
+    if (by && by !== s && ally(g, s, by)) return; // no friendly fire
     if (s.shield > 0) {
       s.shield = Math.max(0.05, s.shield - 1.5);
       burst(g, s.x, s.y, 10, 120, FX.shield, 0.4);
@@ -933,6 +979,7 @@
   }
 
   function destroy(s, g) {
+    dropFlag(g, s);
     boom(g, s.x, s.y, 1.6);
     s.hp = 0; s.dead = 2; s.vx = s.vy = 0;
     s.weapon = null; s.ammo = 0; s.nitro = 0; s.shield = 0; s.stun = 0; s.emp = 0; s.thrusting = 0;
@@ -970,10 +1017,11 @@
 
   /** Where to come back in an arena: the spawn point furthest from trouble. */
   function arenaSpawn(s, g) {
-    let best = g.track.grid[0], bd = -1;
+    let best = g.track.grid[g.ctf ? s.side : 0], bd = -1;
     for (const sp of g.track.grid) {
+      if (g.ctf && sp.side !== s.side) continue; // capture the flag: back beside your own base
       let d = 1e9;
-      for (const o of g.ships) if (o !== s && o.dead <= 0) d = Math.min(d, Math.hypot(o.x - sp.x, o.y - sp.y));
+      for (const o of g.ships) if (o !== s && o.dead <= 0 && !ally(g, o, s)) d = Math.min(d, Math.hypot(o.x - sp.x, o.y - sp.y));
       if (d > bd) { bd = d; best = sp; }
     }
     return best;
@@ -1042,6 +1090,128 @@
     else floatText(g, p.x, p.y - 16, 'DEFERRED', PAL.violet);
     return true;
   };
+
+  /* ------------------------------------------------ capture the flag */
+
+  /**
+   * Can ship `p` use a Replace Flag now? It needs one, a fight under way,
+   * and its own flag away from home - lying where it was dropped, or in an
+   * enemy's hands: it goes home either way.
+   */
+  function canReflag(g, p) {
+    return !!(g.ctf && g.flags && p && p.reflag > 0 && g.phase === 'race' && !g.over && p.dead <= 0 && g.flags[p.side].state !== 'home');
+  }
+  G.canReflag = function (who) { return canReflag(this, who || this.player); };
+
+  /** Spend a Replace Flag: your team's flag is back on its base at once. `who`: a ship the AI or server plays. */
+  G.tryReflag = function (who) {
+    const g = this, p = who || g.player;
+    if (!who && (g.demo || g.state !== 'play' || g.playerDone)) return false;
+    if (!canReflag(g, p)) {
+      if (!who && p.reflag > 0 && g.ctf && g.phase === 'race' && g.flags[p.side].state === 'home') {
+        floatText(g, p.x, p.y - 16, 'YOUR FLAG IS HOME', PAL.silver);
+        RR.audio.sfx('deny');
+      }
+      return false;
+    }
+    if (g.online && !g.server) { RR.mp.defer(); return false; } // the server takes it (the same button as a deferral)
+    p.reflag--;
+    tally(p, 'reflag');
+    flagHome(g, g.flags[p.side], 'replace', p);
+    return true;
+  };
+
+  /** A flag back on its base; `kind` says why ('return', 'replace', 'score'), `by` who did it. */
+  function flagHome(g, f, kind, by) {
+    if (f.carrier) f.carrier.flag = null;
+    f.state = 'home'; f.carrier = null; f.x = f.home.x; f.y = f.home.y; f.dropT = 0;
+    if (kind) flagNews(g, kind, f.side, by);
+  }
+
+  /** A carrier wrecked: the flag falls where they were. */
+  function dropFlag(g, s) {
+    const f = s.flag;
+    if (!f) return;
+    s.flag = null;
+    f.carrier = null; f.state = 'dropped'; f.x = s.x; f.y = s.y; f.dropT = 0;
+    flagNews(g, 'drop', f.side, s);
+  }
+
+  /**
+   * What just happened to `side`'s flag ('take', 'drop', 'return',
+   * 'replace', 'score'), and by whom: a line in the feed, and the player's
+   * banners and sounds. The server sends it to the players instead.
+   */
+  function flagNews(g, kind, side, s) {
+    if (g.server) { g.events.push(['f', kind, side, s ? s.idx : -1]); return; }
+    const F = SIDES[side].name, who = s ? (s === g.player && !g.online ? g.name : s.name) : '';
+    const line = kind === 'take' ? who + ' TOOK THE ' + F + ' FLAG'
+      : kind === 'drop' ? who + ' DROPPED THE ' + F + ' FLAG'
+        : kind === 'return' ? (who ? who + ' RETURNED THE ' + F + ' FLAG' : 'THE ' + F + ' FLAG WENT HOME')
+          : kind === 'replace' ? who + ' REPLACED THE ' + F + ' FLAG'
+            : who + ' CAPTURED THE ' + F + ' FLAG!';
+    const by = s ? s.side : side; // the team the news is good for
+    g.feed.push({ text: line, col: SIDES[kind === 'drop' ? side : kind === 'take' || kind === 'score' ? (s ? s.side : 1 - side) : by].light, t: 0 });
+    if (g.feed.length > 3) g.feed.shift();
+    if (g.demo) return;
+    const p = g.player, ours = side === p.side;
+    if (kind === 'take') {
+      if (s === p) banner(g, 'GOT THE FLAG!', PAL.yellow, 1.8, 3);
+      else if (ours) banner(g, 'YOUR FLAG IS TAKEN!', PAL.alarm, 1.6, 2);
+      RR.audio.sfx(ours ? 'deny' : 'power');
+    } else if (kind === 'score') {
+      const won = s && s.side === p.side;
+      banner(g, won ? 'CAPTURED!' : SIDES[s ? s.side : 1 - side].name + ' SCORES', won ? PAL.yellow : PAL.alarm, 2, won ? 4 : 3);
+      RR.audio.sfx(won ? 'finish' : 'lose');
+    } else if ((kind === 'return' || kind === 'replace') && ours) {
+      banner(g, kind === 'replace' ? 'FLAG REPLACED!' : 'FLAG HOME', PAL.cyan, 1.4, 2);
+      RR.audio.sfx('power');
+    } else if (kind === 'drop' && s === p) banner(g, 'FLAG DROPPED!', PAL.alarm, 1.4, 2);
+  }
+  RR.fx.flag = function (kind, side, idx) { flagNews(G, kind, side, G.ships[idx] || null); }; // online: the server's word
+
+  /**
+   * Each step of a capture the flag fight: carried flags ride behind their
+   * carriers; a dropped flag goes home after FLAG_RETURN seconds, or at once
+   * when one of its own team touches it; an enemy touching a flag on its
+   * base or on the ground takes it; and an enemy flag brought to a base
+   * whose own flag is home is a capture. First to CTF_CAPS, or the most
+   * when CTF_TIME runs out. (The attract mode just plays on.)
+   */
+  function updateCTF(g, dt) {
+    if (g.phase !== 'race' || g.over) return;
+    const reach = C.FLAG_R + C.SHIP_R;
+    for (const f of g.flags) {
+      if (f.state === 'carried') {
+        const c = f.carrier;
+        f.x = c.x - Math.cos(c.angle) * 12; f.y = c.y - Math.sin(c.angle) * 12;
+        continue;
+      }
+      if (f.state === 'dropped' && (f.dropT += dt) >= C.FLAG_RETURN) { flagHome(g, f, 'return', null); continue; }
+      for (const s of g.ships) {
+        if (s.dead > 0 || s.gone || Math.hypot(s.x - f.x, s.y - f.y) > reach) continue;
+        if (s.side === f.side) {
+          if (f.state === 'dropped') { flagHome(g, f, 'return', s); break; }
+        } else if (!s.flag) {
+          f.state = 'carried'; f.carrier = s; f.dropT = 0; s.flag = f;
+          flagNews(g, 'take', f.side, s);
+          break;
+        }
+      }
+    }
+    for (const s of g.ships) {
+      if (!s.flag || s.dead > 0) continue;
+      const own = g.flags[s.side];
+      if (own.state !== 'home' || Math.hypot(s.x - own.home.x, s.y - own.home.y) > C.BASE_R) continue;
+      g.caps[s.side]++; s.caps++;
+      flagHome(g, s.flag, 'score', s);
+      if (g.caps[s.side] >= C.CTF_CAPS) {
+        if (g.demo) g.caps = [0, 0];
+        else { endMatch(g); return; }
+      }
+    }
+    if (!g.demo && g.raceTime >= C.CTF_TIME) endMatch(g);
+  }
 
   /** What the player sees and hears when their own deferral goes through. */
   function deferFx(g, p, cp) {
@@ -1115,7 +1285,7 @@
     const ca = Math.cos(a), sa = Math.sin(a);
     let best = null, score = 1e9;
     for (const o of g.ships) {
-      if (o === s || o.dead > 0) continue;
+      if (o === s || o.dead > 0 || ally(g, o, s)) continue;
       const dx = o.x - s.x, dy = o.y - s.y, d = Math.hypot(dx, dy) || 1;
       if (d > 760) continue;
       const off = Math.acos(clamp((dx * ca + dy * sa) / d, -1, 1));
@@ -1255,7 +1425,7 @@
       }
       if (!dead) {
         for (const s of g.ships) {
-          if (s === b.owner || s.dead > 0) continue;
+          if (s === b.owner || s.dead > 0 || ally(g, s, b.owner)) continue; // (shots pass through teammates)
           const dx = b.x - s.x, dy = b.y - s.y, rr = C.SHIP_R + 4;
           if (dx * dx + dy * dy < rr * rr) { dead = true; hitShip = s; break; }
         }
@@ -1294,7 +1464,7 @@
       let trip = m.t > C.MINE_LIFE;
       if (!trip && m.t > 0.6) {
         for (const s of g.ships) {
-          if (s.dead > 0 || (s === m.owner && m.t < 1.6)) continue;
+          if (s.dead > 0 || (s === m.owner && m.t < 1.6) || (s !== m.owner && ally(g, s, m.owner))) continue;
           if (Math.hypot(s.x - m.x, s.y - m.y) < 20) { trip = true; break; }
         }
       }
@@ -1310,7 +1480,7 @@
       const w = g.waves[i];
       w.r += 520 * dt;
       for (const s of g.ships) {
-        if (s === w.owner || s.dead > 0 || w.hit.indexOf(s) >= 0) continue;
+        if (s === w.owner || s.dead > 0 || w.hit.indexOf(s) >= 0 || ally(g, s, w.owner)) continue;
         if (Math.hypot(s.x - w.x, s.y - w.y) > w.r) continue;
         w.hit.push(s);
         if (s.invuln > 0) continue;
@@ -1348,7 +1518,7 @@
     p.on = false;
     p.timer = C.PICK_RESPAWN;
     if (g.server) g.events.push(['p', g.pickups.indexOf(p), s.idx, p.type]);
-    const T = ITEMS[p.type], isP = s === g.player && !g.demo, k = powerFor(s, p.type);
+    const T = ITEMS[p.type], isP = s === g.player && !g.demo, k = powerFor(s, p.type === 'reflag' ? 'defer' : p.type); // (Replace Flag: the deferral's upgrade)
     if (T.ammo) {
       // the same weapon again tops it up, to twice a pick-up at most, and never takes ammo away
       if (s.weapon === p.type) s.ammo = Math.max(s.ammo, Math.min(k * 2, s.ammo + k));
@@ -1368,9 +1538,12 @@
     } else if (p.type === 'defer') {
       s.defer = k; // counted as used when a gate is deferred
       if (isP) { RR.audio.sfx('power'); banner(g, 'DEFERRAL READY', PAL.violet, 1.6, 3); }
+    } else if (p.type === 'reflag') {
+      s.reflag = k; // counted as used when a flag is replaced
+      if (isP) { RR.audio.sfx('power'); banner(g, 'REPLACE FLAG READY', PAL.gold, 1.6, 2); }
     }
-    if (!T.ammo && p.type !== 'defer') tally(s, p.type); // nitro, shield and repair act at once
-    burst(g, p.x, p.y, 12, 120, T.ammo ? FX.fire : p.type === 'defer' ? FX.ion : FX.shield, 0.45);
+    if (!T.ammo && p.type !== 'defer' && p.type !== 'reflag') tally(s, p.type); // nitro, shield and repair act at once
+    burst(g, p.x, p.y, 12, 120, T.ammo ? FX.fire : p.type === 'defer' || p.type === 'reflag' ? FX.ion : FX.shield, 0.45);
     ringFx(g, p.x, p.y, 6, 20, 0.22, T.color);
     if (isP) floatText(g, p.x, p.y - 12, T.name, T.color);
   }
@@ -1380,13 +1553,14 @@
     for (const p of g.pickups) {
       if (!p.on) {
         p.timer -= dt;
-        if (p.timer <= 0) { p.on = true; p.type = roll(p.kind, g.combat); ringFx(g, p.x, p.y, 16, 4, 0.2, PAL.white); }
+        if (p.timer <= 0) { p.on = true; p.type = roll(p.kind, g); ringFx(g, p.x, p.y, 16, 4, 0.2, PAL.white); }
         continue;
       }
       for (const s of g.ships) {
         if (s.dead > 0) continue;
         // only humans defer gates, and one pick-up at a time: otherwise leave it for later
         if (p.type === 'defer' && (s.ai || s.defer > 0)) continue;
+        if (p.type === 'reflag' && s.reflag > 0) continue; // (any ship may hold a Replace Flag, one pick-up at a time)
         const dx = s.x - p.x, dy = s.y - p.y;
         if (dx * dx + dy * dy < rr) { collect(s, p, g); break; }
       }
@@ -1682,7 +1856,10 @@
   /** Dogfight: most kills, then fewest deaths. Battle royale: survivors first, then last one out. */
   function rankCombat(g) {
     if (g.over) return; // the final table stands
-    g.order.sort(g.royale ? function (a, b) {
+    const caps = g.caps;
+    g.order.sort(g.ctf ? function (a, b) { // the winning team first; then captures, kills, fewest losses
+      return caps[b.side] - caps[a.side] || b.caps - a.caps || b.kills - a.kills || a.deaths - b.deaths || a.idx - b.idx;
+    } : g.royale ? function (a, b) {
       if (!a.elim !== !b.elim) return a.elim ? 1 : -1;
       return a.elim ? b.elim - a.elim : b.kills - a.kills || a.idx - b.idx;
     } : function (a, b) {
@@ -1699,7 +1876,11 @@
     g.doneT = 0;
     rankCombat(g);
     const win = p.place === 1;
-    if (g.royale) banner(g, win ? 'LAST SHIP FLYING!' : 'ELIMINATED!', win ? PAL.yellow : PAL.alarm, 2.2, 4);
+    if (g.ctf) {
+      const mine = g.caps[p.side], theirs = g.caps[1 - p.side];
+      banner(g, mine > theirs ? 'YOUR TEAM WINS!' : mine < theirs ? SIDES[1 - p.side].name + ' TEAM WINS' : 'A DRAW',
+        mine > theirs ? PAL.yellow : PAL.white, 2.2, 3);
+    } else if (g.royale) banner(g, win ? 'LAST SHIP FLYING!' : 'ELIMINATED!', win ? PAL.yellow : PAL.alarm, 2.2, 4);
     else banner(g, win ? 'VICTORY!' : 'MATCH OVER', win ? PAL.yellow : PAL.white, 2.2, 5);
     RR.audio.sfx(p.place <= 3 ? 'finish' : 'lose');
     RR.audio.music({ tempo: 0.9 });
@@ -1720,6 +1901,7 @@
       g.feed[i].t += dt;
       if (g.feed[i].t > 5) g.feed.splice(i, 1);
     }
+    if (g.ctf) { updateCTF(g, dt); rankCombat(g); return; }
     if (g.phase !== 'race' || g.demo || g.over) { rankCombat(g); return; }
 
     if (g.royale) {
@@ -1817,7 +1999,7 @@
     const ca = Math.cos(s.angle), sa = Math.sin(s.angle);
     let fire = false;
     for (const o of g.ships) {
-      if (o === s || o.dead > 0 || o.invuln > 0) continue;
+      if (o === s || o.dead > 0 || o.invuln > 0 || ally(g, o, s)) continue;
       const ox = o.x - s.x, oy = o.y - s.y, od = Math.hypot(ox, oy) || 1, fwd = (ox * ca + oy * sa) / od;
       if (w === 'blaster') fire = od < 380 && fwd > 0.985;
       else if (w === 'missile') fire = od < 620 && od > 70 && fwd > 0.72;
@@ -1875,7 +2057,76 @@
       tx = o.x + (o.vx - s.vx * 0.5) * lead; ty = o.y + (o.vy - s.vy * 0.5) * lead;
       chase = true;
     } else idle = cd < 90;
+    flyAt(s, g, dt, tx, ty, chase, idle);
+  }
 
+  /** Nearest enemy (capture the flag) within `range` of point `at`. */
+  function nearestEnemy(s, g, at, range) {
+    let best = null, bd = range;
+    for (const o of g.ships) {
+      if (o.dead > 0 || o.side === s.side) continue;
+      const d = Math.hypot(o.x - at.x, o.y - at.y);
+      if (d < bd) { bd = d; best = o; }
+    }
+    return best;
+  }
+
+  /**
+   * Capture the flag brain. A carrier heads home. Our flag in enemy hands:
+   * the guard hunts the carrier (and so does anyone it flies near). Our flag
+   * on the ground nearby: touch it home. Guards
+   * (ai.role 'defend') hold the base and see off raiders; the rest go for the
+   * enemy flag, or cover the teammate carrying it. Anyone fights back up
+   * close, and a held Replace Flag goes a few seconds after our flag leaves home.
+   */
+  function thinkCTF(s, g, dt) {
+    const ai = s.ai, me = s.side, mine = g.flags[me], theirs = g.flags[1 - me], home = mine.home, b = g.track.bounds;
+    s.speedMult = ai.skill;
+    if (s.reflag > 0 && mine.state !== 'home') { // (not at once: a few seconds, as a person would take)
+      if (ai.flagWait == null) ai.flagWait = 3 + Math.random() * 7;
+      if ((ai.flagWait -= dt) <= 0) { ai.flagWait = null; G.tryReflag(s); }
+    } else ai.flagWait = null;
+
+    ai.tgtT = (ai.tgtT || 0) - dt;
+    if (ai.tgtT <= 0 || (ai.foe && ai.foe.dead > 0)) {
+      ai.tgtT = 0.4 + Math.random() * 0.4;
+      ai.foe = null; ai.goal = null; ai.pick = null;
+      const thief = mine.state === 'carried' ? mine.carrier : null;
+      if (s.flag) ai.goal = home;
+      // our flag taken: the guard hunts the thief, and so does any attacker it comes near; the rest attack on
+      else if (thief && (ai.role === 'defend' || Math.hypot(thief.x - s.x, thief.y - s.y) < 700)) ai.foe = thief;
+      else if (mine.state === 'dropped' && (ai.role === 'defend' || Math.hypot(mine.x - s.x, mine.y - s.y) < 1200)) ai.goal = mine;
+      else if (ai.role === 'defend') {
+        ai.foe = nearestEnemy(s, g, home, 750);
+        if (!ai.foe) ai.goal = { x: home.x + (me ? -1 : 1) * 160, y: home.y, guard: true };
+      } else if (theirs.state === 'carried') {
+        ai.foe = nearestEnemy(s, g, theirs.carrier, 500);
+        if (!ai.foe) ai.goal = theirs.carrier;
+      } else ai.goal = theirs;
+      if (!s.flag) {
+        const p = combatPickup(s, g);
+        if (p && Math.hypot(p.x - s.x, p.y - s.y) < 240) ai.pick = p;
+        if (!ai.foe) ai.foe = nearestEnemy(s, g, s, 260); // fight back up close
+      }
+    }
+    let tx = s.x, ty = s.y, chase = false, idle = false;
+    const o = ai.foe && ai.foe.dead <= 0 ? ai.foe : null;
+    if (ai.pick && ai.pick.on) { tx = ai.pick.x; ty = ai.pick.y; }
+    else if (o) {
+      const lead = Math.min(0.7, Math.hypot(o.x - s.x, o.y - s.y) / C.BOLT_SPEED);
+      tx = o.x + (o.vx - s.vx * 0.5) * lead; ty = o.y + (o.vy - s.vy * 0.5) * lead;
+      chase = true;
+    } else if (ai.goal) {
+      tx = ai.goal.x; ty = ai.goal.y;
+      idle = !!ai.goal.guard && Math.hypot(tx - s.x, ty - s.y) < 60;
+    } else idle = true;
+    tx = clamp(tx, b.x0 + 80, b.x1 - 80); ty = clamp(ty, b.y0 + 80, b.y1 - 80); // inside the walls
+    flyAt(s, g, dt, tx, ty, chase, idle);
+  }
+
+  /** Fly towards (tx, ty) round planets and rocks (`chase`: a ship close by, aimed at; `idle`: stay put), and shoot what is in front. */
+  function flyAt(s, g, dt, tx, ty, chase, idle) {
+    const ai = s.ai, inp = s.input;
     const dx = tx - s.x, dy = ty - s.y, dist = Math.hypot(dx, dy) || 1;
     const bent = dodge(s, g, dx / dist, dy / dist, dist, ai.margin);
     let want;
@@ -1904,6 +2155,7 @@
     const ai = s.ai, inp = s.input, tr = g.track, cps = tr.cps, N = cps.length;
     inp.turn = 0; inp.thrust = 0; inp.brake = 0; inp.fire = false; inp.aim = null;
     if (g.phase !== 'race' || s.dead > 0) return;
+    if (g.ctf) { thinkCTF(s, g, dt); return; }
     if (g.combat) { thinkCombat(s, g, dt); return; }
 
     // rubber band: ease off when well ahead of the player, push when behind
@@ -2114,14 +2366,14 @@
     } else if (g.state === 'play' && g.online) {
       if (hit.pause) g.mpMenu = !g.mpMenu; // the world goes on: a menu, not a pause
       else if (hit.quit && g.mpMenu) RR.mp.leave();
-      else if (hit.defer) g.tryDefer();
+      else if (hit.defer) { if (g.ctf) g.tryReflag(); else g.tryDefer(); }
     } else if (g.state === 'online') {
       RR.mp.keys(hit);
     } else if (g.state === 'mpresults') {
       if (hit.ok || hit.pause) RR.mp.backToRoom();
     } else if (g.state === 'play') {
       if (hit.pause) g.pause();
-      else if (hit.defer) g.tryDefer();
+      else if (hit.defer) { if (g.ctf) g.tryReflag(); else g.tryDefer(); }
     } else if (g.state === 'layout') {
       if (hit.pause || hit.ok) g.closeControls();
     } else if (g.state === 'paused') {

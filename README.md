@@ -23,7 +23,7 @@ and a second runs online multiplayer over WebSockets.
   the line next, the button dims, and pressing it says FLY THE LINE). Rivals can't use it.
 - **Weapons** (red crates, one slot): Blaster, homing Missile, Mine, EMP shockwave.
 - **Rivals** in three skill levels: Rookie, Pilot, Ace. They pick up and use items too.
-- **Three events**, chosen on the menu:
+- **Four events**, chosen on the menu:
   - **Grand Prix**: the race described above.
   - **Dogfight**: no gates, just a walled arena. Every ship has a cannon that never runs dry;
     crates add missiles, mines and EMPs. Wrecks respawn. First to 5 kills wins, or the most
@@ -31,6 +31,20 @@ and a second runs online multiplayer over WebSockets.
   - **Battle Royale**: the same arenas with one life each. After 12 seconds a zone starts
     closing on the middle of the arena and burns any hull outside it, shield or not. Last ship
     flying wins. Once you are out, the camera follows a survivor.
+  - **Capture the Flag**: red against blue, three ships a side (you fly for red with two AI
+    teammates; online, players split between the teams and bots fill the seats). The map, The
+    Great Divide, is huge: 6600 by 3000, about nine arenas, with a base at each end and the two
+    halves mirror images of each other. Fly into the enemy flag to take it and bring it to your
+    own base to capture it, but only while your own flag is at home. A wrecked carrier drops the
+    flag where it was hit; touching your own dropped flag sends it home, and a dropped flag goes
+    home by itself after 25 seconds. First to 3 captures wins, or the most when the 5-minute
+    clock runs out. Every ship has the cannon, there is no friendly fire, and wrecks respawn
+    beside their own base. The power-ups are the Grand Prix's, with **Replace Flag** (a gold
+    capsule) instead of the gate deferral: E / Shift, or the FLAG button, sends your flag
+    straight home even while an enemy is carrying it (your deferral upgrade sets how many it
+    holds). An arrow at the screen's edge points to the job in hand: their flag, home while
+    you carry it, or whoever has stolen yours. Each team's AI keeps one ship guarding the base;
+    the rest attack, escort a carrier and chase thieves, and they use Replace Flag too.
   A kill goes to whoever hit the ship in its last 5 seconds, even if a planet finished it off.
 - **The hangar** (H on the menu): four ships with five stats each: Accel, Top Speed,
   Handling, Hull and Firepower (a weapon damage multiplier).
@@ -115,8 +129,8 @@ scrolls, and the game refits whenever the window's size changes, even without a 
 
 ONLINE on the menu (when the game's server says online play is available):
 
-- **Quick Match** joins anyone's room for the mode on the menu (Grand Prix, Dogfight or Battle
-  Royale), or opens one. **Create room** gives a four-letter code for friends; **Join room** takes
+- **Quick Match** joins anyone's room for the mode on the menu (Grand Prix, Dogfight, Battle
+  Royale or Capture the Flag), or opens one. **Create room** gives a four-letter code for friends; **Join room** takes
   one. Up to six pilots; bots take the empty seats. The race starts when everyone is READY.
 - Each pilot flies their own rocket from the hangar: hull, stat levels and powerup upgrades.
 - Results pay credits and stat points as offline. Grand Prix times the player flew themselves go
@@ -156,7 +170,8 @@ npm test           # API tests, plus browser tests of the game if Playwright is 
 ```
 
 The browser tests drive the real game in headless Chromium (AI races on every course, zoom,
-gate deferral, the hangar, dogfights and battle royales in every arena, and two players racing
+gate deferral, the hangar, dogfights and battle royales in every arena, capture the flag (the rules, bots
+playing whole matches, and two players online), and two players racing
 online against the multiplayer server, also on a slow network). They need `npm install --no-save playwright && npx playwright install chromium`
 and are skipped without it.
 
