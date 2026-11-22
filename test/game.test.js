@@ -1663,12 +1663,14 @@ test('touch: a quick tap keeps GAS on until it is tapped again; held, GAS is on 
   } finally { await ph.ctx.close(); }
 });
 
-test('touch: a tap on the FLY stick swaps it for < and > buttons that turn the rocket while held; the STICK tab swaps back; a push is not a tap; the choice is remembered', { skip }, async () => {
+test('touch: a tap on the FLY stick swaps it for a slider - dragged left or right it turns the rocket, harder the farther, and springs back when let go; the STICK tab swaps back; a push is not a tap; the choice is remembered', { skip }, async () => {
   const ph = await phoneRace();
   try {
-    const L = await ph.layout(), st = L.steer;
-    const mode = () => ph.page.evaluate(() => RR.input.steerButtons);
+    const L = await ph.layout(), st = L.steer, sl = L.slide, mid = sl.x + sl.w / 2, cy = sl.y + sl.h / 2;
+    const mode = () => ph.page.evaluate(() => RR.input.steerSlide);
     const tapAt = async (x, y) => { await ph.down([x, y]); await ph.page.waitForTimeout(60); await ph.up(); await ph.page.waitForTimeout(100); };
+    const look = () => ph.page.evaluate(() => { const t = RR.input.touch, r = RR.input.read(RR.game.player); return { slide: t.slide && { x: t.slide.x, turn: t.slide.turn }, turn: r.turn, thrust: r.thrust, angle: RR.game.player.angle }; });
+    const DEAD = await ph.page.evaluate(() => RR.input.SLIDE_DEAD);
     assert.strictEqual(await mode(), false, 'the stick to begin with');
 
     // a push (moved, held) is steering, not a tap
@@ -1680,27 +1682,40 @@ test('touch: a tap on the FLY stick swaps it for < and > buttons that turn the r
     await ph.page.waitForTimeout(100);
     assert.strictEqual(await mode(), false, 'pushed: still the stick');
 
-    // a tap: the buttons
+    // a tap: the slider
     await tapAt(st.x, st.y);
-    assert.strictEqual(await mode(), true, 'tapped: < and > buttons');
-    const turnWith = async (r) => {
-      await ph.page.evaluate(() => { const p = RR.game.player; p.vx = p.vy = 0; p.angVel = 0; p.angle = 0; });
-      await ph.down([r.x + r.w / 2, r.y + r.h / 2]);
-      await ph.page.waitForTimeout(400);
-      const s = await ph.page.evaluate(() => ({ turn: RR.input.read(RR.game.player).turn, thrust: RR.input.read(RR.game.player).thrust, angle: RR.game.player.angle }));
-      await ph.up();
-      await ph.page.waitForTimeout(80);
-      return s;
-    };
-    let s = await turnWith(L.right);
-    assert.deepStrictEqual([s.turn, s.thrust], [1, 0], '> held: turning right, no engine of its own');
+    assert.strictEqual(await mode(), true, 'tapped: the slider');
+    const travel = sl.w / 2 - 11; // (half the track, less half the knob)
+
+    // grab it in the middle and drag: right a little, right all the way, then left all the way
+    await ph.page.evaluate(() => { const p = RR.game.player; p.vx = p.vy = 0; p.angVel = 0; p.angle = 0; });
+    await ph.down([mid, cy]);
+    await ph.page.waitForTimeout(80);
+    let s = await look();
+    assert.deepStrictEqual([s.slide && s.slide.turn, s.turn, s.thrust], [0, 0, 0], 'held in the middle: no turn, and no engine of its own');
+    await ph.move([mid + travel / 2, cy + 6]); // half way right (and a little off the track: it keeps following)
+    await ph.page.waitForTimeout(80);
+    s = await look();
+    assert.ok(Math.abs(s.turn - (0.5 - DEAD) / (1 - DEAD)) < 0.03, 'half way right: part of a right turn: ' + s.turn);
+    assert.ok(Math.abs(s.slide.x - (mid + travel / 2)) < 0.5, 'the knob is under the finger');
+    await ph.move([mid + travel + 40, cy]); // past the end
+    await ph.page.waitForTimeout(400);
+    s = await look();
+    assert.strictEqual(s.turn, 1, 'at the end and beyond: a full right turn');
+    assert.ok(Math.abs(s.slide.x - (mid + travel)) < 0.5, 'the knob stops at the end of the track');
     assert.ok(s.angle > 0.3, 'the rocket turned right: ' + s.angle);
-    s = await turnWith(L.left);
-    assert.strictEqual(s.turn, -1, '< held: turning left');
+    await ph.page.evaluate(() => { const p = RR.game.player; p.angVel = 0; p.angle = 0; });
+    await ph.move([mid - travel - 40, cy]);
+    await ph.page.waitForTimeout(400);
+    s = await look();
+    assert.strictEqual(s.turn, -1, 'all the way left: a full left turn');
     assert.ok(s.angle < -0.3, 'the rocket turned left: ' + s.angle);
-    assert.strictEqual(await ph.page.evaluate(() => RR.input.read(RR.game.player).turn), 0, 'let go: no turn');
-    await tapAt(L.left.x + L.left.w / 2, L.left.y + L.left.h / 2);
-    assert.strictEqual(await mode(), true, 'a quick tap on < is a nudge, not a swap');
+    await ph.up();
+    await ph.page.waitForTimeout(80);
+    s = await look();
+    assert.deepStrictEqual([s.slide, s.turn], [null, 0], 'let go: back to the middle, no turn');
+    await tapAt(mid + travel * 0.7, cy);
+    assert.strictEqual(await mode(), true, 'a quick tap on the slider is a nudge, not a swap');
 
     // kept for next time
     await ph.page.reload();
@@ -1712,7 +1727,16 @@ test('touch: a tap on the FLY stick swaps it for < and > buttons that turn the r
     // the STICK tab: back to the stick, and that is remembered too
     await tapAt(L.tab.x + L.tab.w / 2, L.tab.y + L.tab.h / 2);
     assert.strictEqual(await mode(), false, 'STICK: the stick again');
-    assert.strictEqual(await ph.page.evaluate(() => JSON.parse(localStorage.getItem('rocketracer.v1')).steerButtons), false);
+    assert.strictEqual(await ph.page.evaluate(() => JSON.parse(localStorage.getItem('rocketracer.v1')).steerSlide), false);
+
+    // a save from when the slider was a pair of buttons opens with the slider
+    await ph.page.evaluate(() => {
+      const v = JSON.parse(localStorage.getItem('rocketracer.v1')); delete v.steerSlide; v.steerButtons = true;
+      localStorage.setItem('rocketracer.v1', JSON.stringify(v));
+    });
+    await ph.page.reload();
+    await ph.page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    assert.strictEqual(await mode(), true, 'the old buttons setting becomes the slider');
     assert.deepStrictEqual(ph.errors, []);
   } finally { await ph.ctx.close(); }
 });
