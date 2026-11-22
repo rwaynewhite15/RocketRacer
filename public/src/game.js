@@ -173,6 +173,7 @@
   /* ------------------------------------------------------- persistence */
 
   const STORE = 'rocketracer.v1';
+  const CONTROLS_V = 2; // the touch layout's version (see load)
   function load() {
     try {
       const s = JSON.parse(window.localStorage.getItem(STORE) || '{}');
@@ -180,6 +181,10 @@
       G.crt = s.crt !== false;
       G.autoFull = s.autoFull !== false;
       G.controls = cleanControls(s.controls);
+      // layout 2 put GAS above the fire stick and BRAKE beside it, following the stick: spots saved for the
+      // buttons before then are dropped (moved sticks keep theirs)
+      if (s.controlsV !== CONTROLS_V) for (const o in G.controls) ['brake', 'gas', 'defer'].forEach(function (n) { delete G.controls[o][n]; });
+      RR.input.steerButtons = s.steerButtons === true; // the steer stick swapped for < and > buttons
       RR.audio.muted = !!s.muted;
       if (s.diff >= 0 && s.diff < DIFFS.length) G.diffIdx = s.diff;
       if (s.track >= 0 && s.track < RR.TRACKS.length) G.trackIdx = s.track;
@@ -193,12 +198,13 @@
     if (!G.name) G.name = RR.net.randomName();
     if (!G.pid) G.pid = RR.net.randomId();
   }
+  G.saveSettings = function () { save(); };
   function save() {
     try {
       window.localStorage.setItem(STORE, JSON.stringify({
         best: G.best, crt: G.crt, muted: RR.audio.muted, autoFull: G.autoFull, controls: G.controls, diff: G.diffIdx, track: G.trackIdx,
         name: G.name, pid: G.pid, zoom: G.zoomOffset,
-        mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog,
+        mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog, steerButtons: RR.input.steerButtons, controlsV: CONTROLS_V,
       }));
     } catch (e) { /* ignore */ }
   }
@@ -435,6 +441,8 @@
   /** Reset the world. `demo` runs an all-AI race behind the title screen. */
   G.startRace = function (demo) {
     const g = this;
+    RR.input.aimDir = null; // the guns point straight ahead unless A or D is held
+    RR.input.gasLatch = false; // and GAS starts off
     g.mode = MODES[g.modeIdx].id;
     g.combat = g.mode !== 'race';
     g.royale = g.mode === 'royale' && !demo; // the attract mode just brawls on, with respawns
@@ -489,6 +497,7 @@
    */
   G.startOnline = function (opts) {
     const g = this, seats = opts.seats, turn = opts.turn || 0;
+    if (!opts.server) { RR.input.aimDir = null; RR.input.gasLatch = false; }
     g.modeIdx = Math.max(0, MODES.findIndex(function (m) { return m.id === opts.mode; }));
     g.mode = MODES[g.modeIdx].id;
     g.combat = g.mode !== 'race';
@@ -575,7 +584,7 @@
    */
   G.predictShip = function (s, inp, dt, quiet) {
     const g = this, i = s.input;
-    i.turn = inp.turn; i.thrust = inp.thrust; i.brake = inp.brake; i.fire = inp.fire; i.aim = inp.aim; i.stick = inp.stick;
+    i.turn = inp.turn; i.thrust = inp.thrust; i.brake = inp.brake; i.fire = inp.fire; i.aim = inp.aim; i.stick = inp.stick; i.keyAim = !!inp.keyAim;
     g.predicting = true;
     const parts = g.parts.length, flash = s.hitFlash; // (the hit flash runs on real time, in onlineStep, not per replayed step)
     updateShip(s, g, dt, true);
@@ -1997,7 +2006,7 @@
       else {
         const inp = s.netInput || RR.input.read(s);
         s.input.turn = inp.turn; s.input.thrust = inp.thrust; s.input.brake = inp.brake; s.input.fire = inp.fire;
-        s.input.aim = inp.aim; s.input.stick = inp.stick;
+        s.input.aim = inp.aim; s.input.stick = inp.stick; s.input.keyAim = !!inp.keyAim;
       }
       if (racing) tryFire(s, g);
       updateShip(s, g, dt, racing);
@@ -2052,6 +2061,7 @@
 
   function handleUI(g) {
     const I = RR.input, hit = I.hit;
+    if (g.state !== 'play') { if (hit.aimL) hit.left = true; if (hit.aimR) hit.right = true; } // A / D aim in a race; elsewhere, left / right
     if (hit.mute) g.toggleSound();
     if (hit.crt) { g.crt = !g.crt; applyCrt(); save(); }
     if (hit.zoomIn) g.zoomBy(1);
@@ -2128,6 +2138,7 @@
   G.frame = function (dt) {
     const g = this, I = RR.input;
     I.updateTouch(g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null, g.ui);
+    if (g.state === 'play') I.updateAim(dt, g.player);
     if (g.state === 'layout') dragControls(g);
     if (!I.typing) { I.pollPad(); handleUI(g); }
     if (g.toast) { g.toast.t += dt; if (g.toast.t >= g.toast.dur) g.toast = null; }
