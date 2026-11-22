@@ -22,6 +22,9 @@
  *               fire and let go to launch (let go without pushing: straight
  *               ahead). Mines and EMP go off as the stick is touched.
  *   BRAKE       a button.
+ *   GAS         a button just above BRAKE: full engine power while held, the
+ *               way the rocket points (or is being steered), so it speeds
+ *               up steadily to its top speed.
  *
  * Keys and touch work together (an iPad with a keyboard, say): both always
  * fly the ship, and a held turn key out-steers a drag. A key press puts the
@@ -37,7 +40,7 @@
   const I = (RR.input = {
     down: {}, hit: {}, taps: [],
     pointers: {}, // id -> { x, y, sx, sy, role, touch } in game pixels (sx, sy = where it began; touch: a finger or pen, not a mouse)
-    touch: { drag: null, aimStick: null, aim: null, brake: false, fire: false },
+    touch: { drag: null, aimStick: null, aim: null, brake: false, gas: false, fire: false },
     touchMode: false,
     controlAt: -Infinity, // performance.now() when a thumb was last on the race controls (steering, fire stick, brake)
     typing: false, // true while an HTML text field has the keyboard
@@ -244,7 +247,7 @@
    */
   I.updateTouch = function (L, buttons) {
     const t = I.touch;
-    t.fire = t.brake = false;
+    t.fire = t.brake = t.gas = false;
     t.drag = t.aimStick = t.aim = null;
     if (!L) {
       for (const id in I.pointers) I.pointers[id].role = 'menu';
@@ -254,13 +257,15 @@
       const p = I.pointers[id];
       if (!p.role) {
         p.role = inside(p.sx, p.sy, L.brake, 6) ? 'brake'
+          : inside(p.sx, p.sy, L.gas, 6) ? 'gas'
           : near(p.sx, p.sy, L.fire) ? 'fire'
           : near(p.sx, p.sy, L.steer) ? 'stick'
           : onAny(p.sx, p.sy, buttons) ? 'none'
           : 'steer'; // anywhere else on the screen
       }
-      if (p.role === 'steer' || p.role === 'stick' || p.role === 'fire' || p.role === 'brake') I.controlAt = performance.now();
+      if (p.role === 'steer' || p.role === 'stick' || p.role === 'fire' || p.role === 'brake' || p.role === 'gas') I.controlAt = performance.now();
       if (p.role === 'brake') t.brake = true;
+      else if (p.role === 'gas') t.gas = true;
       else if (p.role === 'stick' && !t.drag) t.drag = stickDrag(p, L.steer);
       else if (p.role === 'steer' && !t.drag) t.drag = dragState(p);
       else if (p.role === 'fire' && !t.aimStick) {
@@ -300,6 +305,7 @@
     if (d.right) turn += 1;
     if (d.up) thrust = 1;
     if (d.down || t.brake) brake = 1;
+    if (t.gas) thrust = 1; // GAS: full power
     if (d.fire || t.fire) fire = true;
 
     // steering drag: head the way it points, with as much engine as it is long
