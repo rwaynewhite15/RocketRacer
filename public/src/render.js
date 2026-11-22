@@ -62,7 +62,8 @@
 
   /**
    * Touch controls with a place on screen, in game pixels: the fire stick,
-   * BRAKE, and the DEFER button (shown only while a gate deferral is held). Steering has
+   * BRAKE, GAS (just above BRAKE), and the DEFER button (shown only while a
+   * gate deferral is held). Steering has
    * no place: it is a drag that can start anywhere else (see input.js). Each
    * control has a standard spot; the player can move them (Pause > Move
    * controls). Moved spots are kept as fractions of the screen, separately for
@@ -74,15 +75,17 @@
     const R = 34, grab = R + 24; // a thumb landing within `grab` of a stick's centre takes it
     const def = { fire: { x: W - ins.r - 66, y: H - ins.b - 66 } };
     def.steer = { x: ins.l + 66, y: def.fire.y }; // the steering stick: bottom left, the fire stick's mirror image
-    if (W - ins.l - ins.r < 360) { // narrow (upright phone): stack BRAKE and DEFER above the fire stick
+    if (W - ins.l - ins.r < 360) { // narrow (upright phone): stack BRAKE, GAS and DEFER above the fire stick
       def.brake = { x: def.fire.x, y: def.fire.y - 80 };
-      def.defer = { x: def.fire.x, y: def.brake.y - 54 };
+      def.gas = { x: def.fire.x, y: def.brake.y - 50 };
+      def.defer = { x: def.fire.x, y: def.gas.y - 54 };
     } else {
       def.brake = { x: def.fire.x - 82, y: H - ins.b - 31 };
+      def.gas = { x: def.brake.x, y: def.brake.y - 50 };
       def.defer = { x: def.fire.x, y: def.fire.y - 74 };
     }
     const g = RR.game, saved = (g && g.controls && g.controls[W >= H ? 'land' : 'port']) || {};
-    const half = { steer: R + 2, fire: R + 2, brake: 21, defer: 22 }, centre = {};
+    const half = { steer: R + 2, fire: R + 2, brake: 21, gas: 21, defer: 22 }, centre = {};
     for (const n in def) {
       const sp = saved[n], h = half[n];
       centre[n] = {
@@ -96,6 +99,7 @@
       steer: { x: centre.steer.x, y: centre.steer.y, r: R, grab: grab },
       fire: { x: centre.fire.x, y: centre.fire.y, r: R, grab: grab },
       brake: box(centre.brake, 42, 42),
+      gas: box(centre.gas, 42, 42),
       defer: box(centre.defer, 44, 44),
       centre: centre,
     };
@@ -658,7 +662,7 @@
     const steering = t.drag && t.drag.stick ? t.drag : null;
     drawStick(ctx, L.steer, steering && steering.stick, PAL.lime, PAL.steel);
     stickLabel(ctx, L.steer, 'FLY', steering ? PAL.white : PAL.silver, H, ins);
-    g.meter = t.drag ? drawDrag(ctx, t.drag, W, H, ins, g.t) : null;
+    g.meter = t.drag ? drawDrag(ctx, t.gas ? Object.assign({}, t.drag, { power: 1 }) : t.drag, W, H, ins, g.t) : null; // (GAS: full power)
     if (t.drag) {
       if (t.drag.power > 0) p.dragged = true;
     } else if (!p.dragged && g.phase === 'race' && Math.floor(g.t * 2) & 1) {
@@ -682,6 +686,8 @@
     };
     key(L.brake, t.brake, PAL.steel);
     text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.silver, 1, 'center');
+    key(L.gas, t.gas, PAL.lime);
+    text(ctx, 'GAS', L.gas.x + L.gas.w / 2, L.gas.y + 18, t.gas ? PAL.white : PAL.lime, 1, 'center');
 
     if (p.defer > 0 && !g.combat) {
       const r = L.defer, ready = g.canDefer(p); // (not while the next gate is the line: a tap says so)
@@ -716,6 +722,8 @@
     stickLabel(ctx, L.fire, 'AIM + FIRE', PAL.yellow, H, ins);
     panel(ctx, L.brake.x, L.brake.y, L.brake.w, L.brake.h, held.brake ? PAL.white : PAL.yellow);
     text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.yellow, 1, 'center');
+    panel(ctx, L.gas.x, L.gas.y, L.gas.w, L.gas.h, held.gas ? PAL.white : PAL.yellow);
+    text(ctx, 'GAS', L.gas.x + L.gas.w / 2, L.gas.y + 18, PAL.yellow, 1, 'center');
     const r = L.defer;
     panel(ctx, r.x, r.y, r.w, r.h, held.defer ? PAL.white : PAL.yellow);
     ctx.drawImage(Art.icons.defer, r.x + 13, r.y + 6, 18, 18);

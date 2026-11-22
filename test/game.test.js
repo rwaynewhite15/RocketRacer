@@ -1484,6 +1484,48 @@ test('touch: a steering stick sits bottom left, the fire stick\'s mirror image; 
   }
 });
 
+test('touch: GAS sits just above BRAKE; held, it runs the engine at full power the way the rocket points (or is steered), so it speeds up steadily', { skip }, async () => {
+  for (const vp of [undefined, { width: 844, height: 390 }]) { // an upright phone, and one held sideways
+    const ph = await phoneRace(vp);
+    try {
+      const L = await ph.layout(), gas = L.gas, br = L.brake;
+      assert.ok(gas && gas.x + gas.w / 2 === br.x + br.w / 2 && gas.y + gas.h <= br.y && br.y - (gas.y + gas.h) < 12, 'just above BRAKE: ' + JSON.stringify([gas, br]));
+      const W = await ph.page.evaluate(() => RR.game.W);
+      assert.ok(gas.x > W / 2, 'on the right');
+      const look = () => ph.page.evaluate(() => {
+        const p = RR.game.player, inp = RR.input.read(p);
+        return { gas: RR.input.touch.gas, thrust: inp.thrust, brake: inp.brake, speed: Math.hypot(p.vx, p.vy), heading: Math.atan2(p.vy, p.vx), angle: p.angle };
+      });
+      // from a standstill, pointing right: hold GAS
+      await ph.page.evaluate(() => { const p = RR.game.player; p.vx = p.vy = 0; p.angVel = 0; p.angle = 0; });
+      await ph.down([gas.x + gas.w / 2, gas.y + gas.h / 2]);
+      await ph.page.waitForTimeout(80);
+      let s = await look();
+      assert.deepStrictEqual([s.gas, s.thrust, s.brake], [true, 1, 0], 'full power, not a brake');
+      const speeds = [];
+      for (let i = 0; i < 4; i++) { await ph.page.waitForTimeout(150); speeds.push((await look()).speed); }
+      assert.ok(speeds.every((v, i) => i === 0 || v > speeds[i - 1]), 'speeding up all the time it is held: ' + speeds.map(Math.round));
+      s = await look();
+      assert.ok(angleGap(s.heading, s.angle) < 0.35, 'the way the rocket points: ' + s.heading + ' vs ' + s.angle);
+      await ph.up();
+      await ph.page.waitForTimeout(80);
+      assert.deepStrictEqual([(await look()).gas, (await look()).thrust], [false, 0], 'let go: the engine stops');
+
+      // with the FLY stick pushed a little, GAS makes it full power that way
+      const st = L.steer;
+      await ph.down([st.x, st.y], [gas.x + gas.w / 2, gas.y + gas.h / 2]);
+      await ph.page.waitForTimeout(60);
+      await ph.move([st.x, st.y - st.r * 0.3], [gas.x + gas.w / 2, gas.y + gas.h / 2]);
+      await ph.page.waitForTimeout(100);
+      s = await ph.page.evaluate(() => ({ power: RR.input.touch.drag.power, thrust: RR.input.read(RR.game.player).thrust, meter: RR.game.meter && RR.game.meter.full }));
+      assert.ok(s.power < 0.3, 'the stick alone: a little power (' + s.power + ')');
+      assert.deepStrictEqual([s.thrust, s.meter], [1, true], 'with GAS: full power, and the meter says MAX');
+      await ph.up();
+      assert.deepStrictEqual(ph.errors, []);
+    } finally { await ph.ctx.close(); }
+  }
+});
+
 test('touch: Pause > MOVE CONTROLS drags the controls to new spots, keeps them, and RESET puts them back', { skip }, async () => {
   const ph = await phoneRace();
   try {
