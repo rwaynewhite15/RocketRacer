@@ -279,7 +279,7 @@
     const next = (seq + 1) & 0xffff;
     if (predictable(G, me)) {
       G.predictShip(me, inp, STEP, false);
-      steps.push({ seq: next, inp: { turn: inp.turn, thrust: inp.thrust, brake: inp.brake, fire: inp.fire, aim: inp.aim, stick: inp.stick } });
+      steps.push({ seq: next, inp: { turn: inp.turn, thrust: inp.thrust, brake: inp.brake, fire: inp.fire, aim: inp.aim, stick: inp.stick, keyAim: inp.keyAim } });
       if (steps.length > MAX_STEPS) steps.shift();
     }
     if (stepN % 2 === 0 && ws && ws.readyState === 1) { // 60 a second

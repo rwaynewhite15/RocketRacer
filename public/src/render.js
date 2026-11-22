@@ -62,9 +62,10 @@
 
   /**
    * Touch controls with a place on screen, in game pixels: the fire stick,
-   * BRAKE, GAS (just above BRAKE), and the DEFER button (shown only while a
-   * gate deferral is held). Steering has
-   * no place: it is a drag that can start anywhere else (see input.js). Each
+   * GAS just above it, BRAKE to the left of GAS, and the DEFER button above
+   * GAS (shown only while a gate deferral is held); those buttons follow the
+   * fire stick wherever it is moved; and the FLY stick bottom left (steering
+   * can also be a drag that starts anywhere else, see input.js). Each
    * control has a standard spot; the player can move them (Pause > Move
    * controls). Moved spots are kept as fractions of the screen, separately for
    * sideways and upright, and are always pulled back inside the screen and
@@ -73,30 +74,32 @@
   RR.touchLayout = function (W, H, ins) {
     ins = ins || NO_INSET;
     const R = 34, grab = R + 24; // a thumb landing within `grab` of a stick's centre takes it
-    const def = { fire: { x: W - ins.r - 66, y: H - ins.b - 66 } };
-    def.steer = { x: ins.l + 66, y: def.fire.y }; // the steering stick: bottom left, the fire stick's mirror image
-    if (W - ins.l - ins.r < 360) { // narrow (upright phone): stack BRAKE, GAS and DEFER above the fire stick
-      def.brake = { x: def.fire.x, y: def.fire.y - 80 };
-      def.gas = { x: def.fire.x, y: def.brake.y - 50 };
-      def.defer = { x: def.fire.x, y: def.gas.y - 54 };
-    } else {
-      def.brake = { x: def.fire.x - 82, y: H - ins.b - 31 };
-      def.gas = { x: def.brake.x, y: def.brake.y - 50 };
-      def.defer = { x: def.fire.x, y: def.fire.y - 74 };
-    }
     const g = RR.game, saved = (g && g.controls && g.controls[W >= H ? 'land' : 'port']) || {};
     const half = { steer: R + 2, fire: R + 2, brake: 21, gas: 21, defer: 22 }, centre = {};
-    for (const n in def) {
+    const place = function (n, d) { // a control's spot: where the player put it, else `d`; always on screen
       const sp = saved[n], h = half[n];
       centre[n] = {
-        x: Math.round(clamp(sp ? sp.x * W : def[n].x, ins.l + h + 2, W - ins.r - h - 2)),
-        y: Math.round(clamp(sp ? sp.y * H : def[n].y, ins.t + h + 2, H - ins.b - h - 2)),
+        x: Math.round(clamp(sp ? sp.x * W : d.x, ins.l + h + 2, W - ins.r - h - 2)),
+        y: Math.round(clamp(sp ? sp.y * H : d.y, ins.t + h + 2, H - ins.b - h - 2)),
       };
-    }
+    };
+    place('fire', { x: W - ins.r - 66, y: H - ins.b - 66 });
+    place('steer', { x: ins.l + 66, y: H - ins.b - 66 }); // bottom left: the fire stick's mirror image
+    // GAS just above the fire stick (wherever it has been moved), BRAKE beside it on the left, DEFER above GAS
+    // (below the stick instead, if it sits too near the top for them to fit above)
+    const f = centre.fire, way = f.y - 80 - 21 >= ins.t + 2 ? -1 : 1;
+    place('gas', { x: f.x, y: f.y + way * 80 });
+    place('brake', { x: f.x - 50, y: f.y + way * 80 });
+    place('defer', { x: f.x, y: f.y + way * 134 });
     const box = function (c, w, h) { return { x: c.x - w / 2, y: c.y - h / 2, w: w, h: h }; };
+    const sc = centre.steer;
     return {
       stickR: R,
-      steer: { x: centre.steer.x, y: centre.steer.y, r: R, grab: grab },
+      steer: { x: sc.x, y: sc.y, r: R, grab: grab },
+      // the steer stick's other form (a tap on it): < and > side by side, and a STICK tab above them to swap back
+      left: box({ x: sc.x - 23, y: sc.y }, 42, 48),
+      right: box({ x: sc.x + 23, y: sc.y }, 42, 48),
+      tab: box({ x: sc.x, y: sc.y - R - 12 }, 46, 18),
       fire: { x: centre.fire.x, y: centre.fire.y, r: R, grab: grab },
       brake: box(centre.brake, 42, 42),
       gas: box(centre.gas, 42, 42),
@@ -546,7 +549,7 @@
         text(ctx, 'DRAG FARTHER: MORE POWER', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
         text(ctx, 'FIRE STICK: SHOOT THAT WAY', W / 2, hy2 + 20, PAL.cyan, 1, 'center', PAL.ink);
       } else {
-        text(ctx, 'ARROWS / WASD TO FLY - SPACE TO FIRE', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
+        text(ctx, 'ARROWS TO FLY - A / D TO AIM - SPACE TO FIRE', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
       }
       text(ctx, g.royale ? 'LAST SHIP FLYING WINS' : g.combat ? 'WRECK THEM - FIRST TO ' + C.KILL_TARGET + ' KILLS' : 'FLY THROUGH THE GLOWING DONUT',
         W / 2, hy2 + (touch ? 34 : 12), PAL.pink, 1, 'center', PAL.ink);
@@ -584,15 +587,16 @@
   }
 
   /**
-   * The fire stick's aim, kept faint so it never hides the race: a dashed line
-   * out from the rocket while the blaster is pushed one way, or while a missile
-   * is held ready to launch (straight ahead until the stick is pushed), plus
+   * The fire stick's aim (or the guns' swung with A / D), kept faint so it
+   * never hides the race: a dashed line out from the rocket while the blaster
+   * is pushed one way, or while a missile is held ready to launch (straight
+   * ahead until the stick is pushed), plus
    * corner brackets on the rival that missile would lock onto.
    * g.aimShown records what was drawn (the tests read it).
    */
   function drawAim(g, ctx, s, cx, cy) {
     const w = s.weapon || (g.combat ? 'blaster' : null), inp = s.input;
-    if (!inp.stick || !(w === 'missile' || (w === 'blaster' && inp.aim != null))) return;
+    if (!(inp.stick || inp.keyAim) || !(w === 'missile' || (w === 'blaster' && inp.aim != null))) return;
     const ang = inp.aim != null ? inp.aim : s.angle, ax = Math.cos(ang), ay = Math.sin(ang);
     const col = s.weapon ? RR.ITEMS[s.weapon].color : PAL.cyan, x = s.x - cx, y = s.y - cy;
     ctx.globalAlpha = 0.7;
@@ -658,17 +662,33 @@
   function drawTouch(g, ctx, W, H) {
     const L = RR.touchLayout(W, H, g.inset), t = RR.input.touch, p = g.player, ins = g.inset;
 
-    /* steering: the stick bottom left, or a drag from anywhere else; until the first, say so */
-    const steering = t.drag && t.drag.stick ? t.drag : null;
-    drawStick(ctx, L.steer, steering && steering.stick, PAL.lime, PAL.steel);
-    stickLabel(ctx, L.steer, 'FLY', steering ? PAL.white : PAL.silver, H, ins);
+    const key = function (r, on, col) {
+      panel(ctx, r.x, r.y, r.w, r.h, on ? PAL.white : col);
+      if (on) { ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2); }
+    };
+
+    /* steering: the stick bottom left (a tap swaps it for < and > buttons), or a drag from anywhere else */
+    const buttonsMode = RR.input.steerButtons;
+    if (buttonsMode) {
+      key(L.left, t.turnL, PAL.lime);
+      text(ctx, '<', L.left.x + L.left.w / 2, L.left.y + L.left.h / 2 - 7, t.turnL ? PAL.white : PAL.lime, 2, 'center');
+      key(L.right, t.turnR, PAL.lime);
+      text(ctx, '>', L.right.x + L.right.w / 2, L.right.y + L.right.h / 2 - 7, t.turnR ? PAL.white : PAL.lime, 2, 'center');
+      panel(ctx, L.tab.x, L.tab.y, L.tab.w, L.tab.h, PAL.steel);
+      text(ctx, 'STICK', L.tab.x + L.tab.w / 2, L.tab.y + 5, PAL.silver, 1, 'center');
+      stickLabel(ctx, L.steer, 'TURN', t.turnL || t.turnR ? PAL.white : PAL.silver, H, ins);
+    } else {
+      const steering = t.drag && t.drag.stick ? t.drag : null;
+      drawStick(ctx, L.steer, steering && steering.stick, PAL.lime, PAL.steel);
+      stickLabel(ctx, L.steer, 'FLY', steering ? PAL.white : PAL.silver, H, ins);
+    }
     g.meter = t.drag ? drawDrag(ctx, t.gas ? Object.assign({}, t.drag, { power: 1 }) : t.drag, W, H, ins, g.t) : null; // (GAS: full power)
-    if (t.drag) {
-      if (t.drag.power > 0) p.dragged = true;
+    if (t.drag || t.turnL || t.turnR || t.gas) {
+      if (!t.drag || t.drag.power > 0) p.dragged = true;
     } else if (!p.dragged && g.phase === 'race' && Math.floor(g.t * 2) & 1) {
-      const hy = L.steer.y - L.steer.r - 30;
-      text(ctx, 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
+      const hy = (buttonsMode ? L.tab.y - 6 : L.steer.y - L.steer.r) - 24;
+      text(ctx, buttonsMode ? 'HOLD < > TO TURN' : 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, buttonsMode ? 'AND GAS TO GO' : 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
     }
 
     /* fire stick: the blaster fires while held (ahead, or the way it is pushed); missiles go on letting go */
@@ -680,14 +700,17 @@
     const held = w === 'missile' ? 'LET GO TO FIRE' : w === 'blaster' ? 'AIM' : null;
     stickLabel(ctx, L.fire, t.aimStick && held ? held : what, t.aimStick && held ? PAL.white : wc, H, ins);
 
-    const key = function (r, on, col) {
-      panel(ctx, r.x, r.y, r.w, r.h, on ? PAL.white : col);
-      if (on) { ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2); }
-    };
     key(L.brake, t.brake, PAL.steel);
     text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.silver, 1, 'center');
-    key(L.gas, t.gas, PAL.lime);
-    text(ctx, 'GAS', L.gas.x + L.gas.w / 2, L.gas.y + 18, t.gas ? PAL.white : PAL.lime, 1, 'center');
+    if (RR.input.gasLatch) { // tapped on: lit green until tapped again
+      panel(ctx, L.gas.x, L.gas.y, L.gas.w, L.gas.h, PAL.lime);
+      ctx.fillStyle = 'rgba(99,199,77,0.35)'; ctx.fillRect(L.gas.x + 1, L.gas.y + 1, L.gas.w - 2, L.gas.h - 2);
+      text(ctx, 'GAS', L.gas.x + L.gas.w / 2, L.gas.y + 13, PAL.white, 1, 'center');
+      text(ctx, 'ON', L.gas.x + L.gas.w / 2, L.gas.y + 24, PAL.lime, 1, 'center', PAL.ink);
+    } else {
+      key(L.gas, t.gas, PAL.lime);
+      text(ctx, 'GAS', L.gas.x + L.gas.w / 2, L.gas.y + 18, t.gas ? PAL.white : PAL.lime, 1, 'center');
+    }
 
     if (p.defer > 0 && !g.combat) {
       const r = L.defer, ready = g.canDefer(p); // (not while the next gate is the line: a tap says so)
@@ -873,10 +896,10 @@
       text(ctx, fight ? 'WIN EVENTS TO EARN STAT POINTS' : 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, fight ? 'AND UNLOCK BETTER SHIPS' : 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
     } else if (W >= 440) {
-      text(ctx, 'ARROWS / WASD  FLY    SPACE  FIRE    E  DEFER GATE    P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'ARROWS  FLY    A / D  AIM    SPACE  FIRE    E  DEFER GATE    P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, 'H  HANGAR    Z OR WHEEL  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     } else {
-      text(ctx, 'ARROWS/WASD FLY - SPACE FIRE - E DEFER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'ARROWS FLY - A/D AIM - SPACE FIRE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, 'H HANGAR - Z ZOOM - P PAUSE - M MUTE', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     }
   }

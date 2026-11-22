@@ -590,7 +590,7 @@ test('gate deferral: E (or the DEFER button on a touch screen) spends one; headi
   } finally { await ph.ctx.close(); }
 });
 
-test('gate deferral: only humans pick one up, one at a time; none in a fight; saved do-over upgrades and button spots carry over', { skip }, async () => {
+test('gate deferral: only humans pick one up, one at a time; none in a fight; saved do-over upgrades carry over', { skip }, async () => {
   const { page, ctx, errors } = await openGame();
   try {
     const r = await page.evaluate(() => {
@@ -620,18 +620,20 @@ test('gate deferral: only humans pick one up, one at a time; none in a fight; sa
     assert.deepStrictEqual(r.secondLeft, { held: 1, stillThere: true });
     assert.deepStrictEqual(r.fight, { can: false, ok: false, deferRolled: false });
 
-    // a save from before the change: do-over upgrades and the DO-OVER button's spot become the deferral's
+    // a save from before the change: do-over upgrades become the deferral's (its button's spot went with the old
+    // layout, like BRAKE's; a moved stick keeps its spot)
     await page.evaluate(() => {
       const s = JSON.parse(localStorage.getItem('rocketracer.v1') || '{}');
       s.prog = Object.assign({}, s.prog, { pup: { rewind: 3, nitro: 2 } });
-      s.controls = { land: { rewind: { x: 0.25, y: 0.5 }, brake: { x: 0.5, y: 0.9 } } };
+      s.controls = { land: { rewind: { x: 0.25, y: 0.5 }, brake: { x: 0.5, y: 0.9 }, fire: { x: 0.7, y: 0.6 } } };
+      delete s.controlsV;
       localStorage.setItem('rocketracer.v1', JSON.stringify(s));
     });
     await page.reload();
     await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
     const kept = await page.evaluate(() => ({ pup: RR.game.prog.pup, controls: RR.game.controls }));
     assert.deepStrictEqual(kept.pup, { nitro: 2, defer: 3 });
-    assert.deepStrictEqual(kept.controls, { land: { brake: { x: 0.5, y: 0.9 }, defer: { x: 0.25, y: 0.5 } } });
+    assert.deepStrictEqual(kept.controls, { land: { fire: { x: 0.7, y: 0.6 } } });
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
 });
@@ -1111,6 +1113,90 @@ test('iPhone Home Screen app: the page is made screen-tall (iOS 26 cut off the b
   } finally { await ctx.close(); }
 });
 
+test('keyboard: holding A or D swings the guns from straight ahead and keeps them pointing the same way in space as the rocket turns; Space fires that way with an aim line; let go and they point straight ahead again; in menus A / D mean left / right', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  try {
+    // the title menu: D still steps through the events
+    const mode0 = await page.evaluate(() => { RR.game.menuRow = 0; return RR.game.modeIdx; });
+    await page.keyboard.press('KeyD');
+    await page.waitForTimeout(80);
+    assert.notStrictEqual(await page.evaluate(() => RR.game.modeIdx), mode0, 'D moves along the menu');
+    await page.evaluate((m) => { RR.game.modeIdx = m; }, mode0);
+
+    // a race, holding still with the nose up and a blaster; note each shot's way and the aim it was fired at
+    await page.evaluate(() => {
+      const g = RR.game; g.modeIdx = 0; T.fresh(0);
+      const p = g.player; p.ai = null; p.weapon = 'blaster'; p.ammo = 999;
+      window.hold = (keepAngle) => { p.x = g.track.cps[3].x; p.y = g.track.cps[3].y; p.vx = p.vy = 0; if (!keepAngle) { p.angVel = 0; p.angle = -Math.PI / 2; } };
+      window.hold();
+      window.fired = [];
+      const push = g.shots.push;
+      g.shots.push = function (b) {
+        if (b.owner === p) window.fired.push({ dir: Math.atan2(b.vy - p.vy * 0.5, b.vx - p.vx * 0.5), aim: p.input.aim == null ? p.angle : p.input.aim });
+        return push.apply(this, arguments);
+      };
+    });
+    const look = (keepAngle) => page.evaluate((k) => {
+      window.hold(k);
+      const p = RR.game.player, r = RR.input.read(p), d = RR.input.aimDir;
+      return { dir: d, off: d == null ? 0 : Math.atan2(Math.sin(d - p.angle), Math.cos(d - p.angle)), aim: r.aim, keyAim: r.keyAim, turn: r.turn, angle: p.angle, shown: RR.game.aimShown };
+    }, !!keepAngle);
+    assert.strictEqual((await look()).aim, null, 'straight ahead to begin with');
+
+    // hold D: the guns swing right from straight ahead, and the rocket is not turned
+    await page.keyboard.down('KeyD');
+    await page.waitForTimeout(300);
+    let s = await look();
+    assert.ok(s.off > 0.4 && s.off < 1.3, 'D held swings the guns to the right: ' + s.off);
+    assert.ok(s.keyAim && s.aim === s.dir, 'that is the aim');
+    assert.strictEqual(s.turn, 0, 'the rocket is not turned by it');
+    assert.ok(s.shown && angleGap(s.shown.ang, s.aim) < 0.1, 'a dashed aim line shows the way: ' + JSON.stringify(s.shown));
+
+    // the rocket turns under the guns: they keep their direction in space
+    const turned = await page.evaluate(() => {
+      const p = RR.game.player, before = RR.input.read(p).aim;
+      p.angle += 1.2; // the rocket swings round...
+      return { before, after: RR.input.read(p).aim }; // ...the guns do not
+    });
+    assert.strictEqual(turned.after, turned.before, 'the same direction in space as the rocket turns');
+    // and over real frames with the arrow keys turning it: the guns move only by their own swing
+    const t0 = await page.evaluate(() => ({ dir: RR.input.aimDir, angle: RR.game.player.angle, t: performance.now() }));
+    await page.keyboard.down('ArrowLeft');
+    await page.waitForTimeout(300);
+    const t1 = await page.evaluate(() => ({ dir: RR.input.aimDir, angle: RR.game.player.angle, t: performance.now() }));
+    await page.keyboard.up('ArrowLeft');
+    const swing = Math.atan2(Math.sin(t1.dir - t0.dir), Math.cos(t1.dir - t0.dir)), want = (await page.evaluate(() => RR.input.AIM_RATE)) * (t1.t - t0.t) / 1000;
+    assert.ok(angleGap(t1.angle, t0.angle) > 0.3, 'the rocket did turn: ' + (t1.angle - t0.angle));
+    assert.ok(swing > 0 && Math.abs(swing - want) < 0.25, 'the guns moved only by their swing: ' + swing.toFixed(2) + ' vs ' + want.toFixed(2));
+
+    // Space while D is held: every shot goes the way the guns pointed as it left
+    await page.evaluate(() => { window.fired.length = 0; });
+    await page.keyboard.down('Space');
+    await page.waitForTimeout(300);
+    await page.keyboard.up('Space');
+    const shots = await page.evaluate(() => window.fired.slice());
+    assert.ok(shots.length >= 2, 'it fires: ' + shots.length);
+    for (const x of shots) assert.ok(angleGap(x.dir, x.aim) < 0.05, 'the way the guns point: ' + x.dir + ' vs ' + x.aim);
+
+    // let go: straight ahead again, and the line goes
+    await page.keyboard.up('KeyD');
+    await page.waitForTimeout(80);
+    s = await look();
+    assert.deepStrictEqual([s.dir, s.aim, s.keyAim, s.shown], [null, null, false, null], 'let go: straight ahead, no aim line');
+
+    // A held, with the rocket now pointing right: from straight ahead (right), to the left of it
+    await page.evaluate(() => { const p = RR.game.player; p.angle = 0; p.angVel = 0; });
+    await page.keyboard.down('KeyA');
+    await page.waitForTimeout(300);
+    s = await look(true);
+    assert.ok(s.off < -0.4 && s.off > -1.3, 'A held swings them left, starting from where the nose points now: ' + s.off);
+    await page.keyboard.up('KeyA');
+    await page.waitForTimeout(80);
+    assert.strictEqual((await look(true)).aim, null, 'and straight again on letting go');
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 /* --------------------------------------------------------- touch sticks */
 
 /** A phone (or a tablet, given its screen size) with a race under way, and helpers to put thumbs on the screen (game-pixel coordinates). */
@@ -1484,12 +1570,13 @@ test('touch: a steering stick sits bottom left, the fire stick\'s mirror image; 
   }
 });
 
-test('touch: GAS sits just above BRAKE; held, it runs the engine at full power the way the rocket points (or is steered), so it speeds up steadily', { skip }, async () => {
+test('touch: GAS sits just above the fire stick with BRAKE on its left; held, it runs the engine at full power the way the rocket points (or is steered), so it speeds up steadily', { skip }, async () => {
   for (const vp of [undefined, { width: 844, height: 390 }]) { // an upright phone, and one held sideways
     const ph = await phoneRace(vp);
     try {
-      const L = await ph.layout(), gas = L.gas, br = L.brake;
-      assert.ok(gas && gas.x + gas.w / 2 === br.x + br.w / 2 && gas.y + gas.h <= br.y && br.y - (gas.y + gas.h) < 12, 'just above BRAKE: ' + JSON.stringify([gas, br]));
+      const L = await ph.layout(), gas = L.gas, br = L.brake, f = L.fire;
+      assert.ok(gas && gas.x + gas.w / 2 === f.x && gas.y + gas.h <= f.y - f.r && f.y - f.r - (gas.y + gas.h) < 30, 'just above the fire stick: ' + JSON.stringify([gas, f]));
+      assert.ok(br.y === gas.y && br.x + br.w <= gas.x && gas.x - (br.x + br.w) < 12, 'BRAKE right beside it on the left: ' + JSON.stringify([br, gas]));
       const W = await ph.page.evaluate(() => RR.game.W);
       assert.ok(gas.x > W / 2, 'on the right');
       const look = () => ph.page.evaluate(() => {
@@ -1526,6 +1613,142 @@ test('touch: GAS sits just above BRAKE; held, it runs the engine at full power t
   }
 });
 
+test('touch: a quick tap keeps GAS on until it is tapped again; held, GAS is on only until let go (a hold also ends a tapped-on GAS); every race starts with it off', { skip }, async () => {
+  const ph = await phoneRace();
+  try {
+    const L = await ph.layout(), gx = L.gas.x + L.gas.w / 2, gy = L.gas.y + L.gas.h / 2;
+    const look = () => ph.page.evaluate(() => { const p = RR.game.player; return { latch: RR.input.gasLatch, thrust: RR.input.read(p).thrust, speed: Math.hypot(p.vx, p.vy) }; });
+    const tap = async () => { await ph.down([gx, gy]); await ph.page.waitForTimeout(60); await ph.up(); await ph.page.waitForTimeout(80); };
+    const still = () => ph.page.evaluate(() => { const p = RR.game.player; p.vx = p.vy = 0; p.angVel = 0; p.angle = -Math.PI / 2; });
+
+    // a tap: on, and it stays on with no finger on it
+    await still();
+    await tap();
+    let a = await look();
+    assert.deepStrictEqual([a.latch, a.thrust], [true, 1], 'tapped on');
+    await ph.page.waitForTimeout(500);
+    const b = await look();
+    assert.ok(b.thrust === 1 && b.speed > a.speed + 20, 'still on half a second later, and speeding up: ' + Math.round(a.speed) + ' -> ' + Math.round(b.speed));
+    await tap();
+    a = await look();
+    assert.deepStrictEqual([a.latch, a.thrust], [false, 0], 'tapped again: off');
+
+    // held: on while the finger is down, off when it lifts
+    await ph.down([gx, gy]);
+    await ph.page.waitForTimeout(500);
+    a = await look();
+    assert.deepStrictEqual([a.latch, a.thrust], [false, 1], 'held: on');
+    await ph.up();
+    await ph.page.waitForTimeout(80);
+    a = await look();
+    assert.deepStrictEqual([a.latch, a.thrust], [false, 0], 'let go: off');
+
+    // tapped on, then held and let go: off
+    await tap();
+    assert.strictEqual((await look()).latch, true);
+    await ph.down([gx, gy]);
+    await ph.page.waitForTimeout(500);
+    assert.strictEqual((await look()).thrust, 1, 'on while held');
+    await ph.up();
+    await ph.page.waitForTimeout(80);
+    a = await look();
+    assert.deepStrictEqual([a.latch, a.thrust], [false, 0], 'a hold ends it');
+
+    // tapped on, then a new race: off at the start
+    await tap();
+    assert.strictEqual((await look()).latch, true);
+    await ph.page.evaluate(() => RR.game.begin());
+    assert.strictEqual((await look()).latch, false, 'the next race starts with GAS off');
+    assert.deepStrictEqual(ph.errors, []);
+  } finally { await ph.ctx.close(); }
+});
+
+test('touch: a tap on the FLY stick swaps it for < and > buttons that turn the rocket while held; the STICK tab swaps back; a push is not a tap; the choice is remembered', { skip }, async () => {
+  const ph = await phoneRace();
+  try {
+    const L = await ph.layout(), st = L.steer;
+    const mode = () => ph.page.evaluate(() => RR.input.steerButtons);
+    const tapAt = async (x, y) => { await ph.down([x, y]); await ph.page.waitForTimeout(60); await ph.up(); await ph.page.waitForTimeout(100); };
+    assert.strictEqual(await mode(), false, 'the stick to begin with');
+
+    // a push (moved, held) is steering, not a tap
+    await ph.down([st.x, st.y]);
+    await ph.page.waitForTimeout(60);
+    await ph.move([st.x + st.r, st.y]);
+    await ph.page.waitForTimeout(300);
+    await ph.up();
+    await ph.page.waitForTimeout(100);
+    assert.strictEqual(await mode(), false, 'pushed: still the stick');
+
+    // a tap: the buttons
+    await tapAt(st.x, st.y);
+    assert.strictEqual(await mode(), true, 'tapped: < and > buttons');
+    const turnWith = async (r) => {
+      await ph.page.evaluate(() => { const p = RR.game.player; p.vx = p.vy = 0; p.angVel = 0; p.angle = 0; });
+      await ph.down([r.x + r.w / 2, r.y + r.h / 2]);
+      await ph.page.waitForTimeout(400);
+      const s = await ph.page.evaluate(() => ({ turn: RR.input.read(RR.game.player).turn, thrust: RR.input.read(RR.game.player).thrust, angle: RR.game.player.angle }));
+      await ph.up();
+      await ph.page.waitForTimeout(80);
+      return s;
+    };
+    let s = await turnWith(L.right);
+    assert.deepStrictEqual([s.turn, s.thrust], [1, 0], '> held: turning right, no engine of its own');
+    assert.ok(s.angle > 0.3, 'the rocket turned right: ' + s.angle);
+    s = await turnWith(L.left);
+    assert.strictEqual(s.turn, -1, '< held: turning left');
+    assert.ok(s.angle < -0.3, 'the rocket turned left: ' + s.angle);
+    assert.strictEqual(await ph.page.evaluate(() => RR.input.read(RR.game.player).turn), 0, 'let go: no turn');
+    await tapAt(L.left.x + L.left.w / 2, L.left.y + L.left.h / 2);
+    assert.strictEqual(await mode(), true, 'a quick tap on < is a nudge, not a swap');
+
+    // kept for next time
+    await ph.page.reload();
+    await ph.page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    assert.strictEqual(await mode(), true, 'remembered after a reload');
+    await ph.page.evaluate(() => { const g = RR.game; g.autoFull = false; g.wantFull = false; g.begin(); for (let i = 0; i < 120 * 4.3; i++) g.step(1 / 120); });
+    await ph.page.waitForTimeout(150);
+
+    // the STICK tab: back to the stick, and that is remembered too
+    await tapAt(L.tab.x + L.tab.w / 2, L.tab.y + L.tab.h / 2);
+    assert.strictEqual(await mode(), false, 'STICK: the stick again');
+    assert.strictEqual(await ph.page.evaluate(() => JSON.parse(localStorage.getItem('rocketracer.v1')).steerButtons), false);
+    assert.deepStrictEqual(ph.errors, []);
+  } finally { await ph.ctx.close(); }
+});
+
+test('touch: GAS and BRAKE follow a moved fire stick; BRAKE spots saved by the old layout are dropped once, ones saved since are kept', { skip }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 402, height: 874 }, hasTouch: true, isMobile: true, deviceScaleFactor: 3 }); // an iPhone 17 Pro, upright
+  // a save from the old layout: the fire stick moved up, BRAKE put in the bottom corner
+  await ctx.addInitScript(() => {
+    if (!sessionStorage.getItem('seeded')) {
+      sessionStorage.setItem('seeded', '1');
+      localStorage.setItem('rocketracer.v1', JSON.stringify({ controls: { port: { fire: { x: 0.78, y: 0.76 }, brake: { x: 0.87, y: 0.87 } } } }));
+    }
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.stack || e.message));
+  try {
+    await page.goto(base + '/');
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    const layout = () => page.evaluate(() => RR.touchLayout(RR.game.W, RR.game.H, RR.game.inset));
+    let L = await layout();
+    const H = await page.evaluate(() => RR.game.H);
+    assert.strictEqual(L.fire.y, Math.round(0.76 * H), 'the moved fire stick keeps its spot');
+    assert.ok(L.gas.x + L.gas.w / 2 === L.fire.x && L.gas.y + L.gas.h <= L.fire.y - L.fire.r, 'GAS above the moved stick: ' + JSON.stringify([L.gas, L.fire]));
+    assert.ok(L.brake.y === L.gas.y && L.brake.x + L.brake.w <= L.gas.x, 'BRAKE beside GAS on the left, not in the old corner: ' + JSON.stringify(L.brake));
+
+    // a BRAKE spot saved with this layout is the player's choice, and stays
+    await page.evaluate(() => { RR.game.controls.port.brake = { x: 0.3, y: 0.5 }; RR.game.saveSettings(); });
+    await page.reload();
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    L = await layout();
+    assert.strictEqual(L.brake.y + L.brake.h / 2, Math.round(0.5 * H), 'kept after a reload');
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test('touch: Pause > MOVE CONTROLS drags the controls to new spots, keeps them, and RESET puts them back', { skip }, async () => {
   const ph = await phoneRace();
   try {
@@ -1545,8 +1768,10 @@ test('touch: Pause > MOVE CONTROLS drags the controls to new spots, keeps them, 
     await ph.up();
     const moved = await ph.layout();
     assert.deepStrictEqual([moved.fire.x, moved.fire.y], [c.x - 60, c.y - 90], 'the fire stick moved with the drag');
-    assert.deepStrictEqual([moved.brake.x, moved.brake.y], [before.brake.x, before.brake.y], 'nothing else moved');
-    assert.deepStrictEqual([moved.steer.x, moved.steer.y], [before.steer.x, before.steer.y], 'nor the steering stick');
+    for (const n of ['gas', 'brake']) {
+      assert.deepStrictEqual([moved[n].x - before[n].x, moved[n].y - before[n].y], [-60, -90], n.toUpperCase() + ' came along with it');
+    }
+    assert.deepStrictEqual([moved.steer.x, moved.steer.y], [before.steer.x, before.steer.y], 'the steering stick stayed');
 
     await ph.tapLabel('DONE');
     const saved = await ph.page.evaluate(() => JSON.parse(localStorage.getItem('rocketracer.v1')).controls);
@@ -1680,7 +1905,7 @@ test('iPad keyboard: the game holds the keyboard focus, knows keys by the names 
       [{ key: 'ArrowRight', code: '' }, 'turn', 1],
       [{ key: 'Unidentified', code: '', keyCode: 38 }, 'thrust', 1],
       [{ key: 'UIKeyInputDownArrow', code: 'Unidentified' }, 'brake', 1],
-      [{ key: 'a', code: '' }, 'turn', -1],
+      [{ key: 'w', code: '' }, 'thrust', 1],
       [{ key: ' ', code: '' }, 'fire', true],
     ];
     for (const [init, what, want] of cases) {
