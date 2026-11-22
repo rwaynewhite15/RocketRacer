@@ -97,7 +97,7 @@
       stickR: R,
       steer: { x: sc.x, y: sc.y, r: R, grab: grab },
       // the steer stick's other form (a tap on it): a turning slider, and a STICK tab above it to swap back
-      slide: box(sc, 92, 30),
+      slide: box(sc, 108, 30),
       tab: box({ x: sc.x, y: sc.y - 38 }, 46, 18),
       fire: { x: centre.fire.x, y: centre.fire.y, r: R, grab: grab },
       brake: box(centre.brake, 42, 42),

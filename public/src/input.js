@@ -23,8 +23,9 @@
  *               ahead). Mines and EMP go off as the stick is touched.
  *   FLY slider  a quick tap on the steer stick (no push) swaps it for a
  *               slider: drag its knob left or right and the rocket turns
- *               that way, harder the farther from the middle (none in the
- *               middle SLIDE_DEAD); let go and it springs back. The STICK
+ *               that way, gently near the middle and harder towards the
+ *               ends (SLIDE_CURVE; none in the middle SLIDE_DEAD), a full
+ *               turn only at the very end; let go and it springs back. The STICK
  *               tab just above it swaps back. Kept between visits.
  *   BRAKE       a button, to the left of GAS.
  *   GAS         a button just above the fire stick: full engine power, the way the
@@ -223,14 +224,15 @@
 
   const AIM_DEADZONE = 0.3; // fire stick pushed less than this: fire straight ahead
   const TAP_MS = 250, TAP_MOVE = 8; // a tap: let go this soon, having moved less than this (game pixels)
-  const SLIDE_KNOB = 22, SLIDE_DEAD = 0.1; // the slider's knob width; its middle tenth either way does not turn
-  I.SLIDE_DEAD = SLIDE_DEAD;
+  const SLIDE_KNOB = 22, SLIDE_DEAD = 0.15; // the slider's knob width; its middle 15% either way does not turn
+  const SLIDE_CURVE = 2; // the turn grows as the square of the slide past the dead zone: fine control near the middle
+  I.SLIDE_DEAD = SLIDE_DEAD; I.SLIDE_CURVE = SLIDE_CURVE;
 
   /** The turning slider under a finger: where its knob sits (`x`), and the turn, -1 (left) to 1 (right). */
   function slideState(p, r) {
     const mid = r.x + r.w / 2, travel = r.w / 2 - SLIDE_KNOB / 2;
     const f = RR.clamp((p.x - mid) / travel, -1, 1), a = Math.abs(f);
-    return { x: mid + f * travel, f: f, turn: a <= SLIDE_DEAD ? 0 : Math.sign(f) * (a - SLIDE_DEAD) / (1 - SLIDE_DEAD) };
+    return { x: mid + f * travel, f: f, turn: a <= SLIDE_DEAD ? 0 : Math.sign(f) * Math.pow((a - SLIDE_DEAD) / (1 - SLIDE_DEAD), SLIDE_CURVE) };
   }
   I.TAP_MS = TAP_MS;
   const AIM_RATE = 2.6; // radians a second the guns swing while A or D is held

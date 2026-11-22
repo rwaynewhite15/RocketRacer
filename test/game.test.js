@@ -1670,7 +1670,8 @@ test('touch: a tap on the FLY stick swaps it for a slider - dragged left or righ
     const mode = () => ph.page.evaluate(() => RR.input.steerSlide);
     const tapAt = async (x, y) => { await ph.down([x, y]); await ph.page.waitForTimeout(60); await ph.up(); await ph.page.waitForTimeout(100); };
     const look = () => ph.page.evaluate(() => { const t = RR.input.touch, r = RR.input.read(RR.game.player); return { slide: t.slide && { x: t.slide.x, turn: t.slide.turn }, turn: r.turn, thrust: r.thrust, angle: RR.game.player.angle }; });
-    const DEAD = await ph.page.evaluate(() => RR.input.SLIDE_DEAD);
+    const { DEAD, CURVE } = await ph.page.evaluate(() => ({ DEAD: RR.input.SLIDE_DEAD, CURVE: RR.input.SLIDE_CURVE }));
+    assert.ok(CURVE >= 2, 'gentle near the middle');
     assert.strictEqual(await mode(), false, 'the stick to begin with');
 
     // a push (moved, held) is steering, not a tap
@@ -1696,7 +1697,7 @@ test('touch: a tap on the FLY stick swaps it for a slider - dragged left or righ
     await ph.move([mid + travel / 2, cy + 6]); // half way right (and a little off the track: it keeps following)
     await ph.page.waitForTimeout(80);
     s = await look();
-    assert.ok(Math.abs(s.turn - (0.5 - DEAD) / (1 - DEAD)) < 0.03, 'half way right: part of a right turn: ' + s.turn);
+    assert.ok(Math.abs(s.turn - Math.pow((0.5 - DEAD) / (1 - DEAD), CURVE)) < 0.03 && s.turn < 0.25, 'half way right: a gentle right turn: ' + s.turn);
     assert.ok(Math.abs(s.slide.x - (mid + travel / 2)) < 0.5, 'the knob is under the finger');
     await ph.move([mid + travel + 40, cy]); // past the end
     await ph.page.waitForTimeout(400);
