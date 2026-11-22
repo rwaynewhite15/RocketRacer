@@ -27,9 +27,11 @@
  *               up steadily to its top speed.
  *
  * Keyboard aim: holding A or D swings the guns (blaster, cannon, missiles)
- * left or right of the rocket's nose at AIM_RATE, always starting from
- * straight ahead; Space fires that way. Let go and they point straight ahead
- * again (and the aim line goes). In the menus A and D mean left and right.
+ * left or right at AIM_RATE, starting from where the rocket's nose points
+ * as the key goes down. While it is held the guns keep their direction in
+ * space, however the rocket turns; Space fires that way. Let go and they
+ * point straight ahead again (and the aim line goes). In the menus A and D
+ * mean left and right.
  *
  * Keys and touch work together (an iPad with a keyboard, say): both always
  * fly the ship, and a held turn key out-steers a drag. A key press puts the
@@ -207,14 +209,19 @@
   const AIM_DEADZONE = 0.3; // fire stick pushed less than this: fire straight ahead
   const AIM_RATE = 2.6; // radians a second the guns swing while A or D is held
   I.AIM_RATE = AIM_RATE;
-  I.aimOff = 0; // keyboard aim: the guns' angle off the rocket's nose (0: straight ahead)
+  I.aimDir = null; // keyboard aim: the guns' direction in space while A or D is held (null: straight ahead)
 
-  /** Once a frame while racing: A or D held swings the guns from straight ahead; otherwise straight ahead. */
-  I.updateAim = function (dt) {
+  /**
+   * Once a frame while racing: with A or D held the guns start where `ship`
+   * points and swing from there, keeping their direction in space as the
+   * ship turns; with neither held (or both) they point straight ahead.
+   */
+  I.updateAim = function (dt, ship) {
     const l = !!I.down.aimL, r = !!I.down.aimR; // (a key never pressed is undefined)
-    if (l === r) { I.aimOff = 0; return; } // neither held (or both): straight ahead
-    I.aimOff += (r ? 1 : -1) * AIM_RATE * dt;
-    I.aimOff = Math.atan2(Math.sin(I.aimOff), Math.cos(I.aimOff)); // kept within a half turn either way
+    if (l === r || !ship) { I.aimDir = null; return; }
+    if (I.aimDir == null) I.aimDir = ship.angle; // a fresh press: straight ahead
+    I.aimDir += (r ? 1 : -1) * AIM_RATE * dt;
+    I.aimDir = Math.atan2(Math.sin(I.aimDir), Math.cos(I.aimDir));
   };
   const STEER_DEAD = 0.15; // steering stick pushed less than this: no power
   I.STEER_DEAD = STEER_DEAD;
@@ -345,7 +352,7 @@
     // aim: the direction the fire stick points (or the guns, swung with A / D), or null to fire straight ahead;
     // stick: a thumb is on the touch fire stick (aimed weapons fire as it lets go); keyAim: aimed with A / D
     let aim = t.aim, keyAim = false;
-    if (aim == null && I.aimOff && ship) { aim = ship.angle + I.aimOff; keyAim = true; }
+    if (aim == null && I.aimDir != null && ship) { aim = I.aimDir; keyAim = true; }
     return { turn: RR.clamp(turn, -1, 1), thrust: thrust, brake: brake, fire: fire, aim: aim, stick: !!t.aimStick, keyAim: keyAim };
   };
 

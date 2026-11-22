@@ -435,7 +435,7 @@
   /** Reset the world. `demo` runs an all-AI race behind the title screen. */
   G.startRace = function (demo) {
     const g = this;
-    RR.input.aimOff = 0; // the guns point straight ahead unless A or D is held
+    RR.input.aimDir = null; // the guns point straight ahead unless A or D is held
     g.mode = MODES[g.modeIdx].id;
     g.combat = g.mode !== 'race';
     g.royale = g.mode === 'royale' && !demo; // the attract mode just brawls on, with respawns
@@ -490,7 +490,7 @@
    */
   G.startOnline = function (opts) {
     const g = this, seats = opts.seats, turn = opts.turn || 0;
-    if (!opts.server) RR.input.aimOff = 0;
+    if (!opts.server) RR.input.aimDir = null;
     g.modeIdx = Math.max(0, MODES.findIndex(function (m) { return m.id === opts.mode; }));
     g.mode = MODES[g.modeIdx].id;
     g.combat = g.mode !== 'race';
@@ -2131,7 +2131,7 @@
   G.frame = function (dt) {
     const g = this, I = RR.input;
     I.updateTouch(g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null, g.ui);
-    if (g.state === 'play') I.updateAim(dt);
+    if (g.state === 'play') I.updateAim(dt, g.player);
     if (g.state === 'layout') dragControls(g);
     if (!I.typing) { I.pollPad(); handleUI(g); }
     if (g.toast) { g.toast.t += dt; if (g.toast.t >= g.toast.dur) g.toast = null; }
