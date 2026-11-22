@@ -173,6 +173,7 @@
   /* ------------------------------------------------------- persistence */
 
   const STORE = 'rocketracer.v1';
+  const CONTROLS_V = 2; // the touch layout's version (see load)
   function load() {
     try {
       const s = JSON.parse(window.localStorage.getItem(STORE) || '{}');
@@ -180,6 +181,9 @@
       G.crt = s.crt !== false;
       G.autoFull = s.autoFull !== false;
       G.controls = cleanControls(s.controls);
+      // layout 2 put GAS above the fire stick and BRAKE beside it, following the stick: spots saved for the
+      // buttons before then are dropped (moved sticks keep theirs)
+      if (s.controlsV !== CONTROLS_V) for (const o in G.controls) ['brake', 'gas', 'defer'].forEach(function (n) { delete G.controls[o][n]; });
       RR.input.steerButtons = s.steerButtons === true; // the steer stick swapped for < and > buttons
       RR.audio.muted = !!s.muted;
       if (s.diff >= 0 && s.diff < DIFFS.length) G.diffIdx = s.diff;
@@ -200,7 +204,7 @@
       window.localStorage.setItem(STORE, JSON.stringify({
         best: G.best, crt: G.crt, muted: RR.audio.muted, autoFull: G.autoFull, controls: G.controls, diff: G.diffIdx, track: G.trackIdx,
         name: G.name, pid: G.pid, zoom: G.zoomOffset,
-        mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog, steerButtons: RR.input.steerButtons,
+        mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog, steerButtons: RR.input.steerButtons, controlsV: CONTROLS_V,
       }));
     } catch (e) { /* ignore */ }
   }

@@ -590,7 +590,7 @@ test('gate deferral: E (or the DEFER button on a touch screen) spends one; headi
   } finally { await ph.ctx.close(); }
 });
 
-test('gate deferral: only humans pick one up, one at a time; none in a fight; saved do-over upgrades and button spots carry over', { skip }, async () => {
+test('gate deferral: only humans pick one up, one at a time; none in a fight; saved do-over upgrades carry over', { skip }, async () => {
   const { page, ctx, errors } = await openGame();
   try {
     const r = await page.evaluate(() => {
@@ -620,18 +620,20 @@ test('gate deferral: only humans pick one up, one at a time; none in a fight; sa
     assert.deepStrictEqual(r.secondLeft, { held: 1, stillThere: true });
     assert.deepStrictEqual(r.fight, { can: false, ok: false, deferRolled: false });
 
-    // a save from before the change: do-over upgrades and the DO-OVER button's spot become the deferral's
+    // a save from before the change: do-over upgrades become the deferral's (its button's spot went with the old
+    // layout, like BRAKE's; a moved stick keeps its spot)
     await page.evaluate(() => {
       const s = JSON.parse(localStorage.getItem('rocketracer.v1') || '{}');
       s.prog = Object.assign({}, s.prog, { pup: { rewind: 3, nitro: 2 } });
-      s.controls = { land: { rewind: { x: 0.25, y: 0.5 }, brake: { x: 0.5, y: 0.9 } } };
+      s.controls = { land: { rewind: { x: 0.25, y: 0.5 }, brake: { x: 0.5, y: 0.9 }, fire: { x: 0.7, y: 0.6 } } };
+      delete s.controlsV;
       localStorage.setItem('rocketracer.v1', JSON.stringify(s));
     });
     await page.reload();
     await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
     const kept = await page.evaluate(() => ({ pup: RR.game.prog.pup, controls: RR.game.controls }));
     assert.deepStrictEqual(kept.pup, { nitro: 2, defer: 3 });
-    assert.deepStrictEqual(kept.controls, { land: { brake: { x: 0.5, y: 0.9 }, defer: { x: 0.25, y: 0.5 } } });
+    assert.deepStrictEqual(kept.controls, { land: { fire: { x: 0.7, y: 0.6 } } });
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
 });
@@ -1568,12 +1570,13 @@ test('touch: a steering stick sits bottom left, the fire stick\'s mirror image; 
   }
 });
 
-test('touch: GAS sits just above BRAKE; held, it runs the engine at full power the way the rocket points (or is steered), so it speeds up steadily', { skip }, async () => {
+test('touch: GAS sits just above the fire stick with BRAKE on its left; held, it runs the engine at full power the way the rocket points (or is steered), so it speeds up steadily', { skip }, async () => {
   for (const vp of [undefined, { width: 844, height: 390 }]) { // an upright phone, and one held sideways
     const ph = await phoneRace(vp);
     try {
-      const L = await ph.layout(), gas = L.gas, br = L.brake;
-      assert.ok(gas && gas.x + gas.w / 2 === br.x + br.w / 2 && gas.y + gas.h <= br.y && br.y - (gas.y + gas.h) < 12, 'just above BRAKE: ' + JSON.stringify([gas, br]));
+      const L = await ph.layout(), gas = L.gas, br = L.brake, f = L.fire;
+      assert.ok(gas && gas.x + gas.w / 2 === f.x && gas.y + gas.h <= f.y - f.r && f.y - f.r - (gas.y + gas.h) < 30, 'just above the fire stick: ' + JSON.stringify([gas, f]));
+      assert.ok(br.y === gas.y && br.x + br.w <= gas.x && gas.x - (br.x + br.w) < 12, 'BRAKE right beside it on the left: ' + JSON.stringify([br, gas]));
       const W = await ph.page.evaluate(() => RR.game.W);
       assert.ok(gas.x > W / 2, 'on the right');
       const look = () => ph.page.evaluate(() => {
@@ -1714,6 +1717,38 @@ test('touch: a tap on the FLY stick swaps it for < and > buttons that turn the r
   } finally { await ph.ctx.close(); }
 });
 
+test('touch: GAS and BRAKE follow a moved fire stick; BRAKE spots saved by the old layout are dropped once, ones saved since are kept', { skip }, async () => {
+  const ctx = await browser.newContext({ viewport: { width: 402, height: 874 }, hasTouch: true, isMobile: true, deviceScaleFactor: 3 }); // an iPhone 17 Pro, upright
+  // a save from the old layout: the fire stick moved up, BRAKE put in the bottom corner
+  await ctx.addInitScript(() => {
+    if (!sessionStorage.getItem('seeded')) {
+      sessionStorage.setItem('seeded', '1');
+      localStorage.setItem('rocketracer.v1', JSON.stringify({ controls: { port: { fire: { x: 0.78, y: 0.76 }, brake: { x: 0.87, y: 0.87 } } } }));
+    }
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.stack || e.message));
+  try {
+    await page.goto(base + '/');
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    const layout = () => page.evaluate(() => RR.touchLayout(RR.game.W, RR.game.H, RR.game.inset));
+    let L = await layout();
+    const H = await page.evaluate(() => RR.game.H);
+    assert.strictEqual(L.fire.y, Math.round(0.76 * H), 'the moved fire stick keeps its spot');
+    assert.ok(L.gas.x + L.gas.w / 2 === L.fire.x && L.gas.y + L.gas.h <= L.fire.y - L.fire.r, 'GAS above the moved stick: ' + JSON.stringify([L.gas, L.fire]));
+    assert.ok(L.brake.y === L.gas.y && L.brake.x + L.brake.w <= L.gas.x, 'BRAKE beside GAS on the left, not in the old corner: ' + JSON.stringify(L.brake));
+
+    // a BRAKE spot saved with this layout is the player's choice, and stays
+    await page.evaluate(() => { RR.game.controls.port.brake = { x: 0.3, y: 0.5 }; RR.game.saveSettings(); });
+    await page.reload();
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    L = await layout();
+    assert.strictEqual(L.brake.y + L.brake.h / 2, Math.round(0.5 * H), 'kept after a reload');
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test('touch: Pause > MOVE CONTROLS drags the controls to new spots, keeps them, and RESET puts them back', { skip }, async () => {
   const ph = await phoneRace();
   try {
@@ -1733,8 +1768,10 @@ test('touch: Pause > MOVE CONTROLS drags the controls to new spots, keeps them, 
     await ph.up();
     const moved = await ph.layout();
     assert.deepStrictEqual([moved.fire.x, moved.fire.y], [c.x - 60, c.y - 90], 'the fire stick moved with the drag');
-    assert.deepStrictEqual([moved.brake.x, moved.brake.y], [before.brake.x, before.brake.y], 'nothing else moved');
-    assert.deepStrictEqual([moved.steer.x, moved.steer.y], [before.steer.x, before.steer.y], 'nor the steering stick');
+    for (const n of ['gas', 'brake']) {
+      assert.deepStrictEqual([moved[n].x - before[n].x, moved[n].y - before[n].y], [-60, -90], n.toUpperCase() + ' came along with it');
+    }
+    assert.deepStrictEqual([moved.steer.x, moved.steer.y], [before.steer.x, before.steer.y], 'the steering stick stayed');
 
     await ph.tapLabel('DONE');
     const saved = await ph.page.evaluate(() => JSON.parse(localStorage.getItem('rocketracer.v1')).controls);

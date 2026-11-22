@@ -62,9 +62,10 @@
 
   /**
    * Touch controls with a place on screen, in game pixels: the fire stick,
-   * BRAKE, GAS (just above BRAKE), and the DEFER button (shown only while a
-   * gate deferral is held). Steering has
-   * no place: it is a drag that can start anywhere else (see input.js). Each
+   * GAS just above it, BRAKE to the left of GAS, and the DEFER button above
+   * GAS (shown only while a gate deferral is held); those buttons follow the
+   * fire stick wherever it is moved; and the FLY stick bottom left (steering
+   * can also be a drag that starts anywhere else, see input.js). Each
    * control has a standard spot; the player can move them (Pause > Move
    * controls). Moved spots are kept as fractions of the screen, separately for
    * sideways and upright, and are always pulled back inside the screen and
@@ -73,26 +74,23 @@
   RR.touchLayout = function (W, H, ins) {
     ins = ins || NO_INSET;
     const R = 34, grab = R + 24; // a thumb landing within `grab` of a stick's centre takes it
-    const def = { fire: { x: W - ins.r - 66, y: H - ins.b - 66 } };
-    def.steer = { x: ins.l + 66, y: def.fire.y }; // the steering stick: bottom left, the fire stick's mirror image
-    if (W - ins.l - ins.r < 360) { // narrow (upright phone): stack BRAKE, GAS and DEFER above the fire stick
-      def.brake = { x: def.fire.x, y: def.fire.y - 80 };
-      def.gas = { x: def.fire.x, y: def.brake.y - 50 };
-      def.defer = { x: def.fire.x, y: def.gas.y - 54 };
-    } else {
-      def.brake = { x: def.fire.x - 82, y: H - ins.b - 31 };
-      def.gas = { x: def.brake.x, y: def.brake.y - 50 };
-      def.defer = { x: def.fire.x, y: def.fire.y - 74 };
-    }
     const g = RR.game, saved = (g && g.controls && g.controls[W >= H ? 'land' : 'port']) || {};
     const half = { steer: R + 2, fire: R + 2, brake: 21, gas: 21, defer: 22 }, centre = {};
-    for (const n in def) {
+    const place = function (n, d) { // a control's spot: where the player put it, else `d`; always on screen
       const sp = saved[n], h = half[n];
       centre[n] = {
-        x: Math.round(clamp(sp ? sp.x * W : def[n].x, ins.l + h + 2, W - ins.r - h - 2)),
-        y: Math.round(clamp(sp ? sp.y * H : def[n].y, ins.t + h + 2, H - ins.b - h - 2)),
+        x: Math.round(clamp(sp ? sp.x * W : d.x, ins.l + h + 2, W - ins.r - h - 2)),
+        y: Math.round(clamp(sp ? sp.y * H : d.y, ins.t + h + 2, H - ins.b - h - 2)),
       };
-    }
+    };
+    place('fire', { x: W - ins.r - 66, y: H - ins.b - 66 });
+    place('steer', { x: ins.l + 66, y: H - ins.b - 66 }); // bottom left: the fire stick's mirror image
+    // GAS just above the fire stick (wherever it has been moved), BRAKE beside it on the left, DEFER above GAS
+    // (below the stick instead, if it sits too near the top for them to fit above)
+    const f = centre.fire, way = f.y - 80 - 21 >= ins.t + 2 ? -1 : 1;
+    place('gas', { x: f.x, y: f.y + way * 80 });
+    place('brake', { x: f.x - 50, y: f.y + way * 80 });
+    place('defer', { x: f.x, y: f.y + way * 134 });
     const box = function (c, w, h) { return { x: c.x - w / 2, y: c.y - h / 2, w: w, h: h }; };
     const sc = centre.steer;
     return {
