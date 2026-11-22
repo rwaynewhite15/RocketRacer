@@ -1610,6 +1610,110 @@ test('touch: GAS sits just above BRAKE; held, it runs the engine at full power t
   }
 });
 
+test('touch: a quick tap keeps GAS on until it is tapped again; held, GAS is on only until let go (a hold also ends a tapped-on GAS); every race starts with it off', { skip }, async () => {
+  const ph = await phoneRace();
+  try {
+    const L = await ph.layout(), gx = L.gas.x + L.gas.w / 2, gy = L.gas.y + L.gas.h / 2;
+    const look = () => ph.page.evaluate(() => { const p = RR.game.player; return { latch: RR.input.gasLatch, thrust: RR.input.read(p).thrust, speed: Math.hypot(p.vx, p.vy) }; });
+    const tap = async () => { await ph.down([gx, gy]); await ph.page.waitForTimeout(60); await ph.up(); await ph.page.waitForTimeout(80); };
+    const still = () => ph.page.evaluate(() => { const p = RR.game.player; p.vx = p.vy = 0; p.angVel = 0; p.angle = -Math.PI / 2; });
+
+    // a tap: on, and it stays on with no finger on it
+    await still();
+    await tap();
+    let a = await look();
+    assert.deepStrictEqual([a.latch, a.thrust], [true, 1], 'tapped on');
+    await ph.page.waitForTimeout(500);
+    const b = await look();
+    assert.ok(b.thrust === 1 && b.speed > a.speed + 20, 'still on half a second later, and speeding up: ' + Math.round(a.speed) + ' -> ' + Math.round(b.speed));
+    await tap();
+    a = await look();
+    assert.deepStrictEqual([a.latch, a.thrust], [false, 0], 'tapped again: off');
+
+    // held: on while the finger is down, off when it lifts
+    await ph.down([gx, gy]);
+    await ph.page.waitForTimeout(500);
+    a = await look();
+    assert.deepStrictEqual([a.latch, a.thrust], [false, 1], 'held: on');
+    await ph.up();
+    await ph.page.waitForTimeout(80);
+    a = await look();
+    assert.deepStrictEqual([a.latch, a.thrust], [false, 0], 'let go: off');
+
+    // tapped on, then held and let go: off
+    await tap();
+    assert.strictEqual((await look()).latch, true);
+    await ph.down([gx, gy]);
+    await ph.page.waitForTimeout(500);
+    assert.strictEqual((await look()).thrust, 1, 'on while held');
+    await ph.up();
+    await ph.page.waitForTimeout(80);
+    a = await look();
+    assert.deepStrictEqual([a.latch, a.thrust], [false, 0], 'a hold ends it');
+
+    // tapped on, then a new race: off at the start
+    await tap();
+    assert.strictEqual((await look()).latch, true);
+    await ph.page.evaluate(() => RR.game.begin());
+    assert.strictEqual((await look()).latch, false, 'the next race starts with GAS off');
+    assert.deepStrictEqual(ph.errors, []);
+  } finally { await ph.ctx.close(); }
+});
+
+test('touch: a tap on the FLY stick swaps it for < and > buttons that turn the rocket while held; the STICK tab swaps back; a push is not a tap; the choice is remembered', { skip }, async () => {
+  const ph = await phoneRace();
+  try {
+    const L = await ph.layout(), st = L.steer;
+    const mode = () => ph.page.evaluate(() => RR.input.steerButtons);
+    const tapAt = async (x, y) => { await ph.down([x, y]); await ph.page.waitForTimeout(60); await ph.up(); await ph.page.waitForTimeout(100); };
+    assert.strictEqual(await mode(), false, 'the stick to begin with');
+
+    // a push (moved, held) is steering, not a tap
+    await ph.down([st.x, st.y]);
+    await ph.page.waitForTimeout(60);
+    await ph.move([st.x + st.r, st.y]);
+    await ph.page.waitForTimeout(300);
+    await ph.up();
+    await ph.page.waitForTimeout(100);
+    assert.strictEqual(await mode(), false, 'pushed: still the stick');
+
+    // a tap: the buttons
+    await tapAt(st.x, st.y);
+    assert.strictEqual(await mode(), true, 'tapped: < and > buttons');
+    const turnWith = async (r) => {
+      await ph.page.evaluate(() => { const p = RR.game.player; p.vx = p.vy = 0; p.angVel = 0; p.angle = 0; });
+      await ph.down([r.x + r.w / 2, r.y + r.h / 2]);
+      await ph.page.waitForTimeout(400);
+      const s = await ph.page.evaluate(() => ({ turn: RR.input.read(RR.game.player).turn, thrust: RR.input.read(RR.game.player).thrust, angle: RR.game.player.angle }));
+      await ph.up();
+      await ph.page.waitForTimeout(80);
+      return s;
+    };
+    let s = await turnWith(L.right);
+    assert.deepStrictEqual([s.turn, s.thrust], [1, 0], '> held: turning right, no engine of its own');
+    assert.ok(s.angle > 0.3, 'the rocket turned right: ' + s.angle);
+    s = await turnWith(L.left);
+    assert.strictEqual(s.turn, -1, '< held: turning left');
+    assert.ok(s.angle < -0.3, 'the rocket turned left: ' + s.angle);
+    assert.strictEqual(await ph.page.evaluate(() => RR.input.read(RR.game.player).turn), 0, 'let go: no turn');
+    await tapAt(L.left.x + L.left.w / 2, L.left.y + L.left.h / 2);
+    assert.strictEqual(await mode(), true, 'a quick tap on < is a nudge, not a swap');
+
+    // kept for next time
+    await ph.page.reload();
+    await ph.page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    assert.strictEqual(await mode(), true, 'remembered after a reload');
+    await ph.page.evaluate(() => { const g = RR.game; g.autoFull = false; g.wantFull = false; g.begin(); for (let i = 0; i < 120 * 4.3; i++) g.step(1 / 120); });
+    await ph.page.waitForTimeout(150);
+
+    // the STICK tab: back to the stick, and that is remembered too
+    await tapAt(L.tab.x + L.tab.w / 2, L.tab.y + L.tab.h / 2);
+    assert.strictEqual(await mode(), false, 'STICK: the stick again');
+    assert.strictEqual(await ph.page.evaluate(() => JSON.parse(localStorage.getItem('rocketracer.v1')).steerButtons), false);
+    assert.deepStrictEqual(ph.errors, []);
+  } finally { await ph.ctx.close(); }
+});
+
 test('touch: Pause > MOVE CONTROLS drags the controls to new spots, keeps them, and RESET puts them back', { skip }, async () => {
   const ph = await phoneRace();
   try {

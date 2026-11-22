@@ -180,6 +180,7 @@
       G.crt = s.crt !== false;
       G.autoFull = s.autoFull !== false;
       G.controls = cleanControls(s.controls);
+      RR.input.steerButtons = s.steerButtons === true; // the steer stick swapped for < and > buttons
       RR.audio.muted = !!s.muted;
       if (s.diff >= 0 && s.diff < DIFFS.length) G.diffIdx = s.diff;
       if (s.track >= 0 && s.track < RR.TRACKS.length) G.trackIdx = s.track;
@@ -193,12 +194,13 @@
     if (!G.name) G.name = RR.net.randomName();
     if (!G.pid) G.pid = RR.net.randomId();
   }
+  G.saveSettings = function () { save(); };
   function save() {
     try {
       window.localStorage.setItem(STORE, JSON.stringify({
         best: G.best, crt: G.crt, muted: RR.audio.muted, autoFull: G.autoFull, controls: G.controls, diff: G.diffIdx, track: G.trackIdx,
         name: G.name, pid: G.pid, zoom: G.zoomOffset,
-        mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog,
+        mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog, steerButtons: RR.input.steerButtons,
       }));
     } catch (e) { /* ignore */ }
   }
@@ -436,6 +438,7 @@
   G.startRace = function (demo) {
     const g = this;
     RR.input.aimDir = null; // the guns point straight ahead unless A or D is held
+    RR.input.gasLatch = false; // and GAS starts off
     g.mode = MODES[g.modeIdx].id;
     g.combat = g.mode !== 'race';
     g.royale = g.mode === 'royale' && !demo; // the attract mode just brawls on, with respawns
@@ -490,7 +493,7 @@
    */
   G.startOnline = function (opts) {
     const g = this, seats = opts.seats, turn = opts.turn || 0;
-    if (!opts.server) RR.input.aimDir = null;
+    if (!opts.server) { RR.input.aimDir = null; RR.input.gasLatch = false; }
     g.modeIdx = Math.max(0, MODES.findIndex(function (m) { return m.id === opts.mode; }));
     g.mode = MODES[g.modeIdx].id;
     g.combat = g.mode !== 'race';

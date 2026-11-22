@@ -21,10 +21,15 @@
  *               it is pushed. Missiles are aimed: push the stick the way to
  *               fire and let go to launch (let go without pushing: straight
  *               ahead). Mines and EMP go off as the stick is touched.
+ *   FLY buttons a quick tap on the steer stick (no push) swaps it for two
+ *               buttons, < and >, which turn the rocket while held; the
+ *               STICK tab just above them swaps back. Kept between visits.
  *   BRAKE       a button.
- *   GAS         a button just above BRAKE: full engine power while held, the
- *               way the rocket points (or is being steered), so it speeds
- *               up steadily to its top speed.
+ *   GAS         a button just above BRAKE: full engine power, the way the
+ *               rocket points (or is being steered), so it speeds up
+ *               steadily to its top speed. Held, it is on until let go; a
+ *               quick tap keeps it on until it is tapped (or held) again.
+ *               Every race starts with it off.
  *
  * Keyboard aim: holding A or D swings the guns (blaster, cannon, missiles)
  * left or right at AIM_RATE, starting from where the rocket's nose points
@@ -47,7 +52,10 @@
   const I = (RR.input = {
     down: {}, hit: {}, taps: [],
     pointers: {}, // id -> { x, y, sx, sy, role, touch } in game pixels (sx, sy = where it began; touch: a finger or pen, not a mouse)
-    touch: { drag: null, aimStick: null, aim: null, brake: false, gas: false, fire: false },
+    touch: { drag: null, aimStick: null, aim: null, brake: false, gas: false, turnL: false, turnR: false, fire: false },
+    gasLatch: false, // GAS tapped on: it stays on until tapped (or held and let go) again
+    steerButtons: false, // the steer stick swapped for < and > buttons (a tap on it)
+    released: [], // fingers lifted since the last frame: { sx, sy, role, tap, wasLatched }
     touchMode: false,
     controlAt: -Infinity, // performance.now() when a thumb was last on the race controls (steering, fire stick, brake)
     typing: false, // true while an HTML text field has the keyboard
@@ -165,7 +173,7 @@
       I.focus();
       const p = pos(e), touch = e.pointerType === 'touch' || e.pointerType === 'pen';
       if (touch) I.touchMode = true;
-      I.pointers[e.pointerId] = { x: p.x, y: p.y, sx: p.x, sy: p.y, role: null, touch: touch };
+      I.pointers[e.pointerId] = { x: p.x, y: p.y, sx: p.x, sy: p.y, role: null, touch: touch, t0: performance.now(), moved: 0 };
       I.taps.push(p);
       if (canvas.setPointerCapture) {
         try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ }
@@ -176,10 +184,15 @@
       if (!p) return;
       const q = pos(e);
       p.x = q.x; p.y = q.y;
+      p.moved = Math.max(p.moved, Math.hypot(p.x - p.sx, p.y - p.sy));
     });
-    const up = function (e) { delete I.pointers[e.pointerId]; };
-    canvas.addEventListener('pointerup', up);
-    canvas.addEventListener('pointercancel', up);
+    // a lifted finger: was it a tap (quick, and barely moved)? the next frame acts on it (see updateTouch)
+    canvas.addEventListener('pointerup', function (e) {
+      const p = I.pointers[e.pointerId];
+      if (p) I.released.push({ sx: p.sx, sy: p.sy, role: p.role, wasLatched: p.wasLatched, tap: performance.now() - p.t0 < TAP_MS && p.moved < TAP_MOVE });
+      delete I.pointers[e.pointerId];
+    });
+    canvas.addEventListener('pointercancel', function (e) { delete I.pointers[e.pointerId]; });
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     // mouse wheel / trackpad scroll zooms, one step per flick
     let wheelAt = 0;
@@ -207,6 +220,8 @@
   }
 
   const AIM_DEADZONE = 0.3; // fire stick pushed less than this: fire straight ahead
+  const TAP_MS = 250, TAP_MOVE = 8; // a tap: let go this soon, having moved less than this (game pixels)
+  I.TAP_MS = TAP_MS;
   const AIM_RATE = 2.6; // radians a second the guns swing while A or D is held
   I.AIM_RATE = AIM_RATE;
   I.aimDir = null; // keyboard aim: the guns' direction in space while A or D is held (null: straight ahead)
@@ -268,27 +283,52 @@
    * start on. A finger keeps the role (steer / fire / brake) of wherever it
    * first landed.
    */
+  /** What a finger that lands at x, y works: a control's name, 'none' (an on-screen button) or 'steer' (a drag). */
+  function classify(x, y, L, buttons) {
+    if (inside(x, y, L.brake, 6)) return 'brake';
+    if (inside(x, y, L.gas, 6)) return 'gas';
+    if (near(x, y, L.fire)) return 'fire';
+    if (I.steerButtons) {
+      if (inside(x, y, L.tab, 4)) return 'tab';
+      if (inside(x, y, L.left, 4)) return 'turnL';
+      if (inside(x, y, L.right, 4)) return 'turnR';
+    } else if (near(x, y, L.steer)) return 'stick';
+    return onAny(x, y, buttons) ? 'none' : 'steer'; // anywhere else on the screen: a drag
+  }
+
+  /** The steer stick, or the < and > buttons in its place (remembered with the other settings). */
+  I.setSteerButtons = function (on) {
+    I.steerButtons = !!on;
+    if (RR.game && RR.game.saveSettings) RR.game.saveSettings();
+  };
+
   I.updateTouch = function (L, buttons) {
     const t = I.touch;
-    t.fire = t.brake = t.gas = false;
+    t.fire = t.brake = t.gas = t.turnL = t.turnR = false;
     t.drag = t.aimStick = t.aim = null;
+    const lifted = I.released.splice(0);
     if (!L) {
       for (const id in I.pointers) I.pointers[id].role = 'menu';
       return;
     }
+    // fingers lifted since the last frame: GAS's latch, and taps that swap the steering
+    for (const r of lifted) {
+      const role = r.role || classify(r.sx, r.sy, L, buttons), was = r.role ? r.wasLatched : I.gasLatch;
+      if (role === 'gas') I.gasLatch = r.tap && !was; // a tap turns it on, or off if it was on; a hold ends it
+      else if (role === 'stick' && r.tap) I.setSteerButtons(true);
+      else if (role === 'tab' && r.tap) I.setSteerButtons(false);
+    }
     for (const id in I.pointers) {
       const p = I.pointers[id];
       if (!p.role) {
-        p.role = inside(p.sx, p.sy, L.brake, 6) ? 'brake'
-          : inside(p.sx, p.sy, L.gas, 6) ? 'gas'
-          : near(p.sx, p.sy, L.fire) ? 'fire'
-          : near(p.sx, p.sy, L.steer) ? 'stick'
-          : onAny(p.sx, p.sy, buttons) ? 'none'
-          : 'steer'; // anywhere else on the screen
+        p.role = classify(p.sx, p.sy, L, buttons);
+        if (p.role === 'gas') p.wasLatched = I.gasLatch;
       }
-      if (p.role === 'steer' || p.role === 'stick' || p.role === 'fire' || p.role === 'brake' || p.role === 'gas') I.controlAt = performance.now();
+      if (p.role !== 'none' && p.role !== 'menu') I.controlAt = performance.now();
       if (p.role === 'brake') t.brake = true;
       else if (p.role === 'gas') t.gas = true;
+      else if (p.role === 'turnL') t.turnL = true;
+      else if (p.role === 'turnR') t.turnR = true;
       else if (p.role === 'stick' && !t.drag) t.drag = stickDrag(p, L.steer);
       else if (p.role === 'steer' && !t.drag) t.drag = dragState(p);
       else if (p.role === 'fire' && !t.aimStick) {
@@ -297,6 +337,7 @@
         if (t.aimStick.mag > AIM_DEADZONE) t.aim = t.aimStick.ang;
       }
     }
+    if (I.gasLatch) t.gas = true;
   };
 
   function pad() {
@@ -324,8 +365,8 @@
   I.read = function (ship) {
     const d = I.down, t = I.touch;
     let turn = 0, thrust = 0, brake = 0, fire = false;
-    if (d.left) turn -= 1;
-    if (d.right) turn += 1;
+    if (d.left || t.turnL) turn -= 1;
+    if (d.right || t.turnR) turn += 1;
     if (d.up) thrust = 1;
     if (d.down || t.brake) brake = 1;
     if (t.gas) thrust = 1; // GAS: full power
@@ -335,7 +376,7 @@
     // (a held turn key steers instead, so a forgotten thumb cannot fight the keys)
     const dr = t.drag;
     if (dr && dr.power > 0 && ship) {
-      if (!d.left && !d.right) turn += RR.clamp(RR.angDiff(dr.ang, ship.angle) * 4.5, -1, 1);
+      if (!d.left && !d.right && !t.turnL && !t.turnR) turn += RR.clamp(RR.angDiff(dr.ang, ship.angle) * 4.5, -1, 1);
       thrust = Math.max(thrust, dr.power);
     }
 
