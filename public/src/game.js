@@ -435,6 +435,7 @@
   /** Reset the world. `demo` runs an all-AI race behind the title screen. */
   G.startRace = function (demo) {
     const g = this;
+    RR.input.aimOff = 0; // the guns start every race pointing straight ahead
     g.mode = MODES[g.modeIdx].id;
     g.combat = g.mode !== 'race';
     g.royale = g.mode === 'royale' && !demo; // the attract mode just brawls on, with respawns
@@ -489,6 +490,7 @@
    */
   G.startOnline = function (opts) {
     const g = this, seats = opts.seats, turn = opts.turn || 0;
+    if (!opts.server) RR.input.aimOff = 0;
     g.modeIdx = Math.max(0, MODES.findIndex(function (m) { return m.id === opts.mode; }));
     g.mode = MODES[g.modeIdx].id;
     g.combat = g.mode !== 'race';
@@ -575,7 +577,7 @@
    */
   G.predictShip = function (s, inp, dt, quiet) {
     const g = this, i = s.input;
-    i.turn = inp.turn; i.thrust = inp.thrust; i.brake = inp.brake; i.fire = inp.fire; i.aim = inp.aim; i.stick = inp.stick;
+    i.turn = inp.turn; i.thrust = inp.thrust; i.brake = inp.brake; i.fire = inp.fire; i.aim = inp.aim; i.stick = inp.stick; i.keyAim = !!inp.keyAim;
     g.predicting = true;
     const parts = g.parts.length, flash = s.hitFlash; // (the hit flash runs on real time, in onlineStep, not per replayed step)
     updateShip(s, g, dt, true);
@@ -1997,7 +1999,7 @@
       else {
         const inp = s.netInput || RR.input.read(s);
         s.input.turn = inp.turn; s.input.thrust = inp.thrust; s.input.brake = inp.brake; s.input.fire = inp.fire;
-        s.input.aim = inp.aim; s.input.stick = inp.stick;
+        s.input.aim = inp.aim; s.input.stick = inp.stick; s.input.keyAim = !!inp.keyAim;
       }
       if (racing) tryFire(s, g);
       updateShip(s, g, dt, racing);
@@ -2052,6 +2054,7 @@
 
   function handleUI(g) {
     const I = RR.input, hit = I.hit;
+    if (g.state !== 'play') { if (hit.aimL) hit.left = true; if (hit.aimR) hit.right = true; } // A / D aim in a race; elsewhere, left / right
     if (hit.mute) g.toggleSound();
     if (hit.crt) { g.crt = !g.crt; applyCrt(); save(); }
     if (hit.zoomIn) g.zoomBy(1);
@@ -2128,6 +2131,7 @@
   G.frame = function (dt) {
     const g = this, I = RR.input;
     I.updateTouch(g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null, g.ui);
+    if (g.state === 'play') I.updateAim(dt);
     if (g.state === 'layout') dragControls(g);
     if (!I.typing) { I.pollPad(); handleUI(g); }
     if (g.toast) { g.toast.t += dt; if (g.toast.t >= g.toast.dur) g.toast = null; }

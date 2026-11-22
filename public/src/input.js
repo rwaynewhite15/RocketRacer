@@ -26,6 +26,11 @@
  *               way the rocket points (or is being steered), so it speeds
  *               up steadily to its top speed.
  *
+ * Keyboard aim: A and D swing the guns (blaster, cannon, missiles) left and
+ * right of the rocket's nose, like a turret, at AIM_RATE; Space fires that
+ * way. A and D together point them straight ahead again, and every race
+ * starts straight ahead. In the menus A and D still mean left and right.
+ *
  * Keys and touch work together (an iPad with a keyboard, say): both always
  * fly the ship, and a held turn key out-steers a drag. A key press puts the
  * keyboard prompts up and takes the touch controls off the screen, but not
@@ -50,7 +55,7 @@
   I.KEEP_TOUCH_MS = KEEP_TOUCH_MS;
 
   const KEYS = {
-    ArrowLeft: 'left', KeyA: 'left', ArrowRight: 'right', KeyD: 'right',
+    ArrowLeft: 'left', ArrowRight: 'right', KeyA: 'aimL', KeyD: 'aimR', // A / D: aim the guns
     ArrowUp: 'up', KeyW: 'up', ArrowDown: 'down', KeyS: 'down',
     Space: 'fire', KeyX: 'fire', KeyJ: 'fire',
     Enter: 'ok', NumpadEnter: 'ok',
@@ -200,6 +205,19 @@
   }
 
   const AIM_DEADZONE = 0.3; // fire stick pushed less than this: fire straight ahead
+  const AIM_RATE = 2.6; // radians a second the guns swing while A or D is held
+  I.AIM_RATE = AIM_RATE;
+  I.aimOff = 0; // keyboard aim: the guns' angle off the rocket's nose (0: straight ahead)
+
+  /** Once a frame while racing: A and D swing the guns; both together straighten them. */
+  I.updateAim = function (dt) {
+    const l = I.down.aimL, r = I.down.aimR;
+    if (l && r) I.aimOff = 0;
+    else if (l || r) {
+      I.aimOff += (r ? 1 : -1) * AIM_RATE * dt;
+      I.aimOff = Math.atan2(Math.sin(I.aimOff), Math.cos(I.aimOff)); // kept within a half turn either way
+    }
+  };
   const STEER_DEAD = 0.15; // steering stick pushed less than this: no power
   I.STEER_DEAD = STEER_DEAD;
 
@@ -326,9 +344,11 @@
       if (btn(p, 1) || btn(p, 6) || btn(p, 13)) brake = 1;
       if (btn(p, 2) || btn(p, 5)) fire = true;
     }
-    // aim: the direction the fire stick points, or null to fire straight ahead;
-    // stick: a thumb is on the touch fire stick (aimed weapons fire as it lets go)
-    return { turn: RR.clamp(turn, -1, 1), thrust: thrust, brake: brake, fire: fire, aim: t.aim, stick: !!t.aimStick };
+    // aim: the direction the fire stick points (or the guns, swung with A / D), or null to fire straight ahead;
+    // stick: a thumb is on the touch fire stick (aimed weapons fire as it lets go); keyAim: aimed with A / D
+    let aim = t.aim, keyAim = false;
+    if (aim == null && I.aimOff && ship) { aim = ship.angle + I.aimOff; keyAim = true; }
+    return { turn: RR.clamp(turn, -1, 1), thrust: thrust, brake: brake, fire: fire, aim: aim, stick: !!t.aimStick, keyAim: keyAim };
   };
 
   /** Short haptic tick on phones that support it. */

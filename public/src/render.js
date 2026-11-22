@@ -546,7 +546,7 @@
         text(ctx, 'DRAG FARTHER: MORE POWER', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
         text(ctx, 'FIRE STICK: SHOOT THAT WAY', W / 2, hy2 + 20, PAL.cyan, 1, 'center', PAL.ink);
       } else {
-        text(ctx, 'ARROWS / WASD TO FLY - SPACE TO FIRE', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
+        text(ctx, 'ARROWS TO FLY - A / D TO AIM - SPACE TO FIRE', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
       }
       text(ctx, g.royale ? 'LAST SHIP FLYING WINS' : g.combat ? 'WRECK THEM - FIRST TO ' + C.KILL_TARGET + ' KILLS' : 'FLY THROUGH THE GLOWING DONUT',
         W / 2, hy2 + (touch ? 34 : 12), PAL.pink, 1, 'center', PAL.ink);
@@ -584,15 +584,16 @@
   }
 
   /**
-   * The fire stick's aim, kept faint so it never hides the race: a dashed line
-   * out from the rocket while the blaster is pushed one way, or while a missile
-   * is held ready to launch (straight ahead until the stick is pushed), plus
+   * The fire stick's aim (or the guns' swung with A / D), kept faint so it
+   * never hides the race: a dashed line out from the rocket while the blaster
+   * is pushed one way, or while a missile is held ready to launch (straight
+   * ahead until the stick is pushed), plus
    * corner brackets on the rival that missile would lock onto.
    * g.aimShown records what was drawn (the tests read it).
    */
   function drawAim(g, ctx, s, cx, cy) {
     const w = s.weapon || (g.combat ? 'blaster' : null), inp = s.input;
-    if (!inp.stick || !(w === 'missile' || (w === 'blaster' && inp.aim != null))) return;
+    if (!(inp.stick || inp.keyAim) || !(w === 'missile' || (w === 'blaster' && inp.aim != null))) return;
     const ang = inp.aim != null ? inp.aim : s.angle, ax = Math.cos(ang), ay = Math.sin(ang);
     const col = s.weapon ? RR.ITEMS[s.weapon].color : PAL.cyan, x = s.x - cx, y = s.y - cy;
     ctx.globalAlpha = 0.7;
@@ -873,10 +874,10 @@
       text(ctx, fight ? 'WIN EVENTS TO EARN STAT POINTS' : 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, fight ? 'AND UNLOCK BETTER SHIPS' : 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
     } else if (W >= 440) {
-      text(ctx, 'ARROWS / WASD  FLY    SPACE  FIRE    E  DEFER GATE    P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'ARROWS  FLY    A / D  AIM    SPACE  FIRE    E  DEFER GATE    P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, 'H  HANGAR    Z OR WHEEL  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     } else {
-      text(ctx, 'ARROWS/WASD FLY - SPACE FIRE - E DEFER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'ARROWS FLY - A/D AIM - SPACE FIRE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, 'H HANGAR - Z ZOOM - P PAUSE - M MUTE', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     }
   }
