@@ -26,10 +26,10 @@
  *               way the rocket points (or is being steered), so it speeds
  *               up steadily to its top speed.
  *
- * Keyboard aim: A and D swing the guns (blaster, cannon, missiles) left and
- * right of the rocket's nose, like a turret, at AIM_RATE; Space fires that
- * way. A and D together point them straight ahead again, and every race
- * starts straight ahead. In the menus A and D still mean left and right.
+ * Keyboard aim: holding A or D swings the guns (blaster, cannon, missiles)
+ * left or right of the rocket's nose at AIM_RATE, always starting from
+ * straight ahead; Space fires that way. Let go and they point straight ahead
+ * again (and the aim line goes). In the menus A and D mean left and right.
  *
  * Keys and touch work together (an iPad with a keyboard, say): both always
  * fly the ship, and a held turn key out-steers a drag. A key press puts the
@@ -209,14 +209,12 @@
   I.AIM_RATE = AIM_RATE;
   I.aimOff = 0; // keyboard aim: the guns' angle off the rocket's nose (0: straight ahead)
 
-  /** Once a frame while racing: A and D swing the guns; both together straighten them. */
+  /** Once a frame while racing: A or D held swings the guns from straight ahead; otherwise straight ahead. */
   I.updateAim = function (dt) {
-    const l = I.down.aimL, r = I.down.aimR;
-    if (l && r) I.aimOff = 0;
-    else if (l || r) {
-      I.aimOff += (r ? 1 : -1) * AIM_RATE * dt;
-      I.aimOff = Math.atan2(Math.sin(I.aimOff), Math.cos(I.aimOff)); // kept within a half turn either way
-    }
+    const l = !!I.down.aimL, r = !!I.down.aimR; // (a key never pressed is undefined)
+    if (l === r) { I.aimOff = 0; return; } // neither held (or both): straight ahead
+    I.aimOff += (r ? 1 : -1) * AIM_RATE * dt;
+    I.aimOff = Math.atan2(Math.sin(I.aimOff), Math.cos(I.aimOff)); // kept within a half turn either way
   };
   const STEER_DEAD = 0.15; // steering stick pushed less than this: no power
   I.STEER_DEAD = STEER_DEAD;

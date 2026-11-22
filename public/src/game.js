@@ -435,7 +435,7 @@
   /** Reset the world. `demo` runs an all-AI race behind the title screen. */
   G.startRace = function (demo) {
     const g = this;
-    RR.input.aimOff = 0; // the guns start every race pointing straight ahead
+    RR.input.aimOff = 0; // the guns point straight ahead unless A or D is held
     g.mode = MODES[g.modeIdx].id;
     g.combat = g.mode !== 'race';
     g.royale = g.mode === 'royale' && !demo; // the attract mode just brawls on, with respawns

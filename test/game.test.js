@@ -1111,7 +1111,7 @@ test('iPhone Home Screen app: the page is made screen-tall (iOS 26 cut off the b
   } finally { await ctx.close(); }
 });
 
-test('keyboard: A and D swing the guns like a turret (the rocket keeps its heading), Space fires that way with an aim line; A + D straightens them; in menus A / D mean left / right', { skip }, async () => {
+test('keyboard: holding A or D swings the guns from straight ahead (the rocket keeps its heading), Space fires that way with an aim line; let go and they point straight ahead again; in menus A / D mean left / right', { skip }, async () => {
   const { page, ctx, errors } = await openGame();
   try {
     // the title menu: D still steps through the events
@@ -1121,7 +1121,7 @@ test('keyboard: A and D swing the guns like a turret (the rocket keeps its headi
     assert.notStrictEqual(await page.evaluate(() => RR.game.modeIdx), mode0, 'D moves along the menu');
     await page.evaluate((m) => { RR.game.modeIdx = m; }, mode0);
 
-    // a race, holding still with the nose up and a blaster
+    // a race, holding still with the nose up and a blaster; note each shot's way and the aim it was fired at
     await page.evaluate(() => {
       const g = RR.game; g.modeIdx = 0; T.fresh(0);
       const p = g.player; p.ai = null; p.weapon = 'blaster'; p.ammo = 999;
@@ -1129,49 +1129,49 @@ test('keyboard: A and D swing the guns like a turret (the rocket keeps its headi
       window.hold();
       window.fired = [];
       const push = g.shots.push;
-      g.shots.push = function (b) { if (b.owner === p) window.fired.push(Math.atan2(b.vy - p.vy * 0.5, b.vx - p.vx * 0.5)); return push.apply(this, arguments); };
+      g.shots.push = function (b) {
+        if (b.owner === p) window.fired.push({ dir: Math.atan2(b.vy - p.vy * 0.5, b.vx - p.vx * 0.5), aim: p.input.aim == null ? p.angle : p.input.aim });
+        return push.apply(this, arguments);
+      };
     });
     const look = () => page.evaluate(() => { window.hold(); const p = RR.game.player, r = RR.input.read(p); return { off: RR.input.aimOff, aim: r.aim, keyAim: r.keyAim, turn: r.turn, angle: p.angle, shown: RR.game.aimShown }; });
+    assert.strictEqual((await look()).off, 0, 'straight ahead to begin with');
 
+    // hold D: the guns swing right, from straight ahead, and the rocket is not turned
     await page.keyboard.down('KeyD');
     await page.waitForTimeout(300);
-    await page.keyboard.up('KeyD');
     let s = await look();
-    assert.ok(s.off > 0.4 && s.off < 1.3, 'D swings the guns to the right: ' + s.off);
+    assert.ok(s.off > 0.4 && s.off < 1.3, 'D held swings the guns to the right: ' + s.off);
     assert.ok(s.keyAim && Math.abs(angleGap(s.aim, s.angle + s.off)) < 1e-9, 'aimed off the nose by that much');
     assert.strictEqual(s.turn, 0, 'the rocket is not turned by it');
-    await page.waitForTimeout(60);
-    s = await look();
-    assert.ok(s.shown && angleGap(s.shown.ang, s.aim) < 0.05, 'a dashed aim line shows the way: ' + JSON.stringify(s.shown));
+    assert.ok(s.shown && angleGap(s.shown.ang, s.aim) < 0.1, 'a dashed aim line shows the way: ' + JSON.stringify(s.shown));
 
+    // Space while D is held: every shot goes the way the guns pointed as it left
     await page.evaluate(() => { window.fired.length = 0; });
     await page.keyboard.down('Space');
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(300);
     await page.keyboard.up('Space');
     const shots = await page.evaluate(() => window.fired.slice());
     assert.ok(shots.length >= 2, 'it fires: ' + shots.length);
-    for (const a of shots) assert.ok(angleGap(a, s.aim) < 0.1, 'the way the guns point: ' + a + ' vs ' + s.aim);
+    for (const x of shots) {
+      assert.ok(angleGap(x.dir, x.aim) < 0.05, 'the way the guns point: ' + x.dir + ' vs ' + x.aim);
+      assert.ok(angleGap(x.aim, -Math.PI / 2) > 0.3, 'swung off the nose');
+    }
 
-    // A swings back the other way, past straight ahead
-    await page.keyboard.down('KeyA');
-    await page.waitForTimeout(700);
-    await page.keyboard.up('KeyA');
-    s = await look();
-    assert.ok(s.off < -0.2, 'A swings them left: ' + s.off);
-
-    // A and D together: straight ahead again, and no aim line
-    await page.keyboard.down('KeyA'); await page.keyboard.down('KeyD');
+    // let go: straight ahead again, and the line goes
+    await page.keyboard.up('KeyD');
     await page.waitForTimeout(80);
-    await page.keyboard.up('KeyA'); await page.keyboard.up('KeyD');
-    await page.waitForTimeout(60);
     s = await look();
-    assert.deepStrictEqual([s.off, s.aim, s.keyAim, s.shown], [0, null, false, null], 'straight ahead');
+    assert.deepStrictEqual([s.off, s.aim, s.keyAim, s.shown], [0, null, false, null], 'let go: straight ahead, no aim line');
 
-    // and a new race starts straight ahead
-    await page.keyboard.down('KeyD'); await page.waitForTimeout(200); await page.keyboard.up('KeyD');
-    assert.ok((await look()).off > 0);
-    await page.evaluate(() => RR.game.startRace(false));
-    assert.strictEqual(await page.evaluate(() => RR.input.aimOff), 0, 'reset for the next race');
+    // A held: from straight ahead again, to the left
+    await page.keyboard.down('KeyA');
+    await page.waitForTimeout(300);
+    s = await look();
+    assert.ok(s.off < -0.4 && s.off > -1.3, 'A held swings them left, starting straight: ' + s.off);
+    await page.keyboard.up('KeyA');
+    await page.waitForTimeout(80);
+    assert.strictEqual((await look()).off, 0, 'and straight again on letting go');
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
 });
