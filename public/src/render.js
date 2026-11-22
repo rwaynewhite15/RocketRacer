@@ -96,10 +96,9 @@
     return {
       stickR: R,
       steer: { x: sc.x, y: sc.y, r: R, grab: grab },
-      // the steer stick's other form (a tap on it): < and > side by side, and a STICK tab above them to swap back
-      left: box({ x: sc.x - 23, y: sc.y }, 42, 48),
-      right: box({ x: sc.x + 23, y: sc.y }, 42, 48),
-      tab: box({ x: sc.x, y: sc.y - R - 12 }, 46, 18),
+      // the steer stick's other form (a tap on it): a turning slider, and a STICK tab above it to swap back
+      slide: box(sc, 92, 30),
+      tab: box({ x: sc.x, y: sc.y - 38 }, 46, 18),
       fire: { x: centre.fire.x, y: centre.fire.y, r: R, grab: grab },
       brake: box(centre.brake, 42, 42),
       gas: box(centre.gas, 42, 42),
@@ -667,28 +666,35 @@
       if (on) { ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2); }
     };
 
-    /* steering: the stick bottom left (a tap swaps it for < and > buttons), or a drag from anywhere else */
-    const buttonsMode = RR.input.steerButtons;
-    if (buttonsMode) {
-      key(L.left, t.turnL, PAL.lime);
-      text(ctx, '<', L.left.x + L.left.w / 2, L.left.y + L.left.h / 2 - 7, t.turnL ? PAL.white : PAL.lime, 2, 'center');
-      key(L.right, t.turnR, PAL.lime);
-      text(ctx, '>', L.right.x + L.right.w / 2, L.right.y + L.right.h / 2 - 7, t.turnR ? PAL.white : PAL.lime, 2, 'center');
+    /* steering: the stick bottom left (a tap swaps it for a turning slider), or a drag from anywhere else */
+    const slideMode = RR.input.steerSlide;
+    if (slideMode) {
+      const r = L.slide, mid = r.x + r.w / 2, on = !!t.slide, kx = on ? t.slide.x : mid;
+      panel(ctx, r.x, r.y, r.w, r.h, on ? PAL.white : PAL.steel);
+      ctx.fillStyle = PAL.slate; ctx.fillRect(r.x + 6, r.y + r.h / 2 - 1, r.w - 12, 2); // the groove
+      ctx.fillRect(Math.round(mid), r.y + 4, 1, r.h - 8); // straight ahead
+      text(ctx, '<', r.x + 5, r.y + r.h / 2 - 3, PAL.steel, 1, 'left');
+      text(ctx, '>', r.x + r.w - 5, r.y + r.h / 2 - 3, PAL.steel, 1, 'right');
+      const kw = 22, kh = r.h + 6, kxL = Math.round(kx - kw / 2), kyT = r.y - 3;
+      ctx.fillStyle = on ? PAL.lime : '#2a6b3a';
+      ctx.fillRect(kxL, kyT, kw, kh);
+      ctx.fillStyle = on ? PAL.white : PAL.lime;
+      for (let k = -1; k <= 1; k++) ctx.fillRect(Math.round(kx) + k * 4, kyT + 8, 1, kh - 16); // grip lines
       panel(ctx, L.tab.x, L.tab.y, L.tab.w, L.tab.h, PAL.steel);
       text(ctx, 'STICK', L.tab.x + L.tab.w / 2, L.tab.y + 5, PAL.silver, 1, 'center');
-      stickLabel(ctx, L.steer, 'TURN', t.turnL || t.turnR ? PAL.white : PAL.silver, H, ins);
+      stickLabel(ctx, { x: L.steer.x, y: L.steer.y, r: r.h / 2 + 4 }, 'SLIDE TO TURN', on ? PAL.white : PAL.silver, H, ins);
     } else {
       const steering = t.drag && t.drag.stick ? t.drag : null;
       drawStick(ctx, L.steer, steering && steering.stick, PAL.lime, PAL.steel);
       stickLabel(ctx, L.steer, 'FLY', steering ? PAL.white : PAL.silver, H, ins);
     }
     g.meter = t.drag ? drawDrag(ctx, t.gas ? Object.assign({}, t.drag, { power: 1 }) : t.drag, W, H, ins, g.t) : null; // (GAS: full power)
-    if (t.drag || t.turnL || t.turnR || t.gas) {
+    if (t.drag || t.slide || t.gas) {
       if (!t.drag || t.drag.power > 0) p.dragged = true;
     } else if (!p.dragged && g.phase === 'race' && Math.floor(g.t * 2) & 1) {
-      const hy = (buttonsMode ? L.tab.y - 6 : L.steer.y - L.steer.r) - 24;
-      text(ctx, buttonsMode ? 'HOLD < > TO TURN' : 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, buttonsMode ? 'AND GAS TO GO' : 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
+      const hy = (slideMode ? L.tab.y - 6 : L.steer.y - L.steer.r) - 24;
+      text(ctx, slideMode ? 'SLIDE TO TURN' : 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, slideMode ? 'AND GAS TO GO' : 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
     }
 
     /* fire stick: the blaster fires while held (ahead, or the way it is pushed); missiles go on letting go */

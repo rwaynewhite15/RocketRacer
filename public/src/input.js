@@ -21,11 +21,13 @@
  *               it is pushed. Missiles are aimed: push the stick the way to
  *               fire and let go to launch (let go without pushing: straight
  *               ahead). Mines and EMP go off as the stick is touched.
- *   FLY buttons a quick tap on the steer stick (no push) swaps it for two
- *               buttons, < and >, which turn the rocket while held; the
- *               STICK tab just above them swaps back. Kept between visits.
- *   BRAKE       a button.
- *   GAS         a button just above BRAKE: full engine power, the way the
+ *   FLY slider  a quick tap on the steer stick (no push) swaps it for a
+ *               slider: drag its knob left or right and the rocket turns
+ *               that way, harder the farther from the middle (none in the
+ *               middle SLIDE_DEAD); let go and it springs back. The STICK
+ *               tab just above it swaps back. Kept between visits.
+ *   BRAKE       a button, to the left of GAS.
+ *   GAS         a button just above the fire stick: full engine power, the way the
  *               rocket points (or is being steered), so it speeds up
  *               steadily to its top speed. Held, it is on until let go; a
  *               quick tap keeps it on until it is tapped (or held) again.
@@ -52,9 +54,9 @@
   const I = (RR.input = {
     down: {}, hit: {}, taps: [],
     pointers: {}, // id -> { x, y, sx, sy, role, touch } in game pixels (sx, sy = where it began; touch: a finger or pen, not a mouse)
-    touch: { drag: null, aimStick: null, aim: null, brake: false, gas: false, turnL: false, turnR: false, fire: false },
+    touch: { drag: null, aimStick: null, aim: null, brake: false, gas: false, slide: null, fire: false },
     gasLatch: false, // GAS tapped on: it stays on until tapped (or held and let go) again
-    steerButtons: false, // the steer stick swapped for < and > buttons (a tap on it)
+    steerSlide: false, // the steer stick swapped for the turning slider (a tap on it)
     released: [], // fingers lifted since the last frame: { sx, sy, role, tap, wasLatched }
     touchMode: false,
     controlAt: -Infinity, // performance.now() when a thumb was last on the race controls (steering, fire stick, brake)
@@ -221,6 +223,15 @@
 
   const AIM_DEADZONE = 0.3; // fire stick pushed less than this: fire straight ahead
   const TAP_MS = 250, TAP_MOVE = 8; // a tap: let go this soon, having moved less than this (game pixels)
+  const SLIDE_KNOB = 22, SLIDE_DEAD = 0.1; // the slider's knob width; its middle tenth either way does not turn
+  I.SLIDE_DEAD = SLIDE_DEAD;
+
+  /** The turning slider under a finger: where its knob sits (`x`), and the turn, -1 (left) to 1 (right). */
+  function slideState(p, r) {
+    const mid = r.x + r.w / 2, travel = r.w / 2 - SLIDE_KNOB / 2;
+    const f = RR.clamp((p.x - mid) / travel, -1, 1), a = Math.abs(f);
+    return { x: mid + f * travel, f: f, turn: a <= SLIDE_DEAD ? 0 : Math.sign(f) * (a - SLIDE_DEAD) / (1 - SLIDE_DEAD) };
+  }
   I.TAP_MS = TAP_MS;
   const AIM_RATE = 2.6; // radians a second the guns swing while A or D is held
   I.AIM_RATE = AIM_RATE;
@@ -288,24 +299,23 @@
     if (inside(x, y, L.brake, 6)) return 'brake';
     if (inside(x, y, L.gas, 6)) return 'gas';
     if (near(x, y, L.fire)) return 'fire';
-    if (I.steerButtons) {
+    if (I.steerSlide) {
       if (inside(x, y, L.tab, 4)) return 'tab';
-      if (inside(x, y, L.left, 4)) return 'turnL';
-      if (inside(x, y, L.right, 4)) return 'turnR';
+      if (inside(x, y, L.slide, 8)) return 'slide';
     } else if (near(x, y, L.steer)) return 'stick';
     return onAny(x, y, buttons) ? 'none' : 'steer'; // anywhere else on the screen: a drag
   }
 
-  /** The steer stick, or the < and > buttons in its place (remembered with the other settings). */
-  I.setSteerButtons = function (on) {
-    I.steerButtons = !!on;
+  /** The steer stick, or the turning slider in its place (remembered with the other settings). */
+  I.setSteerSlide = function (on) {
+    I.steerSlide = !!on;
     if (RR.game && RR.game.saveSettings) RR.game.saveSettings();
   };
 
   I.updateTouch = function (L, buttons) {
     const t = I.touch;
-    t.fire = t.brake = t.gas = t.turnL = t.turnR = false;
-    t.drag = t.aimStick = t.aim = null;
+    t.fire = t.brake = t.gas = false;
+    t.drag = t.aimStick = t.aim = t.slide = null;
     const lifted = I.released.splice(0);
     if (!L) {
       for (const id in I.pointers) I.pointers[id].role = 'menu';
@@ -315,8 +325,8 @@
     for (const r of lifted) {
       const role = r.role || classify(r.sx, r.sy, L, buttons), was = r.role ? r.wasLatched : I.gasLatch;
       if (role === 'gas') I.gasLatch = r.tap && !was; // a tap turns it on, or off if it was on; a hold ends it
-      else if (role === 'stick' && r.tap) I.setSteerButtons(true);
-      else if (role === 'tab' && r.tap) I.setSteerButtons(false);
+      else if (role === 'stick' && r.tap) I.setSteerSlide(true);
+      else if (role === 'tab' && r.tap) I.setSteerSlide(false);
     }
     for (const id in I.pointers) {
       const p = I.pointers[id];
@@ -327,8 +337,7 @@
       if (p.role !== 'none' && p.role !== 'menu') I.controlAt = performance.now();
       if (p.role === 'brake') t.brake = true;
       else if (p.role === 'gas') t.gas = true;
-      else if (p.role === 'turnL') t.turnL = true;
-      else if (p.role === 'turnR') t.turnR = true;
+      else if (p.role === 'slide' && !t.slide) t.slide = slideState(p, L.slide);
       else if (p.role === 'stick' && !t.drag) t.drag = stickDrag(p, L.steer);
       else if (p.role === 'steer' && !t.drag) t.drag = dragState(p);
       else if (p.role === 'fire' && !t.aimStick) {
@@ -365,8 +374,9 @@
   I.read = function (ship) {
     const d = I.down, t = I.touch;
     let turn = 0, thrust = 0, brake = 0, fire = false;
-    if (d.left || t.turnL) turn -= 1;
-    if (d.right || t.turnR) turn += 1;
+    if (d.left) turn -= 1;
+    if (d.right) turn += 1;
+    if (t.slide) turn += t.slide.turn;
     if (d.up) thrust = 1;
     if (d.down || t.brake) brake = 1;
     if (t.gas) thrust = 1; // GAS: full power
@@ -376,7 +386,7 @@
     // (a held turn key steers instead, so a forgotten thumb cannot fight the keys)
     const dr = t.drag;
     if (dr && dr.power > 0 && ship) {
-      if (!d.left && !d.right && !t.turnL && !t.turnR) turn += RR.clamp(RR.angDiff(dr.ang, ship.angle) * 4.5, -1, 1);
+      if (!d.left && !d.right && !t.slide) turn += RR.clamp(RR.angDiff(dr.ang, ship.angle) * 4.5, -1, 1);
       thrust = Math.max(thrust, dr.power);
     }
 
