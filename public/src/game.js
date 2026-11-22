@@ -686,7 +686,7 @@
 
   /* ------------------------------------------------- moving the controls */
 
-  const CONTROL_NAMES = ['steer', 'fire', 'brake', 'defer']; // (steering by a drag anywhere else needs no spot)
+  const CONTROL_NAMES = ['steer', 'fire', 'brake', 'gas', 'defer']; // (steering by a drag anywhere else needs no spot)
 
   /** Keep only well-formed saved positions (fractions of the screen). */
   function cleanControls(raw) {
