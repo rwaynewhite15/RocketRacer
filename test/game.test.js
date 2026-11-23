@@ -1976,3 +1976,77 @@ test('iPad keyboard: the game holds the keyboard focus, knows keys by the names 
     assert.deepStrictEqual(ph.errors, []);
   } finally { await ph.ctx.close(); }
 });
+
+/* --------------------------------------------------- capture the flag */
+
+test('capture the flag: you fly for red with two red AI teammates; the arrow leads to their flag, then home; E spends a Replace Flag only while your flag is away', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  try {
+    const r = await page.evaluate(() => {
+      const g = RR.game, out = {};
+      g.modeIdx = RR.MODES.findIndex((m) => m.id === 'ctf');
+      g.startRace(false); g.state = 'play';
+      T.run(4.3);
+      const p = g.player, [rf, bf] = g.flags;
+      out.teams = g.ships.map((s) => s.side);
+      out.roles = g.ships.map((s) => (s.ai ? s.ai.role : 'you'));
+      out.title = RR.MODES[g.modeIdx].name;
+      window.hold = () => { for (const s of g.ships) if (s !== p) { s.ai = null; s.x = 4000 + s.idx * 40; s.y = 600; s.vx = s.vy = 0; } };
+      window.hold();
+      return out;
+    });
+    assert.strictEqual(r.title, 'CAPTURE THE FLAG');
+    assert.deepStrictEqual(r.teams, [0, 1, 0, 1, 0, 1], 'you (red), then blue, red...');
+    assert.deepStrictEqual(r.roles, ['you', 'attack', 'attack', 'attack', 'defend', 'defend'], 'each team keeps one at home');
+    await page.waitForTimeout(150);
+    const arrow = () => page.evaluate(() => {
+      const g = RR.game, a = g.arrowTo;
+      return a === g.flags[1] ? 'their flag' : a === g.flags[0].home ? 'home' : a && a.flag !== undefined ? 'ship ' + a.idx : String(a);
+    });
+    assert.strictEqual(await arrow(), 'their flag', 'off to their flag');
+
+    // take it: the arrow turns for home, and the HUD says so
+    await page.evaluate(() => { const g = RR.game, p = g.player, f = g.flags[1]; p.x = f.x - 5; p.y = f.y; p.vx = p.vy = 0; g.step(1 / 120); });
+    await page.waitForTimeout(150);
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.flags[1].state, RR.game.player.flag === RR.game.flags[1], RR.game.msg && RR.game.msg.text]), ['carried', true, 'GOT THE FLAG!']);
+    assert.strictEqual(await arrow(), 'home', 'then home');
+
+    // a Replace Flag with your flag at home: E keeps it, and says why
+    await page.evaluate(() => { RR.game.player.reflag = 1; });
+    await page.keyboard.press('KeyE');
+    await page.waitForTimeout(100);
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.player.reflag, RR.game.texts.some((t) => t.text === 'YOUR FLAG IS HOME')]), [1, true]);
+    // a blue ship takes your flag: the arrow points at the thief, and E sends your flag home
+    await page.evaluate(() => { const g = RR.game, b = g.ships[1], f = g.flags[0]; b.x = f.x; b.y = f.y; g.step(1 / 120); b.x = 2500; b.y = 2000; b.vx = b.vy = 0; });
+    await page.waitForTimeout(150);
+    assert.deepStrictEqual([await page.evaluate(() => RR.game.flags[0].state), await arrow()], ['carried', 'home'], 'carrying theirs: still home first');
+    await page.keyboard.press('KeyE');
+    await page.waitForTimeout(100);
+    assert.deepStrictEqual(await page.evaluate(() => { const g = RR.game; return [g.flags[0].state, g.ships[1].flag, g.player.reflag, g.msg && g.msg.text]; }), ['home', null, 0, 'FLAG REPLACED!']);
+    // and home with their flag, yours being home again: a capture
+    await page.evaluate(() => { const g = RR.game, p = g.player, h = g.flags[0].home; p.x = h.x; p.y = h.y; p.vx = p.vy = 0; g.step(1 / 120); });
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.caps[0], RR.game.player.caps, RR.game.flags[1].state]), [1, 1, 'home']);
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+
+  // on a touch screen: a FLAG button, while one is held
+  const { ctx: c2, page: p2, errors: e2 } = await openPhone(browser);
+  try {
+    await p2.evaluate(() => {
+      const g = RR.game; g.autoFull = false; g.wantFull = false;
+      g.modeIdx = RR.MODES.findIndex((m) => m.id === 'ctf'); g.begin();
+      for (let i = 0; i < 120 * 4.3; i++) g.step(1 / 120);
+      for (const s of g.ships) if (s !== g.player) s.ai = null;
+      const b = g.ships[1], f = g.flags[0]; b.x = f.x; b.y = f.y; g.step(1 / 120); b.x = 2500; b.y = 2000;
+      g.player.reflag = 1;
+    });
+    await p2.waitForTimeout(150);
+    const box = await p2.locator('#hud').boundingBox(), k = box.width / await p2.evaluate(() => RR.game.W);
+    const u = await p2.evaluate(() => RR.game.ui.find((b) => b.label === 'REPLACE FLAG') || null);
+    assert.ok(u, 'a FLAG button');
+    await p2.touchscreen.tap(box.x + (u.x + u.w / 2) * k, box.y + (u.y + u.h / 2) * k);
+    await p2.waitForTimeout(150);
+    assert.deepStrictEqual(await p2.evaluate(() => [RR.game.flags[0].state, RR.game.player.reflag]), ['home', 0], 'tapped: your flag is home');
+    assert.deepStrictEqual(e2, []);
+  } finally { await c2.close(); }
+});

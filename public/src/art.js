@@ -305,6 +305,17 @@
       '...ee....',
       '....e....',
     ],
+    reflag: [ // "replace flag": a gold flag on its pole, and an arrow sending it home
+      'ww.......',
+      'wyyyyyo..',
+      'wyyyyyyo.',
+      'wyyyyyo..',
+      'w........',
+      'w..c.....',
+      'w.cccccc.',
+      'w..c.....',
+      'w........',
+    ],
     defer: [ // "skip ahead": two arrows on to a bar (the next gate), light on top, violet below
       '........w',
       'c...c...w',
@@ -734,6 +745,8 @@
       const power = k === 'nitro' || k === 'shield' || k === 'repair';
       Art.pickups[k] = k === 'defer'
         ? pickupSprite(Art.icons[k], '#e6c0ff', '#a855f7', '#1d0f3d')
+        : k === 'reflag'
+          ? pickupSprite(Art.icons[k], '#fff1a8', '#f5b82e', '#3a2a0a')
         : power
           ? pickupSprite(Art.icons[k], '#c8f58a', '#38b764', '#0f2a1c')
           : pickupSprite(Art.icons[k], '#ffb38a', '#e5404f', '#2e1019');

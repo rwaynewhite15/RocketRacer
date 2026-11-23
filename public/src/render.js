@@ -123,6 +123,18 @@
     }
   }
 
+  /** A team's flag: a white pole standing at (x, y), its cloth waving in the team's colour. */
+  function drawFlag(ctx, x, y, side, t) {
+    const S = RR.SIDES[side], X = Math.round(x), Y = Math.round(y);
+    ctx.fillStyle = PAL.ink; ctx.fillRect(X - 1, Y - 20, 3, 22);
+    ctx.fillStyle = PAL.white; ctx.fillRect(X, Y - 19, 1, 20);
+    for (let c = 0; c < 10; c++) {
+      const dy = Math.round(Math.sin(t * 6 - c * 0.7) * 1.3 * (c / 9));
+      ctx.fillStyle = PAL.ink; ctx.fillRect(X + 1 + c, Y - 20 + dy, 1, 9);
+      ctx.fillStyle = c < 2 ? S.light : S.color; ctx.fillRect(X + 1 + c, Y - 19 + dy, 1, 7);
+    }
+  }
+
   const TAG_HOLD = 2; // seconds a human pilot's name stays over their ship
   RR.TAG_HOLD = TAG_HOLD;
 
@@ -238,7 +250,7 @@
       if (!pk.on) continue;
       const sx = Math.round(pk.x - cx), sy = Math.round(pk.y - cy + Math.sin(g.t * 3 + pk.ph) * 2);
       if (!vis(sx, sy, 20)) continue;
-      glow(ctx, sx, sy, 17, pk.kind === 'W' ? '#e5404f' : pk.type === 'defer' ? '#a855f7' : '#38b764');
+      glow(ctx, sx, sy, 17, pk.kind === 'W' ? '#e5404f' : pk.type === 'defer' ? '#a855f7' : pk.type === 'reflag' ? '#f5b82e' : '#38b764');
       ctx.drawImage(Art.pickups[pk.type], sx - 8, sy - 8);
     }
 
@@ -248,6 +260,21 @@
       if (vis(sx, sy, Art.DONUT_RC + 40)) {
         RR.ring(ctx, sx, sy, Art.DONUT_RC + 22, PAL.violet, 10, g.t * 3);
         RR.ring(ctx, sx, sy, Art.DONUT_RC + 25, '#5b21b6', 10, -g.t * 3);
+      }
+    }
+
+    /* capture the flag: the bases, and the flags standing on them or lying where they fell */
+    if (g.ctf && g.flags) {
+      for (const f of g.flags) {
+        const S = RR.SIDES[f.side], bx = f.home.x - cx, by = f.home.y - cy;
+        if (vis(bx, by, C.BASE_R + 10)) {
+          RR.ring(ctx, bx, by, C.BASE_R, S.color, 10, g.t * (f.side ? -1.5 : 1.5));
+          RR.ring(ctx, bx, by, 30, S.light);
+        }
+        if (f.state !== 'carried' && vis(f.x - cx, f.y - cy, 30)) {
+          glow(ctx, f.x - cx, f.y - cy, 16, S.color);
+          if (f.state !== 'dropped' || f.dropT < C.FLAG_RETURN - 4 || Math.floor(g.t * 8) & 1) drawFlag(ctx, f.x - cx, f.y - cy, f.side, g.t);
+        }
       }
     }
 
@@ -316,6 +343,16 @@
       }
     }
 
+    /* carried flags, flying behind their carriers */
+    if (g.ctf && g.flags) {
+      for (const f of g.flags) {
+        const c = f.carrier;
+        if (f.state !== 'carried' || !c || c.dead > 0) continue;
+        const fx = c.x - Math.cos(c.angle) * 12 - cx, fy = c.y - Math.sin(c.angle) * 12 - cy;
+        if (vis(fx, fy, 30)) drawFlag(ctx, fx, fy + 6, f.side, g.t);
+      }
+    }
+
     /* where the fire stick is aiming */
     g.aimShown = null;
     if (!g.demo && g.state === 'play' && p.dead <= 0) drawAim(g, ctx, p, cx, cy);
@@ -356,7 +393,14 @@
      * points at the nearest rival, or back into the zone when you are outside it */
     let aim = null, hostile = false;
     if (!g.playerDone && !g.combat) aim = tr.cps[p.nextCp];
-    else if (!g.playerDone && p.dead <= 0) {
+    else if (!g.playerDone && p.dead <= 0 && g.ctf && g.flags) {
+      // capture the flag: home with their flag; after whoever has ours; else to their flag (or our carrier)
+      const mine = g.flags[p.side], theirs = g.flags[1 - p.side];
+      if (p.flag) aim = mine.home;
+      else if (mine.state === 'carried' && mine.carrier) { aim = mine.carrier; hostile = true; }
+      else if (theirs.state === 'carried' && theirs.carrier) aim = theirs.carrier;
+      else aim = theirs;
+    } else if (!g.playerDone && p.dead <= 0) {
       if (p.zoned) aim = tr.center;
       else {
         let bd = 1e9;
@@ -366,6 +410,7 @@
         }
       }
     }
+    g.arrowTo = aim; // (what the edge arrow leads to, for the tests)
     if (aim) {
       const sx = aim.x - cx, sy = aim.y - cy;
       if (!vis(sx, sy, -10)) {
@@ -420,11 +465,21 @@
       if (next) { ctx.fillStyle = blink ? PAL.yellow : PAL.white; ctx.fillRect(x - 1, y - 1, 3, 3); }
       else { ctx.fillStyle = c.finish ? PAL.white : PAL.hot; ctx.fillRect(x, y, 1, 1); }
     }
+    if (g.ctf && g.flags) { // the bases, and the flags (blinking while away from home)
+      for (const f of g.flags) {
+        const S = RR.SIDES[f.side], hx = Math.round(mx + f.home.x * mm.s + mm.ox), hy = Math.round(my + f.home.y * mm.s + mm.oy);
+        ctx.fillStyle = S.color; ctx.fillRect(hx - 2, hy - 2, 5, 5);
+        ctx.fillStyle = PAL.ink; ctx.fillRect(hx - 1, hy - 1, 3, 3);
+        if (f.state !== 'home' && !blink) continue;
+        const fx = Math.round(mx + f.x * mm.s + mm.ox), fy = Math.round(my + f.y * mm.s + mm.oy);
+        ctx.fillStyle = S.light; ctx.fillRect(fx, fy - 3, 1, 4); ctx.fillRect(fx + 1, fy - 3, 2, 2);
+      }
+    }
     for (let i = g.ships.length - 1; i >= 0; i--) {
       const s = g.ships[i];
       if (s.dead > 0) continue;
       const x = Math.round(mx + s.x * mm.s + mm.ox), y = Math.round(my + s.y * mm.s + mm.oy);
-      if (i === 0) { ctx.fillStyle = PAL.white; ctx.fillRect(x - 2, y - 2, 5, 5); }
+      if (s === p) { ctx.fillStyle = PAL.white; ctx.fillRect(x - 2, y - 2, 5, 5); }
       ctx.fillStyle = s.colors.a;
       ctx.fillRect(x - 1, y - 1, 3, 3);
     }
@@ -437,7 +492,14 @@
 
     /* lap + position, or the score in a fight */
     panel(ctx, L, Tp, 104, 34);
-    if (g.royale) {
+    if (g.ctf) { // capture the flag: each team's captures, yours first
+      const sides = p.side === 1 ? [1, 0] : [0, 1];
+      sides.forEach(function (sd, k) {
+        const S = RR.SIDES[sd], x = L + 6 + k * 50;
+        text(ctx, S.name + (k === 0 ? '*' : ''), x, Tp + 5, S.light);
+        text(ctx, String(g.caps[sd]), x, Tp + 15, k === 0 ? PAL.white : PAL.silver, 2);
+      });
+    } else if (g.royale) {
       let alive = 0;
       for (const s of g.ships) if (!s.gone) alive++;
       text(ctx, 'ALIVE', L + 6, Tp + 5, PAL.silver);
@@ -457,7 +519,11 @@
     const cx = narrow ? Rr - 1 : W / 2, cy = narrow ? Tp + mm.h + 9 : Tp + 3, al = narrow ? 'right' : 'center';
     if (g.combat) {
       const now = g.over ? g.endT : g.raceTime;
-      if (g.royale) {
+      if (g.ctf) {
+        const left = Math.max(0, C.CTF_TIME - now);
+        text(ctx, fmt(left), cx, cy, left < 20 && Math.floor(T * 4) & 1 ? PAL.alarm : PAL.white, 2, al, PAL.ink);
+        text(ctx, 'FIRST TO ' + C.CTF_CAPS + ' FLAGS', cx, cy + 18, PAL.silver, 1, al, PAL.ink);
+      } else if (g.royale) {
         const wait = C.ZONE_GRACE - now;
         text(ctx, fmt(now), cx, cy, PAL.white, 2, al, PAL.ink);
         if (wait > 0) text(ctx, 'ZONE CLOSES IN ' + Math.ceil(wait), cx, cy + 18, PAL.silver, 1, al, PAL.ink);
@@ -487,10 +553,18 @@
     /* who wrecked whom */
     if (g.combat) {
       let fy = touch ? Tp + 98 : Tp + 40;
+      if (g.ctf && g.flags && !g.playerDone) { // where the flags are, for the player
+        const mine = g.flags[p.side];
+        const line = p.flag ? 'YOU HAVE THEIR FLAG - TAKE IT HOME' : mine.state === 'carried' ? 'YOUR FLAG IS TAKEN!'
+          : mine.state === 'dropped' ? 'YOUR FLAG IS DOWN - TOUCH IT HOME' : '';
+        if (line) text(ctx, line, L + 2, fy, p.flag ? PAL.yellow : Math.floor(T * 3) & 1 ? PAL.alarm : PAL.orange, 1, 'left', PAL.ink);
+        if (p.flag && mine.state !== 'home') text(ctx, '(YOUR OWN FLAG MUST BE HOME TO SCORE)', L + 2, fy + 9, PAL.silver, 1, 'left', PAL.ink);
+        fy += 20;
+      }
       for (const f of g.feed) {
         if (f.t > 4.2 && Math.floor(T * 12) & 1) continue;
-        const line = f.a ? f.a + ' WRECKED ' + f.b : f.b + (f.zone ? ' LOST TO THE ZONE' : ' CRASHED');
-        text(ctx, line, L + 2, fy, f.a === p.name ? PAL.yellow : f.b === p.name ? PAL.alarm : PAL.silver, 1, 'left', PAL.ink);
+        const line = f.text || (f.a ? f.a + ' WRECKED ' + f.b : f.b + (f.zone ? ' LOST TO THE ZONE' : ' CRASHED'));
+        text(ctx, line, L + 2, fy, f.col || (f.a === p.name ? PAL.yellow : f.b === p.name ? PAL.alarm : PAL.silver), 1, 'left', PAL.ink);
         fy += 9;
       }
     }
@@ -498,7 +572,15 @@
     /* weapon slot (keyboard play; on touch the FIRE button shows it) */
     if (!touch) {
       const rx = Rr - 72, ry = B - 34, held = p.defer > 0, ready = g.canDefer(p);
-      if (!g.combat) { // no gates to defer in a fight
+      if (g.ctf) { // capture the flag: Replace Flag's slot (lit while it can be used: your flag away from home)
+        const has = p.reflag > 0, go = g.canReflag(p);
+        panel(ctx, rx, ry, 34, 34, go ? (Math.floor(T * 4) & 1 ? PAL.white : PAL.gold) : has ? PAL.gold : PAL.slate);
+        if (!go) ctx.globalAlpha = has ? 0.55 : 0.3;
+        ctx.drawImage(Art.icons.reflag, rx + 8, ry + 4, 18, 18);
+        ctx.globalAlpha = 1;
+        text(ctx, 'E', rx + 17, ry + 25, has ? PAL.white : PAL.steel, 1, 'center');
+        if (has) text(ctx, p.reflag > 1 ? 'FLAG X' + p.reflag : 'FLAG', rx + 33, ry - 10, PAL.gold, 1, 'right', PAL.ink);
+      } else if (!g.combat) { // no gates to defer in a fight
         // blinks while it can be used; steady (and dim) while the next gate is the line, which can't be deferred
         panel(ctx, rx, ry, 34, 34, ready ? (Math.floor(T * 4) & 1 ? PAL.white : PAL.violet) : held ? PAL.violet : PAL.slate);
         if (!ready) ctx.globalAlpha = held ? 0.55 : 0.3;
@@ -550,7 +632,7 @@
       } else {
         text(ctx, 'ARROWS TO FLY - A / D TO AIM - SPACE TO FIRE', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
       }
-      text(ctx, g.royale ? 'LAST SHIP FLYING WINS' : g.combat ? 'WRECK THEM - FIRST TO ' + C.KILL_TARGET + ' KILLS' : 'FLY THROUGH THE GLOWING DONUT',
+      text(ctx, g.ctf ? 'BRING THEIR FLAG TO YOUR BASE - FIRST TO ' + C.CTF_CAPS : g.royale ? 'LAST SHIP FLYING WINS' : g.combat ? 'WRECK THEM - FIRST TO ' + C.KILL_TARGET + ' KILLS' : 'FLY THROUGH THE GLOWING DONUT',
         W / 2, hy2 + (touch ? 34 : 12), PAL.pink, 1, 'center', PAL.ink);
     } else if (g.msg) {
       const m = g.msg;
@@ -718,6 +800,16 @@
       text(ctx, 'GAS', L.gas.x + L.gas.w / 2, L.gas.y + 18, t.gas ? PAL.white : PAL.lime, 1, 'center');
     }
 
+    if (g.ctf && p.reflag > 0) { // capture the flag: Replace Flag, in the deferral's spot
+      const r = L.defer, ready = g.canReflag(p); // (not while your flag is home: a tap says so)
+      panel(ctx, r.x, r.y, r.w, r.h, ready && Math.floor(g.t * 4) & 1 ? PAL.white : PAL.gold);
+      if (!ready) ctx.globalAlpha = 0.55;
+      ctx.drawImage(Art.icons.reflag, r.x + 13, r.y + 6, 18, 18);
+      ctx.globalAlpha = 1;
+      text(ctx, 'FLAG', r.x + r.w / 2, r.y + 31, PAL.gold, 1, 'center');
+      if (p.reflag > 1) text(ctx, 'X' + p.reflag, r.x + r.w - 2, r.y + 2, PAL.white, 1, 'right', PAL.ink);
+      g.ui.push({ x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8, label: 'REPLACE FLAG', act: function () { g.tryReflag(); } });
+    }
     if (p.defer > 0 && !g.combat) {
       const r = L.defer, ready = g.canDefer(p); // (not while the next gate is the line: a tap says so)
       panel(ctx, r.x, r.y, r.w, r.h, ready && Math.floor(g.t * 4) & 1 ? PAL.white : PAL.violet);
@@ -855,9 +947,9 @@
 
     row(0, 'EVENT', mode.name, function () { g.setMode(-1); }, function () { g.setMode(1); });
     y += 27 + gap;
-    const list = fight ? RR.ARENAS : RR.TRACKS, at = fight ? g.arenaIdx : g.trackIdx;
+    const list = RR.mapsFor(mode.id), at = g.mapIdx();
     const def = list[at], rec = g.best[def.id], board = net.boards[def.id];
-    row(1, (fight ? 'ARENA ' : 'COURSE ') + (at + 1) + '/' + list.length, def.name,
+    row(1, (mode.id === 'ctf' ? 'MAP ' : fight ? 'ARENA ' : 'COURSE ') + (at + 1) + '/' + list.length, def.name,
       function () { g.setTrack(-1); }, function () { g.setTrack(1); });
     y += 27;
     text(ctx, def.blurb, W / 2, y, PAL.sky, 1, 'center', PAL.ink);
@@ -1221,7 +1313,7 @@
   /* -------------------------------------------------------------- online */
 
   const modeName = function (mode) { return (RR.MODES.find(function (m) { return m.id === mode; }) || RR.MODES[0]).name; };
-  const placeName = function (mode, track) { const list = mode === 'race' ? RR.TRACKS : RR.ARENAS; return (list[track] || list[0]).name; };
+  const placeName = function (mode, track) { const list = RR.mapsFor(mode); return (list[track] || list[0]).name; };
 
   /** The ONLINE screen: find or make a room, then wait in its lobby until everyone is READY. */
   function drawOnline(g, ctx, W, H) {
@@ -1237,7 +1329,7 @@
     const bw = Math.min(150, pw - 40), bx = Math.round(W / 2 - bw / 2);
 
     if (!room) {
-      const mode = RR.MODES[g.modeIdx].id, track = mode === 'race' ? g.trackIdx : g.arenaIdx;
+      const mode = RR.MODES[g.modeIdx].id, track = g.mapIdx();
       text(ctx, modeName(mode) + ' - ' + placeName(mode, track), W / 2, y + 44, PAL.white, 1, 'center');
       text(ctx, RR.DIFFS[g.diffIdx].name + ' BOTS IN EMPTY SEATS', W / 2, y + 56, PAL.steel, 1, 'center');
       button(g, ctx, touch ? 'QUICK MATCH' : 'QUICK MATCH (ENTER)', bx, y + 74, bw, 20, function () { M.quick(); }, PAL.lime);
@@ -1307,13 +1399,14 @@
     const mine = list.find(function (r) { return r.you; });
     panel(ctx, x, y, pw, ph, mine ? PLACE_COL[mine.place - 1] : PAL.white);
     text(ctx, mine ? ORD[mine.place - 1] + ' PLACE' : 'RESULTS', W / 2, y + 7, mine ? PLACE_COL[mine.place - 1] : PAL.white, 2, 'center', PAL.plum);
-    text(ctx, fight ? 'KILLS  DEATHS' : 'TIME', x + pw - 12, y + 30, PAL.steel, 1, 'right');
+    if (g.ctf && M.score) text(ctx, 'RED ' + M.score[0] + ' - ' + M.score[1] + ' BLUE', x + 12, y + 30, PAL.cyan);
+    text(ctx, g.ctf ? 'FLAGS  KILLS' : fight ? 'KILLS  DEATHS' : 'TIME', x + pw - 12, y + 30, PAL.steel, 1, 'right');
     list.forEach(function (r, k) {
       const ry = y + 42 + k * 12, col = r.you ? PAL.yellow : r.human ? PAL.white : PAL.silver;
       if (r.you) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 6, ry - 2, pw - 12, 11); }
       text(ctx, ORD[r.place - 1] || String(r.place), x + 12, ry, PLACE_COL[r.place - 1] || PAL.silver);
       text(ctx, r.name + (r.human ? '' : ' (BOT)'), x + 40, ry, col);
-      text(ctx, fight ? r.kills + '      ' + r.deaths : r.time != null ? fmt(r.time) : 'DNF', x + pw - 12, ry, col, 1, 'right');
+      text(ctx, g.ctf ? (r.caps || 0) + '      ' + r.kills : fight ? r.kills + '      ' + r.deaths : r.time != null ? fmt(r.time) : 'DNF', x + pw - 12, ry, col, 1, 'right');
     });
     const rw = M.reward, by = y + 46 + list.length * 12;
     if (rw) {
@@ -1360,7 +1453,10 @@
       ctx.fillStyle = s.colors.a;
       ctx.fillRect(x + 28, ry, 7, 7);
       text(ctx, me ? g.name : s.name, x + 42, ry, col);
-      if (g.royale) {
+      if (g.ctf) {
+        text(ctx, s.caps + ' FLAG' + (s.caps === 1 ? '' : 'S'), x + pw - 62, ry, s.caps ? PAL.gold : col, 1, 'right');
+        text(ctx, s.kills + ' KILL' + (s.kills === 1 ? '' : 'S'), x + pw - 14, ry, PAL.steel, 1, 'right');
+      } else if (g.royale) {
         text(ctx, s.kills + ' KILL' + (s.kills === 1 ? '' : 'S'), x + pw - 62, ry, col, 1, 'right');
         text(ctx, s.gone ? 'OUT' : g.over ? 'WINNER' : 'ALIVE', x + pw - 14, ry, s.gone ? PAL.steel : PAL.lime, 1, 'right');
       } else if (g.combat) {
@@ -1373,7 +1469,8 @@
       ry += 14;
     }
     ry += 3;
-    if (g.combat) text(ctx, g.royale && !g.over ? 'THE FIGHT GOES ON WITHOUT YOU' : RR.DIFFS[g.diffIdx].name + ' RIVALS', W / 2, ry, PAL.cyan, 1, 'center');
+    if (g.ctf) text(ctx, 'RED ' + g.caps[0] + ' - ' + g.caps[1] + ' BLUE', W / 2, ry, g.caps[p.side] > g.caps[1 - p.side] ? PAL.gold : PAL.cyan, 1, 'center');
+    else if (g.combat) text(ctx, g.royale && !g.over ? 'THE FIGHT GOES ON WITHOUT YOU' : RR.DIFFS[g.diffIdx].name + ' RIVALS', W / 2, ry, PAL.cyan, 1, 'center');
     else {
       text(ctx, 'BEST LAP ' + fmt(p.bestLap) + (g.newRecord ? '   NEW RECORD!' : ''), W / 2, ry,
         g.newRecord && Math.floor(T * 4) & 1 ? PAL.yellow : PAL.cyan, 1, 'center');

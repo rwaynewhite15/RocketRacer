@@ -302,3 +302,42 @@ test('online: a hit flashes a ship white only for a moment; human pilots are nam
     assert.deepStrictEqual([A.errors, B.errors], [[], []]);
   } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
 });
+
+test('online: capture the flag - two players on opposite teams; a flag taken on the server shows on both screens; Replace Flag (E) goes through the server', { skip }, async () => {
+  const s = await serve();
+  const A = await player(s.url, 'ALICE'), B = await player(s.url, 'BOB');
+  try {
+    await A.page.evaluate(() => { const g = RR.game; g.modeIdx = RR.MODES.findIndex((m) => m.id === 'ctf'); g.startRace(true); });
+    await intoRace(A, B);
+    const G = [...s.hub.rooms][0].engine.G;
+    assert.strictEqual(G.ctf, true, 'the room plays capture the flag');
+    const look = (P) => P.page.evaluate(() => {
+      const g = RR.game;
+      return { ctf: g.ctf, me: RR.mp.me, side: g.player.side, flags: g.flags.map((f) => f.state), carrier: g.flags[0].carrier ? g.flags[0].carrier.idx : -1, feed: g.feed.map((f) => f.text) };
+    });
+    let a = await look(A), b = await look(B);
+    assert.deepStrictEqual([a.ctf, a.me, a.side, b.me, b.side], [true, 0, 0, 1, 1], 'Alice red, Bob blue');
+    assert.deepStrictEqual(a.flags, ['home', 'home']);
+    await A.page.waitForFunction(() => RR.game.phase === 'race', null, { timeout: 8000 });
+
+    // Bob's ship takes red's flag (moved there on the server)
+    for (const sh of G.ships) if (sh.ai) sh.ai = null;
+    const bob = G.ships[1], red = G.flags[0];
+    bob.x = red.home.x; bob.y = red.home.y; bob.vx = bob.vy = 0;
+    await A.page.waitForFunction(() => RR.game.flags[0].state === 'carried', null, { timeout: 3000 });
+    a = await look(A);
+    assert.strictEqual(a.carrier, 1, 'on Alice\'s screen, Bob has her flag');
+    await A.page.waitForFunction(() => RR.game.feed.some((f) => f.text === 'BOB TOOK THE RED FLAG'), null, { timeout: 3000 });
+    await B.page.waitForFunction(() => RR.game.player.flag && RR.game.msg && RR.game.msg.text === 'GOT THE FLAG!', null, { timeout: 3000 });
+    bob.x = 4000; bob.y = 600; // off into the middle
+
+    // Alice holds a Replace Flag (given on the server); E sends her flag home
+    G.ships[0].reflag = 1;
+    await A.page.waitForFunction(() => RR.game.player.reflag === 1, null, { timeout: 3000 });
+    await A.page.keyboard.press('KeyE');
+    await A.page.waitForFunction(() => RR.game.flags[0].state === 'home' && RR.game.msg && RR.game.msg.text === 'FLAG REPLACED!', null, { timeout: 3000 });
+    assert.deepStrictEqual([red.state, bob.flag, G.ships[0].reflag], ['home', null, 0], 'on the server');
+    await B.page.waitForFunction(() => !RR.game.player.flag && RR.game.flags[0].state === 'home', null, { timeout: 3000 });
+    assert.deepStrictEqual([A.errors, B.errors], [[], []]);
+  } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
+});

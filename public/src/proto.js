@@ -16,10 +16,11 @@
   'use strict';
 
   const P = {
-    VERSION: 2, // 2: the gate deferral replaced the do-over
+    VERSION: 3, // 2: the gate deferral replaced the do-over; 3: capture the flag
     INPUT: 1, SNAP: 2, // first byte of a binary message
     WEAPONS: [null, 'blaster', 'missile', 'mine', 'emp'],
-    ITEMS: ['nitro', 'shield', 'repair', 'defer', 'blaster', 'missile', 'mine', 'emp'],
+    ITEMS: ['nitro', 'shield', 'repair', 'defer', 'blaster', 'missile', 'mine', 'emp', 'reflag'],
+    FLAG: ['home', 'carried', 'dropped'], // capture the flag: where a flag is
   };
   const PI = Math.PI;
 
@@ -104,7 +105,7 @@
       o.u16(Math.round(clampN(s.hp, 0, 6000) * 10)); o.u16(s.maxHp);
       o.u8(dsec(s.shield)); o.u8(dsec(s.nitro)); o.u8(dsec(s.stun)); o.u8(dsec(s.emp)); o.u8(dsec(s.invuln));
       o.i16(s.spinRate * 100);
-      o.u8(Math.max(0, P.WEAPONS.indexOf(s.weapon))); o.u8(clampN(s.ammo, 0, 255)); o.u8(clampN(s.defer, 0, 255));
+      o.u8(Math.max(0, P.WEAPONS.indexOf(s.weapon))); o.u8(clampN(s.ammo, 0, 255)); o.u8(clampN(s.defer, 0, 255)); o.u8(clampN(s.reflag, 0, 255)); o.u8(clampN(s.caps, 0, 255));
       o.u8(clampN(s.lap, 0, 255)); o.u8(clampN(s.nextCp, 0, 255)); o.u16(clampN(s.cpCount, 0, 65535)); o.u8(clampN(s.place, 0, 255));
       o.f32(s.lapStart); o.f32(s.bestLap || 0); o.f32(s.finished ? s.finishTime : 0); o.f32(s.progress || 0);
       o.u16(clampN(s.kills, 0, 65535)); o.u16(clampN(s.deaths, 0, 65535)); o.u8(clampN(s.elim, 0, 255));
@@ -128,6 +129,11 @@
     for (const p of w.pickups) { o.u8(p.on ? 1 : 0); o.u8(Math.max(0, P.ITEMS.indexOf(p.type))); }
     o.u8(w.rocks.length);
     for (const a of w.rocks) { o.u8(a.dead ? 1 : 0); o.f32(a.x); o.f32(a.y); }
+    // capture the flag: each flag (where it is, who has it), then red's and blue's captures
+    const flags = w.ctf && w.flags ? w.flags : [];
+    o.u8(flags.length);
+    for (const f of flags) { o.u8(Math.max(0, P.FLAG.indexOf(f.state))); o.u8(f.carrier ? f.carrier.idx : 255); o.f32(f.x); o.f32(f.y); }
+    o.u8(clampN(w.caps ? w.caps[0] : 0, 0, 255)); o.u8(clampN(w.caps ? w.caps[1] : 0, 0, 255));
     return o.bytes();
   };
 
@@ -163,7 +169,7 @@
         hp: r.u16() / 10, maxHp: r.u16(),
         shield: r.u8() / 10, nitro: r.u8() / 10, stun: r.u8() / 10, emp: r.u8() / 10, invuln: r.u8() / 10,
         spinRate: r.i16() / 100,
-        weapon: P.WEAPONS[r.u8()] || null, ammo: r.u8(), defer: r.u8(),
+        weapon: P.WEAPONS[r.u8()] || null, ammo: r.u8(), defer: r.u8(), reflag: r.u8(), caps: r.u8(),
         lap: r.u8(), nextCp: r.u8(), cpCount: r.u16(), place: r.u8(),
         lapStart: r.f32(), bestLap: r.f32(), finishTime: r.f32(), progress: r.f32(),
         kills: r.u16(), deaths: r.u16(), elim: r.u8(),
@@ -187,6 +193,13 @@
     const nr = r.u8();
     s.rocks = [];
     for (let i = 0; i < nr; i++) s.rocks.push({ dead: r.u8() === 1, x: r.f32(), y: r.f32() });
+    const nf = r.u8();
+    s.flags = [];
+    for (let i = 0; i < nf; i++) {
+      const st = P.FLAG[r.u8()] || 'home', c = r.u8();
+      s.flags.push({ state: st, carrier: c === 255 ? -1 : c, x: r.f32(), y: r.f32() });
+    }
+    s.caps = [r.u8(), r.u8()];
     return s;
   };
 
