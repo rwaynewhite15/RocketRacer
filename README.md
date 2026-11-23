@@ -38,14 +38,26 @@ and a second runs online multiplayer over WebSockets.
     own base to capture it, but only while your own flag is at home. A wrecked carrier drops the
     flag where it was hit; touching your own dropped flag sends it home, and a dropped flag goes
     home by itself after 25 seconds. First to 3 captures wins, or the most when the 5-minute
-    clock runs out. Every ship has the cannon, there is no friendly fire, and wrecks respawn
-    beside their own base. The power-ups are the Grand Prix's, with **Replace Flag** (a gold
+    clock runs out. Every ship has the cannon, there is no friendly fire (a team's mines never
+    go off for it either), and wrecks respawn beside their own base after 4 seconds, twice a
+    dogfight's wait, so a base cleared of defenders stays clear for a moment. The gas giant in
+    the middle is vast but light: it pulls, but never holds a ship that touches it. The
+    power-ups are the Grand Prix's, with **Replace Flag** (a gold
     capsule, no more than two of them on the map at once) instead of the gate deferral: E /
     Shift, or the FLAG button, sends your flag
     straight home even while an enemy is carrying it (your deferral upgrade sets how many it
     holds). An arrow at the screen's edge points to the job in hand: their flag, home while
-    you carry it, or whoever has stolen yours. Each team's AI keeps one ship guarding the base;
-    the rest attack, escort a carrier and chase thieves, and they use Replace Flag too.
+    you carry it, or whoever has stolen yours.
+    The AI plays as a team, by a plan it rethinks twice a second and whenever a flag changes
+    hands: one ship guards the base and drops its mines round the flag; the other two raid,
+    one by the north way round the middle and one by the south; a carrier runs for home round
+    the enemy ahead, with its teammates flying cover; a thief is hunted by the two nearest
+    ships, which cut it off at its own base when it has got away; and a loose flag is fetched
+    by the nearest. Rivals plan their routes round planets, their pull and the asteroid fields,
+    aim their guns (within a forward arc, misjudging a jinking target as a person would, the
+    more so the lower the difficulty), pick up what helps on the way, and save Replace Flag
+    for the moment it decides the point: a thief nearly home, or a teammate waiting at home
+    with your flag. They take one only a short way off their route, one to a team.
   A kill goes to whoever hit the ship in its last 5 seconds, even if a planet finished it off.
 - **The hangar** (H on the menu): four ships with five stats each: Accel, Top Speed,
   Handling, Hull and Firepower (a weapon damage multiplier).
@@ -171,8 +183,9 @@ npm test           # API tests, plus browser tests of the game if Playwright is 
 ```
 
 The browser tests drive the real game in headless Chromium (AI races on every course, zoom,
-gate deferral, the hangar, dogfights and battle royales in every arena, capture the flag (the rules, bots
-playing whole matches, and two players online), and two players racing
+gate deferral, the hangar, dogfights and battle royales in every arena, capture the flag (the rules,
+the AI's teamwork, routes and Replace Flag timing, bots playing whole matches, and two players
+online), and two players racing
 online against the multiplayer server, also on a slow network). They need `npm install --no-save playwright && npx playwright install chromium`
 and are skipped without it.
 

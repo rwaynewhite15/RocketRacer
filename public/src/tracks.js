@@ -14,7 +14,7 @@
 
   /*
    * cps      [x, y] donut gates in race order; the first is start/finish
-   * planets  { x, y, r, type, seed, ring }
+   * planets  { x, y, r, type, seed, ring, g } (g: its pull, when not the usual for its size)
    * fields   elliptical asteroid fields { x, y, rx, ry, n, rot, max }
    * orbiters asteroids circling a planet { planet, dist, n, speed, size }
    * pickups  rows across the racing line { seg, t, n, kind } — `seg` is the
@@ -168,7 +168,9 @@
       nebula: ['#0c1a3a', '#12285a', '#1a3a7a', '#3a0f22', '#5a1630', '#7a1e3c'],
       cx: 4000, cy: 2000, w: 3300, h: 1500, // 6600 x 3000: about nine arenas
       bases: [{ x: 1100, y: 2000 }, { x: 6900, y: 2000 }],
-      planets: [{ x: 4000, y: 2000, r: 260, type: 'gas', seed: 71, ring: true }].concat(mirror([
+      // the giant in the middle is vast but light: at the usual pull for its size (468) it would hold a ship
+      // that touched it for good, as no rocket's thrust (357 to 430) beats that at its surface
+      planets: [{ x: 4000, y: 2000, r: 260, type: 'gas', seed: 71, ring: true, g: 290 }].concat(mirror([
         { x: 2650, y: 1150, r: 125, type: 'lava', seed: 72 },
         { x: 2600, y: 2950, r: 92, type: 'ice', seed: 73 },
         { x: 1750, y: 1250, r: 62, type: 'moon', seed: 74 },
@@ -221,7 +223,7 @@
       const art = Art.planet(p);
       return {
         x: p.x, y: p.y, r: p.r, type: p.type, sprite: art.cv, ext: art.ext,
-        g: 260 + p.r * 0.8, range: p.r * 3.4, map: Art.PTYPES[p.type].map,
+        g: p.g || 260 + p.r * 0.8, range: p.r * 3.4, map: Art.PTYPES[p.type].map, // (`g`: a pull of its own)
       };
     });
 
