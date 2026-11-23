@@ -14,7 +14,7 @@
 
   /*
    * cps      [x, y] donut gates in race order; the first is start/finish
-   * planets  { x, y, r, type, seed, ring }
+   * planets  { x, y, r, type, seed, ring, g } (g: its pull, when not the usual for its size)
    * fields   elliptical asteroid fields { x, y, rx, ry, n, rot, max }
    * orbiters asteroids circling a planet { planet, dist, n, speed, size }
    * pickups  rows across the racing line { seg, t, n, kind } — `seg` is the
@@ -150,6 +150,47 @@
     },
   ];
 
+  /*
+   * Capture the Flag maps: huge and wide, a base at each end. A flag map has
+   * `flags: true`, half sizes `w` and `h` round (cx, cy) instead of a radius,
+   * `bases` [red, blue] (each team's flag stands on its base and it spawns
+   * beside it), and `spots`: pickups placed by hand { x, y, kind }. The two
+   * halves mirror each other through the middle, so neither side is better.
+   */
+  const mirror = function (list) { // each item, and its twin turned half way round the middle (4000, 2000)
+    const out = [];
+    list.forEach(function (o) { out.push(o, Object.assign({}, o, { x: 8000 - o.x, y: 4000 - o.y, seed: o.seed ? o.seed + 50 : o.seed })); });
+    return out;
+  };
+  RR.FLAG_MAPS = [
+    {
+      id: 'divide', name: 'THE GREAT DIVIDE', blurb: 'TWO BASES AND A VAST GULF OF SPACE', arena: true, flags: true, seed: 79,
+      nebula: ['#0c1a3a', '#12285a', '#1a3a7a', '#3a0f22', '#5a1630', '#7a1e3c'],
+      cx: 4000, cy: 2000, w: 3300, h: 1500, // 6600 x 3000: about nine arenas
+      bases: [{ x: 1100, y: 2000 }, { x: 6900, y: 2000 }],
+      // the giant in the middle is vast but light: at the usual pull for its size (468) it would hold a ship
+      // that touched it for good, as no rocket's thrust (357 to 430) beats that at its surface
+      planets: [{ x: 4000, y: 2000, r: 260, type: 'gas', seed: 71, ring: true, g: 290 }].concat(mirror([
+        { x: 2650, y: 1150, r: 125, type: 'lava', seed: 72 },
+        { x: 2600, y: 2950, r: 92, type: 'ice', seed: 73 },
+        { x: 1750, y: 1250, r: 62, type: 'moon', seed: 74 },
+        { x: 1800, y: 2800, r: 74, type: 'desert', seed: 75 },
+        { x: 3350, y: 3150, r: 58, type: 'moon', seed: 76 },
+      ])),
+      fields: mirror([
+        { x: 3250, y: 2000, rx: 170, ry: 560, n: 18, max: 3 },
+        { x: 4000, y: 850, rx: 520, ry: 160, n: 14, max: 2 },
+        { x: 2150, y: 2000, rx: 120, ry: 300, n: 7, max: 2 },
+      ]),
+      spots: mirror([
+        { x: 1550, y: 1700, kind: 'P' }, { x: 1550, y: 2300, kind: 'P' }, { x: 1950, y: 2000, kind: 'W' },
+        { x: 2700, y: 1650, kind: 'W' }, { x: 2750, y: 2400, kind: 'P' },
+        { x: 3300, y: 1150, kind: 'P' }, { x: 3200, y: 2900, kind: 'W' },
+        { x: 4000, y: 1350, kind: 'W' }, { x: 3700, y: 1550, kind: 'P' },
+      ]),
+    },
+  ];
+
   function segDist(px, py, ax, ay, bx, by) {
     const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy || 1;
     const t = RR.clamp(((px - ax) * dx + (py - ay) * dy) / l2, 0, 1);
@@ -182,7 +223,7 @@
       const art = Art.planet(p);
       return {
         x: p.x, y: p.y, r: p.r, type: p.type, sprite: art.cv, ext: art.ext,
-        g: 260 + p.r * 0.8, range: p.r * 3.4, map: Art.PTYPES[p.type].map,
+        g: p.g || 260 + p.r * 0.8, range: p.r * 3.4, map: Art.PTYPES[p.type].map, // (`g`: a pull of its own)
       };
     });
 
@@ -199,7 +240,14 @@
      * circle of spawn points facing the middle ---------------------------- */
     const grid = [];
     let c0 = null, ux = 0, uy = 0, laneEnd = null;
-    if (arena) {
+    if (def.flags) {
+      // three spawn points beside each base, facing the far side; ship i spawns on side i % 2
+      for (let i = 0; i < 6; i++) {
+        const b = def.bases[i % 2], j = i >> 1, dir = i % 2 ? -1 : 1;
+        const pt = offPlanets({ x: b.x + dir * 260, y: b.y + (j - 1) * 170 }, 80);
+        grid.push({ x: pt.x, y: pt.y, a: dir > 0 ? 0 : Math.PI, side: i % 2 });
+      }
+    } else if (arena) {
       for (let i = 0; i < 6; i++) {
         const a = (def.spawnA || 0) + (i / 6) * TAU;
         const pt = offPlanets({ x: def.cx + Math.cos(a) * def.radius * 0.6, y: def.cy + Math.sin(a) * def.radius * 0.6 }, 80);
@@ -230,6 +278,10 @@
         pickups.push({ x: pt.x, y: pt.y, kind: row.kind });
       }
     });
+    (def.spots || []).forEach(function (o) {
+      const pt = offPlanets({ x: o.x, y: o.y }, 46);
+      pickups.push({ x: pt.x, y: pt.y, kind: o.kind });
+    });
     (def.rings || []).forEach(function (ring) {
       for (let k = 0; k < ring.n; k++) {
         const a = (ring.a || 0) + (k / ring.n) * TAU;
@@ -248,7 +300,10 @@
       if (laneEnd && segDist(x, y, laneEnd.x, laneEnd.y, c0.x + ux * 120, c0.y + uy * 120) < 74 + r) return false;
       if (arena) {
         for (let k = 0; k < grid.length; k++) if (Math.hypot(x - grid[k].x, y - grid[k].y) < 70 + r) return false;
-        if (Math.hypot(x - def.cx, y - def.cy) > def.radius - r - 20) return false;
+        if (def.flags) {
+          if (Math.abs(x - def.cx) > def.w - r - 20 || Math.abs(y - def.cy) > def.h - r - 20) return false;
+          for (let k = 0; k < def.bases.length; k++) if (Math.hypot(x - def.bases[k].x, y - def.bases[k].y) < 300 + r) return false;
+        } else if (Math.hypot(x - def.cx, y - def.cy) > def.radius - r - 20) return false;
       }
       return true;
     }
@@ -290,7 +345,8 @@
     });
     let bounds = { x0: x0 - 420, y0: y0 - 420, x1: x1 + 420, y1: y1 + 420 };
     if (arena) {
-      x0 = def.cx - def.radius; y0 = def.cy - def.radius; x1 = def.cx + def.radius; y1 = def.cy + def.radius;
+      const hw = def.flags ? def.w : def.radius, hh = def.flags ? def.h : def.radius;
+      x0 = def.cx - hw; y0 = def.cy - hh; x1 = def.cx + hw; y1 = def.cy + hh;
       bounds = { x0: x0, y0: y0, x1: x1, y1: y1 };
     }
 
@@ -310,7 +366,8 @@
       def: def, name: def.name, laps: def.laps,
       cps: cps, donuts: donuts, planets: planets, grid: grid, pickups: pickups, rocks: rocks,
       bounds: bounds, arena: arena,
-      center: arena ? { x: def.cx, y: def.cy } : null, radius: arena ? def.radius : 0,
+      center: arena ? { x: def.cx, y: def.cy } : null, radius: arena ? def.radius || Math.max(def.w, def.h) : 0,
+      bases: def.bases ? def.bases.map(function (b) { return { x: b.x, y: b.y }; }) : null, flags: !!def.flags,
       mini: { cv: mini, w: MW, h: MH, s: ms, ox: mox, oy: moy },
       nebula: Art.nebula(def.seed, def.nebula),
     };
@@ -325,5 +382,16 @@
     const key = 'a' + idx;
     if (!built[key]) built[key] = build(RR.ARENAS[idx]);
     return built[key];
+  };
+  RR.getFlagMap = function (idx) {
+    const key = 'f' + idx;
+    if (!built[key]) built[key] = build(RR.FLAG_MAPS[idx]);
+    return built[key];
+  };
+  /** The courses, arenas or flag maps an event is held on. */
+  RR.mapsFor = function (mode) { return mode === 'race' ? TRACKS : mode === 'ctf' ? RR.FLAG_MAPS : RR.ARENAS; };
+  RR.getMap = function (mode, idx) {
+    const n = RR.mapsFor(mode).length, i = ((idx % n) + n) % n;
+    return mode === 'race' ? RR.getTrack(i) : mode === 'ctf' ? RR.getFlagMap(i) : RR.getArena(i);
   };
 })();
