@@ -9,14 +9,15 @@
  *   WebSocket /ws       online play (lib/mp.js)
  *
  * Environment: PORT, APP_ENV, COMMIT_SHA, STORE / LEADERBOARD_COLLECTION
- * (where online race times are recorded, as for the game's service), and
+ * (where online race times, fights' points and players' games are recorded,
+ * as for the game's service), and
  * MP_ORIGINS: the pages allowed to connect, comma separated (all when unset).
  */
 
 const http = require('http');
 const { createStore } = require('./lib/store');
 const { attachMultiplayer } = require('./lib/mp');
-const { onlineRecorder } = require('./server');
+const { onlineRecorders } = require('./server');
 
 function json(res, status, obj) {
   const body = JSON.stringify(obj);
@@ -38,7 +39,7 @@ function createMpServer(store, env) {
     return json(res, 404, { error: 'Not found' });
   });
   const origins = env.MP_ORIGINS ? env.MP_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean) : null;
-  hub = attachMultiplayer(server, { post: onlineRecorder(store), origins, log: console.error });
+  hub = attachMultiplayer(server, Object.assign({ origins, log: console.error }, onlineRecorders(store)));
   server.hub = hub;
   return server;
 }

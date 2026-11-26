@@ -205,6 +205,52 @@ test('mp: a race runs to the results; only finishes the player flew themselves g
   } finally { a.ws.close(); s.close(); }
 });
 
+test('mp: a fight online goes on record - each human\'s points for the mode\'s table and the game for their history; three-team rooms send every team\'s score', async () => {
+  const scores = [], games = [], races = [];
+  const s = await serve({ speed: 40, resultsMs: 400, post: (b) => races.push(b), postScore: (b) => scores.push(b), postGame: (b) => games.push(b) });
+  const a = player(s.url, 'ALICE'), b = player(s.url, 'BOB');
+  try {
+    await a.hello('alice-pid-1'); await b.hello('bob-pid-22');
+    a.send({ t: 'create', mode: 'dogfight', track: 0, diff: 2, setup });
+    const ra = await a.wait(isRoom());
+    b.send({ t: 'join', code: ra.room.code, setup });
+    await b.wait(isRoom());
+    a.send({ t: 'ready', on: true }); b.send({ t: 'ready', on: true });
+    await a.wait((m) => m.t === 'start');
+    const G = [...s.hub.rooms][0].engine.G;
+    while (G.phase !== 'race') await sleep(20);
+    G.ships[0].kills = 5; // Alice wins by kills
+    const res = await a.wait((m) => m.t === 'results', 20000);
+    assert.strictEqual(res.list.find((r) => r.you).place, 1);
+    assert.strictEqual(races.length, 0, 'no race times from a fight');
+    const mine = (list, pid) => list.find((x) => x.pid === pid);
+    assert.deepStrictEqual(scores.map((x) => x.pid).sort(), ['alice-pid-1', 'bob-pid-22'], 'both humans\' points');
+    const sa = mine(scores, 'alice-pid-1');
+    assert.deepStrictEqual([sa.track, sa.diff, sa.map, sa.result.place, sa.result.win, sa.result.kills], ['dogfight', 2, 'crucible', 1, true, 5]);
+    assert.ok(sa.result.left > 100 && sa.result.left <= 180, 'won early: time left on the clock: ' + sa.result.left);
+    assert.strictEqual(require('../public/src/records').check('dogfight', sa.result), null, 'a result the rules allow');
+    const ga = mine(games, 'alice-pid-1'), gb = mine(games, 'bob-pid-22');
+    assert.deepStrictEqual([ga.mode, ga.place, ga.win, gb.mode, gb.win], ['dogfight', 1, true, 'dogfight', false]);
+
+    // a capture the flag room on a three-team map: three flags and three scores in every snapshot
+    await a.wait(isRoom((m) => m.room.state === 'lobby'), 3000);
+    const flagMaps = require('../lib/engine').createEngine().RR.FLAG_MAPS, triad = flagMaps.findIndex((m) => m.id === 'triad');
+    a.send({ t: 'leave' }); b.send({ t: 'leave' });
+    await sleep(100);
+    a.send({ t: 'create', mode: 'ctf', track: triad, diff: 1, setup });
+    const rc = await a.wait(isRoom((m) => m.room.mode === 'ctf'));
+    b.send({ t: 'join', code: rc.room.code, setup });
+    await b.wait(isRoom((m) => m.room.mode === 'ctf'));
+    a.send({ t: 'ready', on: true }); b.send({ t: 'ready', on: true });
+    const st = await a.wait((m) => m.t === 'start');
+    assert.strictEqual(st.opts.track, triad);
+    a.snaps.length = 0;
+    await sleep(300);
+    const snap = a.snaps[a.snaps.length - 1];
+    assert.deepStrictEqual([snap.flags.length, snap.caps], [3, [0, 0, 0]]);
+  } finally { a.ws.close(); b.ws.close(); s.close(); }
+});
+
 test('mp: the server refuses an old game, junk, floods and oversized messages', async () => {
   const s = await serve();
   try {

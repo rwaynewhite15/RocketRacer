@@ -382,3 +382,146 @@ test('engine: capture the flag - the bots go for the flag and bring it home: who
   }
   assert.ok(won, 'blue beats a red team flying a pilot short');
 });
+
+test('engine: capture the flag - one Replace Flag in the whole match: never on the map while a pilot holds it, nobody else can take one, and a wrecked holder loses it', () => {
+  const { G, RR, park, news, bolt } = ctfMatch();
+  assert.strictEqual(RR.CFG.REFLAG_MAX, 1);
+  const onMap = () => G.pickups.filter((p) => p.on && p.type === 'reflag');
+  const reroll = () => { for (const p of G.pickups) { p.on = false; p.timer = 0; } }; // (every spot comes back at once, freshly rolled)
+  // one lying on the map: blue takes it, and it is gone from the map
+  for (const p of G.pickups) if (p.type === 'reflag') p.type = 'nitro';
+  const spot = G.pickups.find((p) => p.kind === 'P');
+  spot.type = 'reflag'; spot.on = true;
+  const blue = G.ships[1], red = G.ships[0];
+  G.events.length = 0;
+  park(blue, spot.x, spot.y); G.step(STEP);
+  assert.deepStrictEqual([blue.reflag, onMap().length, G.reflagHolder() === blue], [1, 0, true]);
+  assert.ok(news().includes('rtake 1 1'), 'news of the team that has it: ' + news());
+  park(blue, 3000, 600);
+  // while blue holds it the map never offers another, however often the spots roll
+  let seen = 0;
+  for (let i = 0; i < 300; i++) { reroll(); G.step(STEP); seen += onMap().length; }
+  assert.strictEqual(seen, 0, 'none on the map while one is held');
+  // nor can anyone else pick one up (should one be lying there all the same)
+  spot.type = 'reflag'; spot.on = true;
+  park(red, spot.x, spot.y); G.step(STEP);
+  assert.deepStrictEqual([red.reflag, spot.on], [0, true], 'red cannot take a second one');
+  spot.type = 'nitro';
+  park(red, 3300, 3000);
+  // blue is wrecked: the Replace Flag is lost with it, and the map can offer one again
+  G.events.length = 0;
+  blue.shield = 0; blue.invuln = 0; blue.hp = 1; bolt(red, blue, 50); G.step(STEP);
+  assert.deepStrictEqual([blue.dead > 0, blue.reflag, G.reflagHolder()], [true, 0, null]);
+  assert.ok(news().includes('rlost 1 1'), 'news that the team lost it: ' + news());
+  let back = false;
+  for (let i = 0; i < 400 && !back; i++) { reroll(); G.step(STEP); back = onMap().length === 1; }
+  assert.ok(back, 'back on the map');
+});
+
+/** The index of a flag map by its id. */
+function flagMap(RR, id) { return RR.FLAG_MAPS.findIndex((m) => m.id === id); }
+
+test('engine: capture the flag for three teams (2 v 2 v 2) - sides and colours, spawns, any enemy flag scores while your own is home, and the team with the most wins', () => {
+  const { RR } = createEngine();
+  const triad = flagMap(RR, 'triad');
+  assert.ok(triad >= 0, 'a three-team map');
+  // bots: two to a team, one raiding and one at home
+  const bots = createEngine().G;
+  bots.startOnline({ server: true, mode: 'ctf', track: triad, diff: 1, seats: [0, 1, 2, 3, 4, 5].map((i) => seat(i)) });
+  assert.deepStrictEqual(bots.ships.map((s) => s.ai.role), ['attack', 'attack', 'attack', 'defend', 'defend', 'defend']);
+  // everyone hands off from here on
+  const { G } = createEngine();
+  G.startOnline({ server: true, mode: 'ctf', track: triad, diff: 1, seats: [0, 1, 2, 3, 4, 5].map((i) => seat(i, true)) });
+  assert.deepStrictEqual([G.teams, G.ships.map((s) => s.side), G.ships.map((s) => s.team), [...G.caps]], [3, [0, 1, 2, 0, 1, 2], [0, 1, 2, 0, 1, 2], [0, 0, 0]]);
+  assert.deepStrictEqual(Array.from(RR.SIDES, (S) => S.name), ['RED', 'BLUE', 'GREEN']);
+  const [rf, bf, gf] = G.flags;
+  assert.deepStrictEqual(G.flags.map((f) => [f.side, f.state, f.x, f.y]), G.track.bases.map((b, k) => [k, 'home', b.x, b.y]));
+  // each ship starts beside its own base, facing the middle
+  const c = G.track.center;
+  for (const s of G.ships) {
+    const b = G.track.bases[s.side];
+    assert.ok(Math.hypot(s.x - b.x, s.y - b.y) < 450, 'beside its base');
+    assert.ok(Math.abs(RR.angDiff(s.angle, Math.atan2(c.y - s.y, c.x - s.x))) < 0.3, 'facing the middle');
+  }
+  // the three bases are a third of the way round from each other, the same distance from the middle
+  const d = G.track.bases.map((b) => Math.hypot(b.x - c.x, b.y - c.y));
+  assert.ok(Math.max(...d) - Math.min(...d) < 2, 'all as far from the middle');
+  run(G, 4.2);
+  const park = (s, x, y) => { s.x = x; s.y = y; s.vx = s.vy = 0; };
+  const [red, blue, green, red2, blue2, green2] = G.ships;
+  G.ships.forEach((s, i) => park(s, 2400 + i * 60, 3000 + (i % 2) * 400));
+  // green takes red's flag and brings it home: a capture for green
+  park(green, rf.x, rf.y); G.step(STEP);
+  assert.strictEqual(rf.carrier, green);
+  park(green, gf.home.x, gf.home.y); G.step(STEP);
+  assert.deepStrictEqual([[...G.caps], rf.state, green.caps], [[0, 0, 1], 'home', 1]);
+  assert.strictEqual(G.ctfLeader(), 2, 'green leads');
+  // blue takes green's flag; then green, holding blue's, cannot score until its own is home again
+  park(blue, gf.x, gf.y); G.step(STEP);
+  park(blue, 3000, 4200);
+  park(green2, bf.x, bf.y); G.step(STEP);
+  assert.strictEqual(bf.carrier, green2);
+  park(green2, gf.home.x, gf.home.y); run(G, 0.2, () => park(green2, gf.home.x, gf.home.y));
+  assert.deepStrictEqual([...G.caps], [0, 0, 1], 'no capture while your own flag is away');
+  park(green2, 3000, 2400); // (off the base for now)
+  // blue is wrecked and drops green's flag; red takes it: any enemy flag will do
+  blue.shield = 0; blue.invuln = 0; blue.hp = 1;
+  G.shots.push({ type: 'bolt', owner: red2, x: blue.x, y: blue.y, vx: 0, vy: 0, life: 0.5, color: '#fff', dmg: 50 });
+  G.step(STEP);
+  assert.strictEqual(gf.state, 'dropped');
+  park(red, gf.x, gf.y); G.step(STEP);
+  assert.strictEqual(gf.carrier, red, 'red takes green\'s dropped flag');
+  park(red, rf.home.x, rf.home.y); G.step(STEP);
+  assert.deepStrictEqual([...G.caps], [1, 0, 1], 'red scores with green\'s');
+  assert.strictEqual(G.ctfLeader(), -1, 'two teams share the most: nobody leads');
+  // green's flag is home again: green2 (still holding blue's) scores; two more ends it with green on top
+  park(green2, gf.home.x, gf.home.y); G.step(STEP);
+  assert.deepStrictEqual([...G.caps], [1, 0, 2]);
+  park(green, rf.x, rf.y); G.step(STEP); park(green, gf.home.x, gf.home.y); G.step(STEP);
+  assert.deepStrictEqual([[...G.caps], G.over], [[1, 0, 3], true]);
+  assert.deepStrictEqual(Array.from(G.order.slice(0, 2), (s) => s.side), [2, 2], 'the winning team first');
+});
+
+test('engine: capture the flag - a round arena\'s wall is a circle: a ship flying out is pulled back in', () => {
+  const { G, RR } = createEngine();
+  G.startOnline({ server: true, mode: 'ctf', track: flagMap(RR, 'crown'), diff: 1, seats: [0, 1, 2, 3, 4, 5].map((i) => seat(i, true)) });
+  const w = G.track.wall;
+  assert.ok(w && w.r > 2000, 'a round wall');
+  run(G, 4.2);
+  const s = G.ships[0];
+  // straight out to the north-east (a corner of the square around the circle) at full throttle
+  const a = -Math.PI / 4;
+  s.x = w.x + Math.cos(a) * (w.r - 100); s.y = w.y + Math.sin(a) * (w.r - 100); s.angle = a; s.vx = Math.cos(a) * 300; s.vy = Math.sin(a) * 300;
+  s.netInput.thrust = 1;
+  let out = false, far = 0;
+  run(G, 6, () => { s.angle = a; out = out || s.out; far = Math.max(far, Math.hypot(s.x - w.x, s.y - w.y) - w.r); });
+  assert.ok(out, 'told it is outside');
+  assert.ok(far < 260, 'held near the circle, not let out to the corner: ' + far.toFixed(0));
+});
+
+test('engine: capture the flag - every map plays: bots of every team raid, nobody sticks to a planet', () => {
+  const { RR } = createEngine();
+  for (let m = 0; m < RR.FLAG_MAPS.length; m++) {
+    const id = RR.FLAG_MAPS[m].id;
+    let ok = false, last = '';
+    for (let k = 0; k < 2 && !ok; k++) { // (matches vary: a second go for a slow one)
+      const { G } = createEngine();
+      G.startOnline({ server: true, mode: 'ctf', track: m, diff: 1, seats: [0, 1, 2, 3, 4, 5].map((i) => seat(i)) });
+      const takes = G.caps.map(() => 0);
+      let stuck = 0;
+      while (G.raceTime < 150 && !G.over) {
+        G.step(STEP);
+        for (const e of G.events) if (e[0] === 'f' && e[1] === 'take') takes[G.ships[e[3]].side]++;
+        G.events.length = 0;
+        if (G.phase !== 'race') continue;
+        for (const s of G.ships) {
+          if (s.dead > 0) continue;
+          for (const p of G.track.planets) if (Math.hypot(s.x - p.x, s.y - p.y) - p.r < 40 && Math.hypot(s.vx, s.vy) < 40) stuck += STEP;
+        }
+      }
+      last = id + ': takes ' + takes + ', stuck ' + stuck.toFixed(1) + ' s';
+      ok = takes.every((t) => t >= 1) && stuck < 4;
+    }
+    assert.ok(ok, last);
+  }
+});
