@@ -2008,7 +2008,7 @@ test('capture the flag: you fly for red with two red AI teammates; the arrow lea
     // take it: the arrow turns for home, and the HUD says so
     await page.evaluate(() => { const g = RR.game, p = g.player, f = g.flags[1]; p.x = f.x - 5; p.y = f.y; p.vx = p.vy = 0; g.step(1 / 120); });
     await page.waitForTimeout(150);
-    assert.deepStrictEqual(await page.evaluate(() => [RR.game.flags[1].state, RR.game.player.flag === RR.game.flags[1], RR.game.msg && RR.game.msg.text]), ['carried', true, 'GOT THE FLAG!']);
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.flags[1].state, RR.game.player.flag === RR.game.flags[1], RR.game.msg && RR.game.msg.text]), ['carried', true, 'GOT THE BLUE FLAG!']);
     assert.strictEqual(await arrow(), 'home', 'then home');
 
     // a Replace Flag with your flag at home: E keeps it, and says why
@@ -2022,7 +2022,7 @@ test('capture the flag: you fly for red with two red AI teammates; the arrow lea
     assert.deepStrictEqual([await page.evaluate(() => RR.game.flags[0].state), await arrow()], ['carried', 'home'], 'carrying theirs: still home first');
     await page.keyboard.press('KeyE');
     await page.waitForTimeout(100);
-    assert.deepStrictEqual(await page.evaluate(() => { const g = RR.game; return [g.flags[0].state, g.ships[1].flag, g.player.reflag, g.msg && g.msg.text]; }), ['home', null, 0, 'FLAG REPLACED!']);
+    assert.deepStrictEqual(await page.evaluate(() => { const g = RR.game; return [g.flags[0].state, g.ships[1].flag, g.player.reflag, g.msg && g.msg.text]; }), ['home', null, 0, 'RED FLAG REPLACED!']);
     // and home with their flag, yours being home again: a capture
     await page.evaluate(() => { const g = RR.game, p = g.player, h = g.flags[0].home; p.x = h.x; p.y = h.y; p.vx = p.vy = 0; g.step(1 / 120); });
     assert.deepStrictEqual(await page.evaluate(() => [RR.game.caps[0], RR.game.player.caps, RR.game.flags[1].state]), [1, 1, 'home']);
@@ -2049,4 +2049,117 @@ test('capture the flag: you fly for red with two red AI teammates; the arrow lea
     assert.deepStrictEqual(await p2.evaluate(() => [RR.game.flags[0].state, RR.game.player.reflag]), ['home', 0], 'tapped: your flag is home');
     assert.deepStrictEqual(e2, []);
   } finally { await c2.close(); }
+});
+
+test('capture the flag for three teams: every team\'s score (yours first), the arrow to a flag to raid, the Replace Flag shown by its holder\'s team, and news that names the teams', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  try {
+    const r = await page.evaluate(() => {
+      const g = RR.game;
+      g.modeIdx = RR.MODES.findIndex((m) => m.id === 'ctf');
+      g.arenaIdx = RR.FLAG_MAPS.findIndex((m) => m.id === 'triad');
+      g.startRace(false); g.state = 'play';
+      T.run(4.3);
+      for (const s of g.ships) if (s !== g.player) { s.ai = null; s.x = 2600 + s.idx * 60; s.y = 2300; s.vx = s.vy = 0; }
+      return { teams: g.teams, sides: g.ships.map((s) => s.side), caps: g.caps, map: g.track.name, rule: g.track.def.rule };
+    });
+    assert.deepStrictEqual(r, { teams: 3, sides: [0, 1, 2, 0, 1, 2], caps: [0, 0, 0], map: 'THE TRIAD', rule: '2 V 2 V 2 - BRING ANY FLAG HOME' });
+    await page.waitForTimeout(150);
+    const look = () => page.evaluate(() => {
+      const g = RR.game, a = g.arrowTo;
+      return { held: g.reflagShown, arrow: a && a.state !== undefined ? 'flag ' + a.side : a && a.flag !== undefined ? 'ship ' + a.idx : null, msg: g.msg && g.msg.text, feed: g.feed.map((f) => f.text) };
+    });
+    let v = await look();
+    assert.ok(v.arrow === 'flag 1' || v.arrow === 'flag 2', 'off to an enemy flag: ' + v.arrow);
+    assert.strictEqual(v.held, null, 'nobody holds the Replace Flag');
+    // a blue ship holds the Replace Flag: the HUD names the team, not the pilot
+    await page.evaluate(() => { RR.game.ships[1].reflag = 1; });
+    await page.waitForTimeout(150);
+    assert.strictEqual((await look()).held, 'REPLACE FLAG: BLUE TEAM');
+    // green takes red's flag: the feed names both teams, the banner the flag's; the arrow turns on the thief
+    await page.evaluate(() => { const g = RR.game, s = g.ships[2], f = g.flags[0]; s.x = f.x; s.y = f.y; g.step(1 / 120); s.x = 2700; s.y = 2300; });
+    await page.waitForTimeout(150);
+    v = await look();
+    assert.deepStrictEqual([v.msg, v.feed.slice(-1)[0], v.arrow], ['RED FLAG TAKEN BY GREEN!', 'GREEN TEAM TOOK THE RED FLAG', 'ship 2']);
+    // and brings it home: green's capture, in green's words
+    await page.evaluate(() => { const g = RR.game, s = g.ships[2], h = g.flags[2].home; s.x = h.x; s.y = h.y; g.step(1 / 120); });
+    await page.waitForTimeout(150);
+    v = await look();
+    assert.deepStrictEqual([v.msg, v.feed.slice(-1)[0], await page.evaluate(() => [...RR.game.caps])], ['GREEN CAPTURED THE RED FLAG', 'GREEN TEAM CAPTURED THE RED FLAG!', [0, 0, 1]]);
+    assert.strictEqual(await page.evaluate(() => RR.scoreLine(RR.game.caps)), 'RED 0  BLUE 0  GREEN 1');
+    // the blue holder is wrecked: it loses the Replace Flag, and the news says which team did
+    await page.evaluate(() => { const g = RR.game, b = g.ships[1]; b.shield = 0; b.invuln = 0; b.hp = 1; g.shots.push({ type: 'bolt', owner: g.player, x: b.x, y: b.y, vx: 0, vy: 0, life: 0.5, color: '#fff', dmg: 50 }); g.step(1 / 120); });
+    await page.waitForTimeout(150);
+    v = await look();
+    assert.deepStrictEqual([v.held, v.feed.includes('BLUE TEAM LOST THE REPLACE FLAG')], [null, true], 'in the feed: ' + v.feed);
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test('high score tables for every event, and the pilot history: a fight posts its points; T opens the table for the event on the menu, LEFT and RIGHT go through them all; Y shows your games, wins and places', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  try {
+    await page.waitForFunction(() => RR.net.online);
+    // a dogfight against Ace rivals, won 5-1 by kills
+    const r = await page.evaluate(() => {
+      const g = RR.game;
+      g.modeIdx = RR.MODES.findIndex((m) => m.id === 'dogfight'); g.diffIdx = 2;
+      g.startRace(false); g.state = 'play';
+      T.run(4.3);
+      g.player.kills = 4; g.player.deaths = 1;
+      const v = g.ships[1]; v.hp = 1; v.shield = 0; v.invuln = 0; v.x = g.player.x + 30; v.y = g.player.y;
+      g.shots.push({ type: 'bolt', owner: g.player, x: v.x, y: v.y, vx: 0, vy: 0, life: 0.5, color: '#fff', dmg: 50 });
+      T.run(3);
+      const want = RR.records.score('dogfight', { place: 1, win: true, kills: 5, deaths: 1, left: Math.floor(180 - g.endT) }, 2);
+      return { state: g.state, place: g.player.place, score: g.fightScore, want, hist: g.hist.dogfight };
+    });
+    assert.deepStrictEqual([r.state, r.place, r.score, r.hist], ['results', 1, r.want, { played: 1, wins: 1, p1: 1, p2: 0, p3: 0 }]);
+    assert.ok(r.score > 2000, 'a quick win against Aces: ' + r.score);
+    await page.waitForFunction(() => RR.net.result && RR.net.result.track === 'dogfight', null, { timeout: 5000 });
+    const rank = await page.evaluate(() => RR.net.result.rank);
+    assert.strictEqual(await page.evaluate(() => RR.net.result.best.score), r.score, 'the server counted the same points');
+    // (other tests' pilots may be on the tables too: this one looks for its own rows)
+
+    // T on the menu, with the dogfight on it: the dogfight's table, with our row
+    const name = await page.evaluate(() => RR.game.name);
+    await page.evaluate(() => RR.game.toTitle());
+    await page.keyboard.press('KeyT');
+    await page.waitForFunction((n) => RR.game.boardShown && RR.game.boardShown.id === 'dogfight' && RR.game.boardShown.rows.some((x) => x[1] === n), name, { timeout: 5000 });
+    assert.ok(await page.evaluate((x) => RR.game.boardShown.rows.some((row) => row.join() === x), [rank, name, String(r.score)].join()), 'our row, at our rank');
+    // the row's card (picked with the arrows): the score and the fight
+    const at = await page.evaluate((n) => RR.game.boardRows.findIndex((x) => x.e.name === n), name);
+    for (let k = 0; k <= at; k++) { await page.keyboard.press('ArrowDown'); await page.waitForTimeout(80); }
+    await page.keyboard.press('Enter'); await page.waitForTimeout(150);
+    assert.deepStrictEqual(await page.evaluate(() => { const c = RR.game.boardCard; return c && [c.board, c.e.score, c.e.result.kills, c.e.map]; }), ['dogfight', r.score, 5, 'crucible']);
+    await page.keyboard.press('Enter'); await page.waitForTimeout(80);
+    // RIGHT goes through every table and comes round again: the other fights, the top pilots, the courses
+    const order = [];
+    for (let k = 0; k < 7; k++) {
+      await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(100);
+      order.push(await page.evaluate(() => RR.game.boardId));
+    }
+    assert.deepStrictEqual(order, ['royale', 'ctf', 'pilots', 'lunar', 'eight', 'gauntlet', 'dogfight']);
+    // ...and LEFT goes back the other way: four tables back is the top pilots
+    for (let k = 0; k < 4; k++) { await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(100); }
+    // the top pilots: us among them, with our game and win
+    await page.waitForFunction((n) => RR.game.boardId === 'pilots' && RR.game.boardShown.rows.some((x) => x[1] === n), name, { timeout: 8000 });
+    assert.deepStrictEqual(await page.evaluate((n) => RR.game.boardShown.rows.find((x) => x[1] === n).slice(1), name), [name, 1, 1, 1, 0, 0]);
+    await page.keyboard.press('Enter'); await page.waitForTimeout(100);
+
+    // Y: our history, by event and in all, with our world rank by wins
+    await page.keyboard.press('KeyY');
+    await page.waitForFunction(() => RR.game.state === 'history' && RR.net.history, null, { timeout: 5000 });
+    await page.waitForTimeout(100);
+    const h = await page.evaluate(() => [RR.game.historyShown, RR.net.history.rank]);
+    assert.deepStrictEqual(h[0], [['race', 0, 0, 0, 0, 0], ['dogfight', 1, 1, 1, 0, 0], ['royale', 0, 0, 0, 0, 0], ['ctf', 0, 0, 0, 0, 0], ['all', 1, 1, 1, 0, 0]]);
+    assert.ok(Number.isInteger(h[1]) && h[1] >= 1, 'a world rank by wins: ' + h[1]);
+    await page.keyboard.press('Enter'); await page.waitForTimeout(100);
+    assert.strictEqual(await page.evaluate(() => RR.game.state), 'title');
+    // it is kept with the player's progress
+    await page.reload();
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.ships.length === 6);
+    assert.deepStrictEqual(await page.evaluate(() => RR.game.hist.all), { played: 1, wins: 1, p1: 1, p2: 0, p3: 0 });
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
 });

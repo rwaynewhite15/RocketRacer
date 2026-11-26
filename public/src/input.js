@@ -74,7 +74,7 @@
     Enter: 'ok', NumpadEnter: 'ok',
     Escape: 'pause', KeyP: 'pause',
     KeyM: 'mute', KeyC: 'crt', KeyR: 'restart', KeyQ: 'quit',
-    KeyN: 'name', KeyT: 'board', KeyF: 'full', KeyH: 'hangar', KeyO: 'online',
+    KeyN: 'name', KeyT: 'board', KeyY: 'history', KeyF: 'full', KeyH: 'hangar', KeyO: 'online',
     KeyE: 'defer', ShiftLeft: 'defer', ShiftRight: 'defer', // gate deferral
     KeyZ: 'zoom', Equal: 'zoomIn', NumpadAdd: 'zoomIn', Minus: 'zoomOut', NumpadSubtract: 'zoomOut',
   };

@@ -11,6 +11,12 @@
   const text = RR.text, clamp = RR.clamp, fmt = RR.fmtTime;
 
   const ORD = ['1ST', '2ND', '3RD', '4TH', '5TH', '6TH'];
+  /** Capture the flag's score as a line: RED 1 - 0 BLUE, or with three teams RED 1  BLUE 0  GREEN 2. */
+  RR.scoreLine = function (caps) {
+    const S = RR.SIDES;
+    if (caps.length === 2) return S[0].name + ' ' + caps[0] + ' - ' + caps[1] + ' ' + S[1].name;
+    return caps.map(function (c, k) { return S[k].name + ' ' + c; }).join('  ');
+  };
   const PLACE_COL = [PAL.gold, PAL.white, PAL.orange, PAL.silver, PAL.silver, PAL.silver];
 
   /* ------------------------------------------------------------ helpers */
@@ -223,15 +229,25 @@
 
     /* arena wall (dashed) and, in a battle royale, the closing zone */
     if (g.combat) {
-      const b = tr.bounds;
+      const b = tr.bounds, rw = tr.wall;
       ctx.fillStyle = PAL.steel;
-      for (let wx = Math.ceil(Math.max(b.x0, cx) / 8) * 8; wx <= Math.min(b.x1, cx + W); wx += 8) {
-        ctx.fillRect(wx - cx, b.y0 - cy, 4, 1);
-        ctx.fillRect(wx - cx, b.y1 - cy, 4, 1);
-      }
-      for (let wy = Math.ceil(Math.max(b.y0, cy) / 8) * 8; wy <= Math.min(b.y1, cy + H); wy += 8) {
-        ctx.fillRect(b.x0 - cx, wy - cy, 1, 4);
-        ctx.fillRect(b.x1 - cx, wy - cy, 1, 4);
+      if (rw) { // a round arena: a dash every 8 pixels round the circle, where it is on screen
+        const n = Math.floor((rw.r * RR.TAU) / 8);
+        if (Math.abs(Math.hypot(rw.x - g.cam.x, rw.y - g.cam.y) - rw.r) < W + H) {
+          for (let i = 0; i < n; i++) {
+            const a = (i / n) * RR.TAU, x = Math.round(rw.x + Math.cos(a) * rw.r - cx), y = Math.round(rw.y + Math.sin(a) * rw.r - cy);
+            if (x > -3 && y > -3 && x < W + 3 && y < H + 3) ctx.fillRect(x - 1, y - 1, 2, 2);
+          }
+        }
+      } else {
+        for (let wx = Math.ceil(Math.max(b.x0, cx) / 8) * 8; wx <= Math.min(b.x1, cx + W); wx += 8) {
+          ctx.fillRect(wx - cx, b.y0 - cy, 4, 1);
+          ctx.fillRect(wx - cx, b.y1 - cy, 4, 1);
+        }
+        for (let wy = Math.ceil(Math.max(b.y0, cy) / 8) * 8; wy <= Math.min(b.y1, cy + H); wy += 8) {
+          ctx.fillRect(b.x0 - cx, wy - cy, 1, 4);
+          ctx.fillRect(b.x1 - cx, wy - cy, 1, 4);
+        }
       }
     }
     if (g.zone && g.zone.r > 2) {
@@ -394,12 +410,9 @@
     let aim = null, hostile = false;
     if (!g.playerDone && !g.combat) aim = tr.cps[p.nextCp];
     else if (!g.playerDone && p.dead <= 0 && g.ctf && g.flags) {
-      // capture the flag: home with their flag; after whoever has ours; else to their flag (or our carrier)
-      const mine = g.flags[p.side], theirs = g.flags[1 - p.side];
-      if (p.flag) aim = mine.home;
-      else if (mine.state === 'carried' && mine.carrier) { aim = mine.carrier; hostile = true; }
-      else if (theirs.state === 'carried' && theirs.carrier) aim = theirs.carrier;
-      else aim = theirs;
+      // capture the flag: home with a flag; after whoever has ours; to a teammate with one; else to a flag to raid
+      const goal = g.flagGoal(p);
+      aim = goal.at; hostile = goal.hostile;
     } else if (!g.playerDone && p.dead <= 0) {
       if (p.zoned) aim = tr.center;
       else {
@@ -491,11 +504,13 @@
     const narrow = Rr - L < 330; // phones held upright
 
     /* lap + position, or the score in a fight */
-    panel(ctx, L, Tp, 104, 34);
+    const teams = g.ctf ? g.caps.length : 0;
+    panel(ctx, L, Tp, teams > 2 ? 146 : 104, 34);
     if (g.ctf) { // capture the flag: each team's captures, yours first
-      const sides = p.side === 1 ? [1, 0] : [0, 1];
+      const sides = [p.side];
+      for (let sd = 0; sd < teams; sd++) if (sd !== p.side) sides.push(sd);
       sides.forEach(function (sd, k) {
-        const S = RR.SIDES[sd], x = L + 6 + k * 50;
+        const S = RR.SIDES[sd], x = L + 6 + k * (teams > 2 ? 46 : 50);
         text(ctx, S.name + (k === 0 ? '*' : ''), x, Tp + 5, S.light);
         text(ctx, String(g.caps[sd]), x, Tp + 15, k === 0 ? PAL.white : PAL.silver, 2);
       });
@@ -520,9 +535,12 @@
     if (g.combat) {
       const now = g.over ? g.endT : g.raceTime;
       if (g.ctf) {
-        const left = Math.max(0, C.CTF_TIME - now);
+        const left = Math.max(0, C.CTF_TIME - now), holder = g.reflagHolder();
         text(ctx, fmt(left), cx, cy, left < 20 && Math.floor(T * 4) & 1 ? PAL.alarm : PAL.white, 2, al, PAL.ink);
         text(ctx, 'FIRST TO ' + C.CTF_CAPS + ' FLAGS', cx, cy + 18, PAL.silver, 1, al, PAL.ink);
+        // who has the Replace Flag: their team, never the pilot
+        g.reflagShown = holder ? 'REPLACE FLAG: ' + RR.SIDES[holder.side].name + ' TEAM' : null;
+        if (holder) text(ctx, g.reflagShown, cx, cy + 27, RR.SIDES[holder.side].light, 1, al, PAL.ink);
       } else if (g.royale) {
         const wait = C.ZONE_GRACE - now;
         text(ctx, fmt(now), cx, cy, PAL.white, 2, al, PAL.ink);
@@ -555,8 +573,9 @@
       let fy = touch ? Tp + 98 : Tp + 40;
       if (g.ctf && g.flags && !g.playerDone) { // where the flags are, for the player
         const mine = g.flags[p.side];
-        const line = p.flag ? 'YOU HAVE THEIR FLAG - TAKE IT HOME' : mine.state === 'carried' ? 'YOUR FLAG IS TAKEN!'
-          : mine.state === 'dropped' ? 'YOUR FLAG IS DOWN - TOUCH IT HOME' : '';
+        const line = p.flag ? 'YOU HAVE THE ' + RR.SIDES[p.flag.side].name + ' FLAG - TAKE IT HOME'
+          : mine.state === 'carried' ? 'YOUR FLAG IS TAKEN' + (mine.carrier ? ' BY ' + RR.SIDES[mine.carrier.side].name : '') + '!'
+            : mine.state === 'dropped' ? 'YOUR FLAG IS DOWN - TOUCH IT HOME' : '';
         if (line) text(ctx, line, L + 2, fy, p.flag ? PAL.yellow : Math.floor(T * 3) & 1 ? PAL.alarm : PAL.orange, 1, 'left', PAL.ink);
         if (p.flag && mine.state !== 'home') text(ctx, '(YOUR OWN FLAG MUST BE HOME TO SCORE)', L + 2, fy + 9, PAL.silver, 1, 'left', PAL.ink);
         fy += 20;
@@ -632,7 +651,7 @@
       } else {
         text(ctx, 'ARROWS TO FLY - A / D TO AIM - SPACE TO FIRE', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
       }
-      text(ctx, g.ctf ? 'BRING THEIR FLAG TO YOUR BASE - FIRST TO ' + C.CTF_CAPS : g.royale ? 'LAST SHIP FLYING WINS' : g.combat ? 'WRECK THEM - FIRST TO ' + C.KILL_TARGET + ' KILLS' : 'FLY THROUGH THE GLOWING DONUT',
+      text(ctx, g.ctf ? 'BRING ' + (g.caps.length > 2 ? 'ANY' : 'THEIR') + ' FLAG TO YOUR BASE - FIRST TO ' + C.CTF_CAPS : g.royale ? 'LAST SHIP FLYING WINS' : g.combat ? 'WRECK THEM - FIRST TO ' + C.KILL_TARGET + ' KILLS' : 'FLY THROUGH THE GLOWING DONUT',
         W / 2, hy2 + (touch ? 34 : 12), PAL.pink, 1, 'center', PAL.ink);
     } else if (g.msg) {
       const m = g.msg;
@@ -918,8 +937,9 @@
     if (RR.mp.available()) items.push(['ONLINE' + (touch ? '' : ' (O)'), function () { RR.mp.open(); }, PAL.lime]);
     if (net.online) {
       items.push(['PILOT ' + g.name + (touch ? '' : ' (N)'), function () { g.editName(); }, PAL.cyan]);
-      if (!fight) items.push(['TOP 10' + (touch ? '' : ' (T)'), function () { g.showBoard(); }, PAL.pink]);
+      items.push(['TOP 10' + (touch ? '' : ' (T)'), function () { g.showBoard(); }, PAL.pink]);
     }
+    items.push(['HISTORY' + (touch ? '' : ' (Y)'), function () { g.showHistory(); }, PAL.sky]);
     if (touch && g.canFullscreen()) items.push([g.isFullscreen() ? 'EXIT FULL' : 'FULLSCREEN', function () { g.fullscreen(); }, PAL.silver]);
     const lines = [[]];
     let lineW = 0;
@@ -954,7 +974,7 @@
     y += 27;
     text(ctx, def.blurb, W / 2, y, PAL.sky, 1, 'center', PAL.ink);
     y += 10;
-    if (fight) text(ctx, mode.rule, W / 2, y, PAL.silver, 1, 'center', PAL.ink);
+    if (fight) text(ctx, def.rule || mode.rule, W / 2, y, PAL.silver, 1, 'center', PAL.ink);
     else {
       let line = rec && rec.race ? 'YOU ' + fmt(rec.race) : def.laps + ' LAPS';
       if (net.online) line += '   WORLD ' + (board && board.length ? fmt(board[0].time) + ' ' + board[0].name : '-:--.--');
@@ -1060,27 +1080,56 @@
     return out;
   }
 
+  /** A fight row's result in a few words: kills and losses, flags, as its mode counts them. */
+  function fightLine(mode, r) {
+    if (!r) return '';
+    const k = r.kills + ' KILL' + (r.kills === 1 ? '' : 'S');
+    if (mode === 'ctf') return r.caps + ' FLAG' + (r.caps === 1 ? '' : 'S') + '  ' + r.returns + ' RETURNED  ' + k;
+    return mode === 'royale' ? k : k + '  ' + r.deaths + ' LOST';
+  }
+  const mapName = function (id) {
+    const m = RR.ARENAS.concat(RR.FLAG_MAPS).filter(function (d) { return d.id === id; })[0];
+    return m ? m.name : '';
+  };
+
+  /** The table's name over a panel, with < and > to the tables either side of it (LEFT / RIGHT). */
+  function boardHeader(g, ctx, W, x, y, pw, title, name, col, shade) {
+    text(ctx, title, W / 2, y + 7, col, 2, 'center', shade);
+    text(ctx, name, W / 2, y + 25, PAL.sky, 1, 'center');
+    const nud = Math.round(Math.sin(g.t * 6) * 1.2);
+    text(ctx, '<', x + 12 - nud, y + 10, PAL.yellow, 2, 'center', PAL.ink);
+    text(ctx, '>', x + pw - 12 + nud, y + 10, PAL.yellow, 2, 'center', PAL.ink);
+    g.ui.push({ x: x, y: y, w: 32, h: 34, label: 'PREVIOUS TABLE', act: function () { g.turnBoard(-1); } });
+    g.ui.push({ x: x + pw - 32, y: y, w: 32, h: 34, label: 'NEXT TABLE', act: function () { g.turnBoard(1); } });
+  }
+
   /**
-   * World top 10 for the selected course. Each row shows the pilot's rocket
-   * and powerups; tap a row (or pick it with the arrows and press Enter) for
-   * that pilot's card.
+   * The world's high score tables: a course's top 10 race times, a fight
+   * mode's top 10 scores, or the pilots with the most wins; LEFT and RIGHT
+   * (or < and >) go from one to the next. On a course or fight table each
+   * row shows the pilot's rocket and powerups; tap a row (or pick it with
+   * the arrows and press Enter) for that pilot's card.
    */
   function drawBoard(g, ctx, W, H) {
     if (g.boardCard) { drawCard(g, ctx, W, H); return; }
-    const def = RR.TRACKS[g.trackIdx], net = RR.net, list = net.boards[def.id], mine = net.me[def.id], rec = g.best[def.id];
+    const id = g.boardId || RR.TRACKS[g.trackIdx].id;
+    if (id === 'pilots') { drawPilots(g, ctx, W, H); return; }
+    const REC = RR.records, fight = REC.FIGHTS.indexOf(id) >= 0;
+    const def = fight ? null : RR.TRACKS.filter(function (t) { return t.id === id; })[0];
+    const net = RR.net, list = net.boards[id], mine = net.me[id], rec = fight ? null : g.best[id];
     const touch = RR.input.touchMode;
     ctx.fillStyle = 'rgba(7,7,26,0.72)';
     ctx.fillRect(0, 0, W, H);
-    const pw = Math.min(W - 8, 240), ph = 232, rowH = 12;
+    const pw = Math.min(W - 8, 240), ph = fight ? 272 : 232, rowH = 12;
     const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
     const cSetup = x + 94, cPlace = x + pw - 92, cDiff = x + pw - 62, cTime = x + pw - 10;
     panel(ctx, x, y, pw, ph, PAL.pink);
-    text(ctx, 'WORLD TOP 10', W / 2, y + 7, PAL.pink, 2, 'center', PAL.plum);
-    text(ctx, def.name, W / 2, y + 25, PAL.sky, 1, 'center');
+    boardHeader(g, ctx, W, x, y, pw, 'WORLD TOP 10', fight ? REC.NAMES[id] : def.name, PAL.pink, PAL.plum);
+    g.boardShown = { id: id, fight: fight, rows: [] }; // (what is on screen, for the tests)
 
     const rows = (g.boardRows = []); // what the arrows can pick, in order
     const row = function (ry, rank, e, col) {
-      const n = rows.length, r = { e: e, rank: rank };
+      const n = rows.length, r = { e: e, rank: rank, board: id };
       rows.push(r);
       if (g.boardSel === n && !touch) { // picked with the arrows
         ctx.fillStyle = PAL.white;
@@ -1091,30 +1140,32 @@
       text(ctx, e.name, x + 30, ry, col);
       r.strip = setupStrip(ctx, e.setup, cSetup, ry);
       r.at = [cSetup, ry];
-      // finishing place in that race; older rows were saved without one
+      // finishing place in that race or fight; older race rows were saved without one
       if (e.place >= 1 && e.place <= 6) text(ctx, ORD[e.place - 1], cPlace, ry, col === PAL.yellow ? col : PLACE_COL[e.place - 1]);
       else text(ctx, '-', cPlace + 6, ry, PAL.steel);
       text(ctx, DIFF_TAG[e.diff] || '', cDiff, ry, DIFF_COL[e.diff] || PAL.steel);
-      text(ctx, fmt(e.time), cTime, ry, col, 1, 'right');
+      const val = fight ? String(e.score) : fmt(e.time);
+      text(ctx, val, cTime, ry, col, 1, 'right');
+      g.boardShown.rows.push([rank, e.name, val]);
       g.ui.push({ x: x + 5, y: ry - 3, w: pw - 10, h: rowH, label: 'PILOT ' + rank, act: function () { g.boardSel = n; g.openCard(r); } });
     };
     const isMine = function (e) {
-      if (mine) return e.name === mine.name && e.time === mine.time;
-      return e.name === g.name && rec && Math.abs(rec.race - e.time) < 0.011; // before our own row has loaded
+      if (mine) return e.name === mine.name && (fight ? e.score === mine.score : e.time === mine.time);
+      return !fight && e.name === g.name && rec && Math.abs(rec.race - e.time) < 0.011; // before our own row has loaded
     };
 
     let ry = y + 48;
     if (!list) {
-      text(ctx, net.failed[def.id] ? 'LEADERBOARD UNAVAILABLE' : 'LOADING...', W / 2, ry + 40, PAL.silver, 1, 'center');
+      text(ctx, net.failed[id] ? 'LEADERBOARD UNAVAILABLE' : 'LOADING...', W / 2, ry + 40, PAL.silver, 1, 'center');
     } else if (!list.length) {
-      text(ctx, 'NO TIMES YET', W / 2, ry + 34, PAL.silver, 1, 'center');
+      text(ctx, fight ? 'NO SCORES YET' : 'NO TIMES YET', W / 2, ry + 34, PAL.silver, 1, 'center');
       text(ctx, 'BE THE FIRST!', W / 2, ry + 46, PAL.yellow, 1, 'center');
     } else {
       text(ctx, '#', x + 22, y + 37, PAL.steel, 1, 'right');
       text(ctx, 'PILOT', x + 30, y + 37, PAL.steel);
       text(ctx, 'SETUP', cSetup, y + 37, PAL.steel);
-      text(ctx, 'RACE', cPlace - 3, y + 37, PAL.steel);
-      text(ctx, 'TIME', cTime, y + 37, PAL.steel, 1, 'right');
+      text(ctx, fight ? 'PLACE' : 'RACE', cPlace - 3, y + 37, PAL.steel);
+      text(ctx, fight ? 'SCORE' : 'TIME', cTime, y + 37, PAL.steel, 1, 'right');
       let shown = false;
       for (let i = 0; i < list.length && i < 10; i++) {
         const e = list[i], me = isMine(e);
@@ -1130,11 +1181,14 @@
         ctx.fillRect(x + 5, my - 3, pw - 10, rowH);
         row(my, mine.rank > 999 ? '999+' : mine.rank, mine, PAL.yellow);
       } else if (mine === null) {
-        text(ctx, 'FINISH A RACE HERE TO JOIN THE BOARD', W / 2, my, PAL.steel, 1, 'center');
+        text(ctx, fight ? 'FINISH A FIGHT TO JOIN THE TABLE' : 'FINISH A RACE HERE TO JOIN THE BOARD', W / 2, my, PAL.steel, 1, 'center');
       }
       text(ctx, touch ? 'TAP A PILOT TO SEE THEIR ROCKET' : 'ARROWS + ENTER: SEE A PILOT\'S ROCKET', W / 2, y + ph - 34, PAL.sky, 1, 'center');
     }
     if (g.boardSel >= rows.length) g.boardSel = -1;
+    if (fight) { // how the points are made
+      REC.explain(id).forEach(function (ln, k) { text(ctx, ln, W / 2, y + 190 + k * 9, PAL.silver, 1, 'center'); });
+    }
     text(ctx, 'R ROOKIE  P PILOT  A ACE', W / 2, y + ph - 45, PAL.steel, 1, 'center');
     const bw = 90;
     button(g, ctx, touch ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
@@ -1142,12 +1196,68 @@
   }
 
   /**
-   * One pilot's card from the leaderboard: the rocket they flew, its stat
+   * The pilots with the most wins, in all events: games played, wins, and
+   * 1st, 2nd and 3rd places, with your own row below when you are not in the
+   * top 10.
+   */
+  function drawPilots(g, ctx, W, H) {
+    const net = RR.net, list = net.pilots.all, me = net.history, touch = RR.input.touchMode;
+    g.boardRows = [];
+    ctx.fillStyle = 'rgba(7,7,26,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W - 8, 240), ph = 232, rowH = 12;
+    const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
+    const cols = [x + pw - 112, x + pw - 82, x + pw - 58, x + pw - 34, x + pw - 10]; // right edges: played, wins, 1st, 2nd, 3rd
+    panel(ctx, x, y, pw, ph, PAL.sky);
+    boardHeader(g, ctx, W, x, y, pw, 'TOP PILOTS', 'MOST WINS - ALL EVENTS', PAL.sky, PAL.navy);
+    g.boardShown = { id: 'pilots', rows: [] };
+    const row = function (ry, rank, e, col) {
+      text(ctx, String(rank), x + 22, ry, col, 1, 'right');
+      text(ctx, e.name, x + 30, ry, col);
+      const vals = [e.played, e.wins, e.p1, e.p2, e.p3];
+      vals.forEach(function (v, k) { text(ctx, String(v), cols[k], ry, k === 1 ? (col === PAL.white ? PAL.gold : col) : col, 1, 'right'); });
+      g.boardShown.rows.push([rank, e.name].concat(vals));
+    };
+    let ry = y + 48;
+    if (!list) {
+      text(ctx, net.failed['pilots:all'] ? 'LEADERBOARD UNAVAILABLE' : 'LOADING...', W / 2, ry + 40, PAL.silver, 1, 'center');
+    } else if (!list.length) {
+      text(ctx, 'NO PILOTS YET', W / 2, ry + 34, PAL.silver, 1, 'center');
+      text(ctx, 'FINISH AN EVENT TO JOIN', W / 2, ry + 46, PAL.yellow, 1, 'center');
+    } else {
+      text(ctx, '#', x + 22, y + 37, PAL.steel, 1, 'right');
+      text(ctx, 'PILOT', x + 30, y + 37, PAL.steel);
+      ['GAMES', 'WINS', '1ST', '2ND', '3RD'].forEach(function (h, k) { text(ctx, h, cols[k], y + 37, PAL.steel, 1, 'right'); });
+      let shown = false;
+      for (let i = 0; i < list.length && i < 10; i++) {
+        const e = list[i], mine = me && e.name === me.name && e.wins === me.all.wins && e.played === me.all.played;
+        if (mine) { shown = true; ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 5, ry - 3, pw - 10, rowH); }
+        row(ry, i + 1, e, mine ? PAL.yellow : PAL.white);
+        ry += rowH;
+      }
+      const my = y + 175;
+      if (me && !shown) {
+        RR.line(ctx, x + 8, my - 6, x + pw - 9, my - 6, PAL.steel, 3);
+        ctx.fillStyle = 'rgba(255,205,117,0.16)';
+        ctx.fillRect(x + 5, my - 3, pw - 10, rowH);
+        row(my, me.rank > 999 ? '999+' : me.rank, Object.assign({ name: me.name }, me.all), PAL.yellow);
+      }
+    }
+    text(ctx, 'A WIN: 1ST PLACE - OR IN CAPTURE', W / 2, y + ph - 45, PAL.steel, 1, 'center');
+    text(ctx, 'THE FLAG, YOUR TEAM WINNING', W / 2, y + ph - 35, PAL.steel, 1, 'center');
+    const bw = 90;
+    button(g, ctx, touch ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
+      function () { g.closeBoard(); }, PAL.lime);
+  }
+
+  /**
+   * One pilot's card from a high score table: the rocket they flew, its stat
    * levels (grey: the ship's own, yellow: points they put in), and every
-   * powerup they used on the way to that time.
+   * powerup they used, with the race time or the fight's score.
    */
   function drawCard(g, ctx, W, H) {
-    const c = g.boardCard, e = c.e, su = e.setup, hull = su && hullOf(su.ship), def = RR.TRACKS[g.trackIdx];
+    const c = g.boardCard, e = c.e, su = e.setup, hull = su && hullOf(su.ship), id = c.board || RR.TRACKS[g.trackIdx].id;
+    const fight = RR.records.FIGHTS.indexOf(id) >= 0, def = fight ? null : RR.TRACKS.filter(function (t) { return t.id === id; })[0];
     const touch = RR.input.touchMode;
     ctx.fillStyle = 'rgba(7,7,26,0.72)';
     ctx.fillRect(0, 0, W, H);
@@ -1155,19 +1265,27 @@
     const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
     panel(ctx, x, y, pw, ph, PAL.pink);
     text(ctx, e.name, W / 2, y + 7, c.rank === 1 ? PAL.gold : PAL.white, 2, 'center', PAL.plum);
-    text(ctx, '#' + c.rank + ' ON ' + def.name, W / 2, y + 25, PAL.sky, 1, 'center');
+    text(ctx, '#' + c.rank + ' ON ' + (fight ? RR.records.NAMES[id] : def.name), W / 2, y + 25, PAL.sky, 1, 'center');
 
-    /* the rocket and the race */
+    /* the rocket and the race (or the fight) */
     const tx = hull ? x + 56 : x + 14;
     if (hull) {
       const spr = Art.ship(hull.design, 0);
       ctx.drawImage(spr, x + 14, y + 38, spr.width * 2, spr.height * 2);
       text(ctx, hull.name, tx, y + 40, PAL.white, 2, 'left', PAL.ink);
     }
-    text(ctx, 'TIME ' + fmt(e.time), tx, y + 58, PAL.white);
-    text(ctx, 'BEST LAP ' + fmt(e.lap), tx, y + 68, PAL.silver);
     const place = e.place >= 1 && e.place <= 6 ? ORD[e.place - 1] : '-';
-    text(ctx, place + ' VS ' + ((RR.DIFFS[e.diff] && RR.DIFFS[e.diff].name) || '?') + ' RIVALS', tx, y + 78, DIFF_COL[e.diff] || PAL.silver);
+    const vs = place + ' VS ' + ((RR.DIFFS[e.diff] && RR.DIFFS[e.diff].name) || '?') + ' RIVALS';
+    if (fight) {
+      text(ctx, 'SCORE ' + e.score, tx, y + 58, PAL.white);
+      text(ctx, fightLine(id, e.result), tx, y + 68, PAL.silver);
+      text(ctx, vs + (id === 'ctf' && e.result && e.result.win ? ' - TEAM WON' : ''), tx, y + 78, DIFF_COL[e.diff] || PAL.silver);
+      if (e.map && !hull) text(ctx, mapName(e.map), tx, y + 88, PAL.steel);
+    } else {
+      text(ctx, 'TIME ' + fmt(e.time), tx, y + 58, PAL.white);
+      text(ctx, 'BEST LAP ' + fmt(e.lap), tx, y + 68, PAL.silver);
+      text(ctx, vs, tx, y + 78, DIFF_COL[e.diff] || PAL.silver);
+    }
     const shown = { ship: hull ? hull.id : null, stats: null, items: [], numbers: [] };
     g.cardShown = shown;
 
@@ -1178,7 +1296,7 @@
     } else {
       /* stats */
       const tuned = su.stats.reduce(function (a, lv, k) { return a + Math.max(0, lv - hull.base[k]); }, 0);
-      text(ctx, 'STATS', x + 14, y + 88, PAL.steel);
+      text(ctx, fight && e.map ? mapName(e.map) : 'STATS', x + 14, y + 88, PAL.steel);
       text(ctx, tuned ? '+' + tuned + ' POINTS PUT IN' : 'STOCK', x + pw - 14, y + 88, tuned ? PAL.yellow : PAL.steel, 1, 'right');
       shown.stats = su.stats.slice();
       RR.STATS.forEach(function (st, k) {
@@ -1211,6 +1329,45 @@
     const bw = 90;
     button(g, ctx, touch ? 'BACK' : 'BACK (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
       function () { g.closeCard(); }, PAL.lime);
+  }
+
+  /**
+   * The player's own history (Y on the menu): for each event and in all,
+   * games played, wins, and 1st, 2nd and 3rd places; online, their world
+   * rank by wins too.
+   */
+  function drawHistory(g, ctx, W, H) {
+    const REC = RR.records, h = g.hist, net = RR.net, touch = RR.input.touchMode;
+    ctx.fillStyle = 'rgba(7,7,26,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    const pw = Math.min(W - 8, 272), ph = 184, rowH = 14;
+    const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
+    const cols = [x + pw - 118, x + pw - 88, x + pw - 62, x + pw - 36, x + pw - 10];
+    panel(ctx, x, y, pw, ph, PAL.sky);
+    text(ctx, 'PILOT HISTORY', W / 2, y + 7, PAL.sky, 2, 'center', PAL.navy);
+    text(ctx, g.name, W / 2, y + 25, PAL.yellow, 1, 'center');
+    ['GAMES', 'WINS', '1ST', '2ND', '3RD'].forEach(function (t, k) { text(ctx, t, cols[k], y + 40, PAL.steel, 1, 'right'); });
+    g.historyShown = [];
+    REC.MODES.concat('all').forEach(function (m, i) {
+      const ry = y + 53 + i * rowH + (m === 'all' ? 4 : 0), c = h[m], all = m === 'all';
+      if (all) RR.line(ctx, x + 8, ry - 5, x + pw - 9, ry - 5, PAL.steel, 3);
+      const col = all ? PAL.white : c.played ? PAL.silver : PAL.steel;
+      text(ctx, REC.NAMES[m], x + 10, ry, all ? PAL.yellow : col);
+      const vals = [c.played, c.wins, c.p1, c.p2, c.p3];
+      vals.forEach(function (v, k) { text(ctx, String(v), cols[k], ry, k === 1 && v ? PAL.gold : col, 1, 'right'); });
+      g.historyShown.push([m].concat(vals));
+    });
+    const me = net.history;
+    let line = '', col = PAL.steel;
+    if (net.online) {
+      if (me) { line = 'WORLD RANK #' + (me.rank > 999 ? '999+' : me.rank) + ' BY WINS'; col = me.rank <= 3 ? PAL.gold : PAL.pink; }
+      else line = net.failed['pilots:all'] ? '' : h.all.played ? 'LOADING YOUR WORLD RANK...' : 'FINISH AN EVENT FOR A WORLD RANK';
+    }
+    if (line) text(ctx, line, W / 2, y + ph - 45, col, 1, 'center');
+    text(ctx, 'A WIN: 1ST PLACE, OR YOUR TEAM\'S IN CTF', W / 2, y + ph - 34, PAL.steel, 1, 'center');
+    const bw = 90;
+    button(g, ctx, touch ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
+      function () { g.closeHistory(); }, PAL.lime);
   }
 
   /**
@@ -1399,7 +1556,7 @@
     const mine = list.find(function (r) { return r.you; });
     panel(ctx, x, y, pw, ph, mine ? PLACE_COL[mine.place - 1] : PAL.white);
     text(ctx, mine ? ORD[mine.place - 1] + ' PLACE' : 'RESULTS', W / 2, y + 7, mine ? PLACE_COL[mine.place - 1] : PAL.white, 2, 'center', PAL.plum);
-    if (g.ctf && M.score) text(ctx, 'RED ' + M.score[0] + ' - ' + M.score[1] + ' BLUE', x + 12, y + 30, PAL.cyan);
+    if (g.ctf && M.score) text(ctx, RR.scoreLine(M.score), x + 12, y + 30, PAL.cyan);
     text(ctx, g.ctf ? 'FLAGS  KILLS' : fight ? 'KILLS  DEATHS' : 'TIME', x + pw - 12, y + 30, PAL.steel, 1, 'right');
     list.forEach(function (r, k) {
       const ry = y + 42 + k * 12, col = r.you ? PAL.yellow : r.human ? PAL.white : PAL.silver;
@@ -1469,7 +1626,7 @@
       ry += 14;
     }
     ry += 3;
-    if (g.ctf) text(ctx, 'RED ' + g.caps[0] + ' - ' + g.caps[1] + ' BLUE', W / 2, ry, g.caps[p.side] > g.caps[1 - p.side] ? PAL.gold : PAL.cyan, 1, 'center');
+    if (g.ctf) text(ctx, RR.scoreLine(g.caps), W / 2, ry, g.ctfLeader() === p.side ? PAL.gold : PAL.cyan, 1, 'center');
     else if (g.combat) text(ctx, g.royale && !g.over ? 'THE FIGHT GOES ON WITHOUT YOU' : RR.DIFFS[g.diffIdx].name + ' RIVALS', W / 2, ry, PAL.cyan, 1, 'center');
     else {
       text(ctx, 'BEST LAP ' + fmt(p.bestLap) + (g.newRecord ? '   NEW RECORD!' : ''), W / 2, ry,
@@ -1482,6 +1639,16 @@
       text(ctx, fresh ? 'NEW SHIP IN THE HANGAR: ' + rw.unlocked.join(' ')
         : (rw.pts ? '+' + rw.pts + ' STAT POINT' + (rw.pts > 1 ? 'S' : '') + '  ' : rw.capped ? 'STAT POINTS MAXED  ' : '') + '+' + rw.credits + ' CREDITS',
         W / 2, ry + 24, fresh ? PAL.lime : rw.pts ? PAL.yellow : PAL.gold, 1, 'center');
+    }
+    if (g.combat && g.fightScore != null) {
+      let msg = 'SCORE ' + g.fightScore, col = PAL.white;
+      if (net.online) {
+        const r = net.result;
+        if (!r || r.track !== g.mode) msg += '  POSTING...';
+        else if (r.error) msg += '  (TABLE UNAVAILABLE)';
+        else { msg += '  WORLD #' + r.rank + (r.improved ? '' : ' (BEST STANDS)'); col = r.rank <= 3 ? PAL.gold : PAL.pink; }
+      }
+      text(ctx, msg, W / 2, ry + 12, col, 1, 'center');
     }
     if (net.online && !g.combat) {
       const r = net.result;
@@ -1515,6 +1682,7 @@
     ctx.clearRect(0, 0, W, H);
     if (g.state === 'title') drawTitle(g, ctx, W, H);
     else if (g.state === 'board') drawBoard(g, ctx, W, H);
+    else if (g.state === 'history') drawHistory(g, ctx, W, H);
     else if (g.state === 'hangar') drawHangar(g, ctx, W, H);
     else if (g.state === 'online') drawOnline(g, ctx, W, H);
     else {

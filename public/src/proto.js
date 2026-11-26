@@ -16,7 +16,7 @@
   'use strict';
 
   const P = {
-    VERSION: 3, // 2: the gate deferral replaced the do-over; 3: capture the flag
+    VERSION: 4, // 2: the gate deferral replaced the do-over; 3: capture the flag; 4: two or three teams
     INPUT: 1, SNAP: 2, // first byte of a binary message
     WEAPONS: [null, 'blaster', 'missile', 'mine', 'emp'],
     ITEMS: ['nitro', 'shield', 'repair', 'defer', 'blaster', 'missile', 'mine', 'emp', 'reflag'],
@@ -129,11 +129,12 @@
     for (const p of w.pickups) { o.u8(p.on ? 1 : 0); o.u8(Math.max(0, P.ITEMS.indexOf(p.type))); }
     o.u8(w.rocks.length);
     for (const a of w.rocks) { o.u8(a.dead ? 1 : 0); o.f32(a.x); o.f32(a.y); }
-    // capture the flag: each flag (where it is, who has it), then red's and blue's captures
-    const flags = w.ctf && w.flags ? w.flags : [];
+    // capture the flag: each flag (where it is, who has it), then each team's captures
+    const flags = w.ctf && w.flags ? w.flags : [], caps = w.ctf && w.caps ? w.caps : [];
     o.u8(flags.length);
     for (const f of flags) { o.u8(Math.max(0, P.FLAG.indexOf(f.state))); o.u8(f.carrier ? f.carrier.idx : 255); o.f32(f.x); o.f32(f.y); }
-    o.u8(clampN(w.caps ? w.caps[0] : 0, 0, 255)); o.u8(clampN(w.caps ? w.caps[1] : 0, 0, 255));
+    o.u8(caps.length);
+    for (const c of caps) o.u8(clampN(c, 0, 255));
     return o.bytes();
   };
 
@@ -199,7 +200,9 @@
       const st = P.FLAG[r.u8()] || 'home', c = r.u8();
       s.flags.push({ state: st, carrier: c === 255 ? -1 : c, x: r.f32(), y: r.f32() });
     }
-    s.caps = [r.u8(), r.u8()];
+    const nc = r.u8();
+    s.caps = [];
+    for (let i = 0; i < nc; i++) s.caps.push(r.u8());
     return s;
   };
 
