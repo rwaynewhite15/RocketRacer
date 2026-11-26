@@ -587,8 +587,10 @@
   Art.DONUT_RC = 44; // radius of the tube centre-line
   Art.DONUT_RT = 11; // tube radius
 
-  function makeDonut(finish) {
-    const RC = Art.DONUT_RC, RT = Art.DONUT_RT, ext = RC + RT + 1, size = ext * 2 + 1;
+  /** A donut with its tube's centre-line `RC` from the middle and the tube `RT` thick (bigger ones keep the same pixel detail). */
+  function makeDonut(finish, RC, RT) {
+    const ext = RC + RT + 1, size = ext * 2 + 1, n = RC / Art.DONUT_RC; // (n: how many times the usual size)
+    const edge = 1 - 1.1 / RT, cells = 2 * Math.round(12 * n), w1 = Math.round(6 * n), w2 = Math.round(11 * n); // outline, checks, drips
     const cv = RR.canvas(size, size);
     const img = cv.g.createImageData(size, size), d = img.data;
     const outline = hex('#2a1410');
@@ -600,12 +602,12 @@
         const th = Math.atan2(dy, dx), ct = Math.cos(th), sn = Math.sin(th);
         const nz = Math.sqrt(1 - t * t);
         const light = (t * ct * L3[0] + t * sn * L3[1] + nz * L3[2]) * 0.8 + 0.26;
-        const drip = 0.58 + 0.15 * Math.sin(th * 6 + 0.7) + 0.07 * Math.sin(th * 11 + 2);
+        const drip = 0.58 + 0.15 * Math.sin(th * w1 + 0.7) + 0.07 * Math.sin(th * w2 + 2);
         let c;
-        if (Math.abs(t) > 0.9) c = outline;
+        if (Math.abs(t) > edge) c = outline;
         else if (Math.abs(t - 0.03) < drip) {
           if (finish) {
-            const cell = Math.floor(((th + Math.PI) / TAU) * 24) + (t > 0.03 ? 1 : 0);
+            const cell = Math.floor(((th + Math.PI) / TAU) * cells) + (t > 0.03 ? 1 : 0);
             c = pick(cell & 1 ? RAMP.chalk : RAMP.coal, light + 0.08, px, py, 0.5);
           } else c = pick(RAMP.icing, light + 0.08, px, py, 0.5);
         } else c = pick(RAMP.dough, light, px, py, 0.6);
@@ -616,9 +618,9 @@
 
     // sprinkles
     if (!finish) {
-      const rnd = RR.rng(77), cols = ['#fff275', '#7df9ff', '#b6ff6e', '#ffffff', '#ffa35c', '#b79bff'];
-      for (let i = 0; i < 54; i++) {
-        const th = (i / 54) * TAU + rnd() * 0.08, t = (rnd() - 0.5) * 0.72;
+      const rnd = RR.rng(77), cols = ['#fff275', '#7df9ff', '#b6ff6e', '#ffffff', '#ffa35c', '#b79bff'], ns = Math.round(54 * n * n);
+      for (let i = 0; i < ns; i++) {
+        const th = (i / ns) * TAU + rnd() * 0.08, t = (rnd() - 0.5) * 0.72;
         const x = Math.round(ext + Math.cos(th) * (RC + t * RT)), y = Math.round(ext + Math.sin(th) * (RC + t * RT));
         const a = rnd() * Math.PI;
         cv.g.fillStyle = cols[i % cols.length];
@@ -642,6 +644,22 @@
     out.g.putImageData(img, 0, 0);
     return out;
   }
+
+  /** A set of donuts: the gate up next (bright) and the others (dim), plain and checkered, with their sizes. */
+  function donutSet(rc, rt) {
+    const full = makeDonut(false, rc, rt), fin = makeDonut(true, rc, rt);
+    return {
+      full: full, dim: dim(full, 0.62, [22, 26, 70], 0.22),
+      finFull: fin, finDim: dim(fin, 0.62, [22, 26, 70], 0.22),
+      half: (full.width - 1) / 2, rc: rc, rt: rt,
+    };
+  }
+  const donutSets = {};
+  /** The donuts of a course whose gates are `k` times the usual size (see tracks.js), made the first time they are wanted. */
+  Art.donuts = function (k) {
+    if (!k || k === 1) return Art.donut;
+    return donutSets[k] || (donutSets[k] = donutSet(Math.round(Art.DONUT_RC * k), Math.round(Art.DONUT_RT * k)));
+  };
 
   /* --------------------------------------------------------------- glows */
 
@@ -802,12 +820,7 @@
       return list;
     });
 
-    const full = makeDonut(false), fin = makeDonut(true);
-    Art.donut = {
-      full: full, dim: dim(full, 0.62, [22, 26, 70], 0.22),
-      finFull: fin, finDim: dim(fin, 0.62, [22, 26, 70], 0.22),
-      half: (full.width - 1) / 2,
-    };
+    Art.donut = donutSet(Art.DONUT_RC, Art.DONUT_RT);
 
     Art.stars = [
       makeStars(256, 110, 5, ['#23284a', '#2f3560', '#3b4274'], 0),

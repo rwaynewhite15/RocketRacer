@@ -212,18 +212,18 @@
       if (vis(sx, sy, pl.ext)) ctx.drawImage(pl.sprite, sx - pl.ext, sy - pl.ext);
     }
 
-    /* donut gates — the next one glows and gets a marching halo */
-    const half = Art.donut.half, D = Art.donut;
+    /* donut gates — the next one glows and gets a marching halo (all sized to the course's donuts) */
+    const D = Art.donuts(tr.donut), half = D.half, k = tr.donut || 1;
     for (const d of tr.donuts) {
       const sx = d.x - cx, sy = d.y - cy;
-      if (!vis(sx, sy, 84)) continue;
+      if (!vis(sx, sy, half + 28)) continue;
       const active = !g.demo && !g.playerDone && d.ids.indexOf(p.nextCp) >= 0;
       const bright = active || g.demo;
-      if (active) glow(ctx, sx, sy, 78, d.finish ? '#fff1a8' : '#ff6fb5', 0.62 + 0.38 * Math.sin(g.t * 7));
+      if (active) glow(ctx, sx, sy, Math.round(78 * k), d.finish ? '#fff1a8' : '#ff6fb5', 0.62 + 0.38 * Math.sin(g.t * 7));
       ctx.drawImage(d.finish ? (bright ? D.finFull : D.finDim) : (bright ? D.full : D.dim), sx - half, sy - half);
       if (active) {
-        RR.ring(ctx, sx, sy, 60 + Math.round(Math.sin(g.t * 7) * 2), PAL.yellow, 14, g.t * 9);
-        RR.ring(ctx, sx, sy, 28, PAL.white, 8, -g.t * 6);
+        RR.ring(ctx, sx, sy, D.rc + D.rt + 5 + Math.round(Math.sin(g.t * 7) * 2), PAL.yellow, Math.round(14 * k), g.t * 9);
+        RR.ring(ctx, sx, sy, D.rc - D.rt - 5, PAL.white, Math.round(8 * k), -g.t * 6);
       }
     }
 
@@ -273,9 +273,9 @@
     /* while holding a gate deferral: the gate it would defer, ringed in violet */
     if (!g.demo && g.state === 'play' && g.canDefer(p)) {
       const cp = tr.cps[p.nextCp], sx = cp.x - cx, sy = cp.y - cy;
-      if (vis(sx, sy, Art.DONUT_RC + 40)) {
-        RR.ring(ctx, sx, sy, Art.DONUT_RC + 22, PAL.violet, 10, g.t * 3);
-        RR.ring(ctx, sx, sy, Art.DONUT_RC + 25, '#5b21b6', 10, -g.t * 3);
+      if (vis(sx, sy, D.rc + D.rt + 30)) {
+        RR.ring(ctx, sx, sy, D.rc + D.rt + 11, PAL.violet, Math.round(10 * k), g.t * 3);
+        RR.ring(ctx, sx, sy, D.rc + D.rt + 14, '#5b21b6', Math.round(10 * k), -g.t * 3);
       }
     }
 

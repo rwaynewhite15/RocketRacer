@@ -177,6 +177,22 @@ test('a time set in a lent rocket shows as LENT: a gold star by the name on the 
   } finally { await ctx.close(); own.close(); }
 });
 
+test('the Indy-Galactic 500\'s giant donuts are drawn pixel for pixel at their size, bright and dim, plain and checkered', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  try {
+    await page.evaluate(() => { const g = RR.game; g.modeIdx = 0; g.trackIdx = RR.TRACKS.findIndex((t) => t.id === 'indy'); g.begin(); });
+    await page.waitForTimeout(500); // (a few frames drawn)
+    const art = await page.evaluate(() => {
+      const D = RR.Art.donuts(RR.game.track.donut), U = RR.Art.donut;
+      return { big: [D.rc, D.rt, D.full.width, D.dim.width, D.finFull.width, D.finDim.width], usual: [U.rc, U.rt, U.full.width], same: RR.Art.donuts(1) === U };
+    });
+    assert.deepStrictEqual(art.big, [110, 28, 279, 279, 279, 279], 'two and a half times the usual, every one of the four');
+    assert.deepStrictEqual(art.usual, [44, 11, 113], 'the usual ones as they were');
+    assert.ok(art.same);
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test('zoom changes the world scale but not the HUD, and is remembered', { skip }, async () => {
   const { page, ctx, errors } = await openGame({ width: 1280, height: 720 });
   try {

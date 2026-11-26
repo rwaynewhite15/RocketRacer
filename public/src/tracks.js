@@ -20,8 +20,9 @@
    * pickups  rows across the racing line { seg, t, n, kind } — `seg` is the
    *          index of the checkpoint the leg starts at, `t` how far along it,
    *          kind 'P' = power-ups, 'W' = weapons, 'N' = nitro and nothing else
-   * cpR      how near a gate's middle counts as through it, when not the usual
-   *          (CFG.CP_R: the donut's hole)
+   * donut    how many times the usual size its donuts are (bigger gates are
+   *          easier to fly through); on such a course anywhere on the donut,
+   *          its tube too, counts as through it (usually: the hole, CFG.CP_R)
    * weapons  false: a course made without weapons, so its weapon crates ('W'
    *          rows) are only out once the player switches weapons on. Every
    *          course can be switched either way on the menu (G.weaponsOn).
@@ -132,9 +133,10 @@
     },
     {
       // the easiest and fastest course: a big oval flown flat out, nitro on both straights, no rocks, no
-      // weapons unless they are switched on, and brushing a donut counts as going through it. The infield's
-      // worlds sit well clear of the line and pull only lightly
-      id: 'indy', name: 'INDY-GALACTIC 500', blurb: 'FLAT OUT ROUND THE NITRO OVAL', laps: 5, seed: 43, cpR: 58, weapons: false,
+      // weapons unless they are switched on, and giant donuts (two and a half times the usual) that count
+      // anywhere on them: round the ends they nearly touch, a tunnel to follow. The infield's worlds sit
+      // well clear of the line and pull only lightly
+      id: 'indy', name: 'INDY-GALACTIC 500', blurb: 'FLAT OUT ROUND THE NITRO OVAL', laps: 5, seed: 43, donut: 2.5, weapons: false,
       nebula: ['#26100a', '#3c1a0e', '#542612', '#0e1a3a', '#142a5a', '#1a3a72'],
       cps: oval(2000, 1300, 1400, 420, 45),
       planets: [
@@ -355,6 +357,9 @@
     const rnd = RR.rng(def.seed * 9973 + 1);
     const arena = !!def.arena;
     const N = arena ? 0 : def.cps.length;
+    // the donuts' size: their tube's centre-line and outer edge, and how near a gate's middle counts as through it
+    const big = def.donut || 1, donutR = Art.DONUT_RC * big, outer = (Art.DONUT_RC + Art.DONUT_RT) * big;
+    const cpR = def.donut ? Math.round(outer) + 3 : 0; // (a course of bigger donuts: anywhere on one; else the hole)
 
     /* checkpoints ------------------------------------------------------- */
     const cps = (def.cps || []).map(function (p, i) { return { i: i, x: p[0], y: p[1], finish: i === 0 }; });
@@ -416,11 +421,12 @@
       const cl = cps[N - 1];
       const gl = Math.hypot(c0.x - cl.x, c0.y - cl.y);
       ux = (c0.x - cl.x) / gl; uy = (c0.y - cl.y) / gl;
+      const front = Math.round(outer) + 57; // the front row, well clear of the start donut (112 behind the usual one)
       for (let i = 0; i < 6; i++) {
-        const back = 112 + (i >> 1) * 46 + (i & 1) * 18, side = i & 1 ? 1 : -1;
+        const back = front + (i >> 1) * 46 + (i & 1) * 18, side = i & 1 ? 1 : -1;
         grid.push({ x: c0.x - ux * back - uy * side * 22, y: c0.y - uy * back + ux * side * 22, a: Math.atan2(uy, ux) });
       }
-      laneEnd = { x: c0.x - ux * 290, y: c0.y - uy * 290 };
+      laneEnd = { x: c0.x - ux * (front + 178), y: c0.y - uy * (front + 178) };
     }
 
     /* pickups ----------------------------------------------------------- */
@@ -451,7 +457,7 @@
     /* asteroids --------------------------------------------------------- */
     const rocks = [];
     function clear(x, y, r) {
-      for (let k = 0; k < cps.length; k++) if (Math.hypot(x - cps[k].x, y - cps[k].y) < 104 + r) return false;
+      for (let k = 0; k < cps.length; k++) if (Math.hypot(x - cps[k].x, y - cps[k].y) < outer + 49 + r) return false; // (104 round the usual donut)
       for (let k = 0; k < planets.length; k++) if (Math.hypot(x - planets[k].x, y - planets[k].y) < planets[k].r + 26 + r) return false;
       for (let k = 0; k < pickups.length; k++) if (Math.hypot(x - pickups[k].x, y - pickups[k].y) < 30 + r) return false;
       for (let k = 0; k < rocks.length; k++) if (Math.hypot(x - rocks[k].x, y - rocks[k].y) < r + rocks[k].r + 16) return false;
@@ -524,7 +530,7 @@
 
     return {
       def: def, name: def.name, laps: def.laps,
-      cps: cps, cpR: def.cpR || 0, donuts: donuts, planets: planets, grid: grid, pickups: pickups, rocks: rocks,
+      cps: cps, cpR: cpR, donut: big, donutR: donutR, donuts: donuts, planets: planets, grid: grid, pickups: pickups, rocks: rocks,
       bounds: bounds, arena: arena,
       center: arena ? { x: def.cx, y: def.cy } : null, radius: arena ? def.radius || Math.max(def.w, def.h) : 0,
       bases: def.bases ? def.bases.map(function (b) { return { x: b.x, y: b.y }; }) : null, flags: !!def.flags,

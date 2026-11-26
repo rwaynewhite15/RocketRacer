@@ -60,7 +60,7 @@ test('engine: a human who finishes is flown home by autopilot; a gate deferral w
   assert.ok(p.finished && p.ai, 'finished, with the autopilot taking over');
 });
 
-test('engine: the Indy-Galactic 500 is an easy, fast oval - gentle corners, nothing in the way, nitro on the straights, generous gates', () => {
+test('engine: the Indy-Galactic 500 is an easy, fast oval - gentle corners, nothing in the way, nitro on the straights, giant donuts that count anywhere on them', () => {
   const { RR } = createEngine();
   const idx = RR.TRACKS.findIndex((t) => t.id === 'indy'), lunar = RR.TRACKS.findIndex((t) => t.id === 'lunar');
   const tr = RR.getTrack(idx), cps = tr.cps, N = cps.length;
@@ -91,14 +91,25 @@ test('engine: the Indy-Galactic 500 is an easy, fast oval - gentle corners, noth
   assert.ok(G.pickups.length && G.pickups.every((p) => p.kind !== 'W'), 'unless switched on, no weapon crates');
   assert.strictEqual(G.pickups.filter((p) => p.kind === 'N').length, 12, 'six on each straight');
 
-  // brushing a donut counts here (not on other courses): 52 from the middle is through the tube, outside the hole
+  // giant donuts, two and a half times the usual (275 across, not 110), and anywhere on one counts: 135 from the
+  // middle is on the outer edge of the tube. Round the ends, they nearly touch: a tunnel to follow
+  assert.deepStrictEqual([tr.donut, tr.donutR, tr.cpR], [2.5, 110, 141]);
+  const usual = RR.getTrack(lunar);
+  assert.deepStrictEqual([usual.donut, usual.cpR], [1, 0], 'other courses keep the usual donuts, through the hole');
+  for (let i = 2; i <= 4; i++) {
+    const gap = Math.hypot(cps[i].x - cps[i - 1].x, cps[i].y - cps[i - 1].y) - 2 * 138;
+    assert.ok(gap > 20 && gap < 80, 'round the end, a small gap between donuts: ' + gap.toFixed(0));
+  }
+  // nobody starts inside the start donut: the grid sets back from it
+  for (const sl of tr.grid) assert.ok(Math.hypot(sl.x - cps[0].x, sl.y - cps[0].y) > tr.cpR + 40, 'a grid slot clear of the line');
   run(G, 4);
+  assert.ok(G.ships.every((x) => x.cpCount === 0), 'the race starts with everyone short of the line');
   const s = G.ships[0];
   s.netInput.thrust = 0;
   s.nextCp = 1; s.cpCount = 1; s.lap = 1;
-  s.x = cps[1].x; s.y = cps[1].y + 52; s.vx = 0; s.vy = 0;
+  s.x = cps[1].x; s.y = cps[1].y + 135; s.vx = 0; s.vy = 0;
   G.step(STEP);
-  assert.deepStrictEqual([s.nextCp, s.cpCount], [2, 2], 'a brush with the donut counts');
+  assert.deepStrictEqual([s.nextCp, s.cpCount], [2, 2], 'the edge of the donut counts');
   const L = createEngine();
   L.G.startOnline({ server: true, mode: 'race', track: lunar, diff: 1, seats });
   run(L.G, 4);
@@ -106,7 +117,7 @@ test('engine: the Indy-Galactic 500 is an easy, fast oval - gentle corners, noth
   l.nextCp = 1; l.cpCount = 1; l.lap = 1;
   l.x = lc[1].x; l.y = lc[1].y + 52; l.vx = 0; l.vy = 0;
   L.G.step(STEP);
-  assert.strictEqual(l.nextCp, 1, 'on Lunar Loop it does not');
+  assert.strictEqual(l.nextCp, 1, 'on Lunar Loop even the tube of its usual donut does not');
 
   // fast: the same bots get round far quicker than on Lunar Loop, the easy course (about a third quicker:
   // their average speed over the race, gate to gate), and none of them is wrecked or gets stuck
