@@ -953,16 +953,18 @@
     const ph = 5 + 27 + gap + 27 + 10 + 10 + gap + 27 + gap + 21 + gap + 2 + lines.length * 18 - 2 + 6;
     panel(ctx, px, y - 5, pw, ph, PAL.navy);
 
-    const row = function (idx, label, value, onL, onR) {
+    // a menu row: its label, its value between < and >; `half`: one of two sharing a line, centred on `cx`
+    const row = function (idx, label, value, onL, onR, half, cx) {
+      cx = half ? cx : W / 2;
       const sel = g.menuRow === idx && !touch;
-      text(ctx, label, W / 2, y, sel ? PAL.yellow : PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, value, W / 2, y + 10, PAL.white, 2, 'center', PAL.ink);
-      const ax = Math.min(pw / 2 - 12, 112), nud = sel ? Math.round(Math.sin(T * 8) * 1.5) : 0;
-      const col = sel || touch ? PAL.yellow : PAL.steel;
-      text(ctx, '<', W / 2 - ax - nud, y + 10, col, 2, 'center', PAL.ink);
-      text(ctx, '>', W / 2 + ax + nud, y + 10, col, 2, 'center', PAL.ink);
-      g.ui.push({ x: W / 2 - ax - 24, y: y - 3, w: 48, h: 31, act: onL });
-      g.ui.push({ x: W / 2 + ax - 24, y: y - 3, w: 48, h: 31, act: onR });
+      text(ctx, label, cx, y, sel ? PAL.yellow : PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, value, cx, y + 10, PAL.white, 2, 'center', PAL.ink);
+      const ax = half ? Math.min(pw / 4 - 8, 56) : Math.min(pw / 2 - 12, 112), nud = sel ? Math.round(Math.sin(T * 8) * 1.5) : 0;
+      const col = sel || touch ? PAL.yellow : PAL.steel, hw = half ? 36 : 48; // (half rows' arrows sit closer: smaller hit areas)
+      text(ctx, '<', cx - ax - nud, y + 10, col, 2, 'center', PAL.ink);
+      text(ctx, '>', cx + ax + nud, y + 10, col, 2, 'center', PAL.ink);
+      g.ui.push({ x: cx - ax - hw / 2, y: y - 3, w: hw, h: 31, act: onL });
+      g.ui.push({ x: cx + ax - hw / 2, y: y - 3, w: hw, h: 31, act: onR });
     };
 
     row(0, 'EVENT', mode.name, function () { g.setMode(-1); }, function () { g.setMode(1); });
@@ -982,7 +984,13 @@
       text(ctx, line, W / 2, y, rec && rec.race ? PAL.yellow : PAL.silver, 1, 'center', PAL.ink);
     }
     y += 10 + gap;
-    row(2, 'RIVALS', RR.DIFFS[g.diffIdx].name, function () { g.setDiff(-1); }, function () { g.setDiff(1); });
+    if (fight) row(2, 'RIVALS', RR.DIFFS[g.diffIdx].name, function () { g.setDiff(-1); }, function () { g.setDiff(1); });
+    else { // a Grand Prix: the rivals, and the course's weapons on or off, side by side
+      const q = Math.round(pw / 4), arm = function () { g.toggleWeapons(); };
+      row(2, 'RIVALS', RR.DIFFS[g.diffIdx].name, function () { g.setDiff(-1); }, function () { g.setDiff(1); }, true, W / 2 - q);
+      row(3, 'WEAPONS', g.weaponsOn(g.trackIdx) ? 'ON' : 'OFF', arm, arm, true, W / 2 + q);
+      g.ui.push({ x: W / 2 + q - 24, y: y + 7, w: 48, h: 20, act: arm, label: 'WEAPONS' }); // (a tap on ON / OFF switches it too)
+    }
     y += 27 + gap;
 
     const bw = Math.min(150, pw - 20), bx = Math.round(W / 2 - bw / 2), hot = Math.floor(T * 3) & 1;
@@ -1471,6 +1479,10 @@
 
   const modeName = function (mode) { return (RR.MODES.find(function (m) { return m.id === mode; }) || RR.MODES[0]).name; };
   const placeName = function (mode, track) { const list = RR.mapsFor(mode); return (list[track] || list[0]).name; };
+  /** What a room plays: a fight and its arena (or flag map); a race, its course and whether its weapons are out. */
+  const roomLine = function (mode, track, weapons) {
+    return mode === 'race' ? placeName(mode, track) + ' - WEAPONS ' + (weapons ? 'ON' : 'OFF') : modeName(mode) + ' - ' + placeName(mode, track);
+  };
 
   /** The ONLINE screen: find or make a room, then wait in its lobby until everyone is READY. */
   function drawOnline(g, ctx, W, H) {
@@ -1487,7 +1499,7 @@
 
     if (!room) {
       const mode = RR.MODES[g.modeIdx].id, track = g.mapIdx(), only = g.humansOnly;
-      text(ctx, modeName(mode) + ' - ' + placeName(mode, track), W / 2, y + 44, PAL.white, 1, 'center');
+      text(ctx, roomLine(mode, track, g.weaponsOn(track)), W / 2, y + 44, PAL.white, 1, 'center');
       // who takes the empty seats: bots at the menu's rival level, or nobody (LEFT / RIGHT, or tap, to switch)
       const sw = Math.min(pw - 24, 210), sx = Math.round(W / 2 - sw / 2);
       button(g, ctx, '< ' + (only ? 'HUMANS ONLY - NO BOTS' : RR.DIFFS[g.diffIdx].name + ' BOTS IN EMPTY SEATS') + ' >', sx, y + 56, sw, 16,
@@ -1512,7 +1524,7 @@
         text(ctx, 'QUICK MATCH', W / 2, y + (only ? 36 : 42), PAL.gold, 2, 'center', PAL.plum);
         if (only) text(ctx, 'HUMANS ONLY - NO BOTS', W / 2, y + 55, PAL.gold, 1, 'center');
       }
-      text(ctx, modeName(room.mode) + ' - ' + placeName(room.mode, room.track), W / 2, y + 68, PAL.white, 1, 'center');
+      text(ctx, roomLine(room.mode, room.track, room.weapons !== false), W / 2, y + 68, PAL.white, 1, 'center');
       const shown = [];
       for (let k = 0; k < 6; k++) {
         const h = room.humans[k], ry = y + 82 + k * 12;

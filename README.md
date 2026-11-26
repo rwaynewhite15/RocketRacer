@@ -13,8 +13,8 @@ and a second runs online multiplayer over WebSockets.
 - **Four courses**: Lunar Loop (easy oval), Donut Drift (figure-eight through an asteroid
   belt), Gravity Gauntlet (planet slalom, orbiting rocks, long asteroid wall) and the
   **Indy-Galactic 500**, the easiest and fastest: five laps of a big oval flown flat out. Every
-  corner between gates is gentle (an eighth of a turn at most), there are no rocks and no weapon
-  crates, its worlds sit in the infield well clear of the line, a nitro strip lies across each half
+  corner between gates is gentle (an eighth of a turn at most), there are no rocks, no weapon crates
+  until you switch weapons on, its worlds sit in the infield well clear of the line, a nitro strip lies across each half
   of both straights (one boost runs into the next, and the last carries you round the end), and
   brushing a donut counts as flying through it. The same rivals average about a third faster
   here than on Lunar Loop.
@@ -29,6 +29,13 @@ and a second runs online multiplayer over WebSockets.
   defer. The start/finish line can't be deferred: every lap is still flown over the line (with
   the line next, the button dims, and pressing it says FLY THE LINE). Rivals can't use it.
 - **Weapons** (red crates, one slot): Blaster, homing Missile, Mine, EMP shockwave.
+- **Weapons on or off, for each course**: in a Grand Prix, WEAPONS sits beside RIVALS on the menu
+  (UP / DOWN to it, LEFT / RIGHT, or tap ON / OFF). Off, the course's weapon crates stay away, so
+  nobody (you or a rival) has anything to fire; the power-ups stay. Each course keeps its own
+  setting, remembered; until you switch it, a course is as it was made: weapons on, except the
+  Indy-Galactic 500, made without them. Online, a race room keeps the setting of whoever opened it,
+  shown on the ONLINE screen and in the lobby (INDY-GALACTIC 500 - WEAPONS ON). Times go on the
+  same table either way. The fights always have their weapons.
 - **Rivals** in three skill levels: Rookie, Pilot, Ace. They pick up and use items too.
 - **Four events**, chosen on the menu:
   - **Grand Prix**: the race described above.

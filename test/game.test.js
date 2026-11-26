@@ -97,6 +97,55 @@ test('an autopilot and the rivals finish every course', { skip }, async () => {
   } finally { await ctx.close(); }
 });
 
+test('weapons on or off for each course: WEAPONS beside RIVALS on the menu (keys or a tap), remembered per course; off, a race has no weapon crates', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  const indy = await page.evaluate(() => RR.TRACKS.findIndex((t) => t.id === 'indy'));
+  const tap = async (label) => {
+    const u = await page.evaluate((l) => RR.game.ui.find((b) => b.label === l) || null, label);
+    assert.ok(u, 'a button "' + label + '"');
+    const box = await page.locator('#hud').boundingBox(), k = box.width / await page.evaluate(() => RR.game.W);
+    await page.mouse.click(box.x + (u.x + u.w / 2) * k, box.y + (u.y + u.h / 2) * k);
+    await page.waitForTimeout(80);
+  };
+  const crates = () => page.evaluate(() => RR.game.pickups.filter((p) => p.kind === 'W').length);
+  try {
+    // the Indy-Galactic 500 starts with weapons off; the other courses on
+    await page.evaluate((i) => { const g = RR.game; g.modeIdx = 0; g.trackIdx = i; g.menuRow = 0; g.startRace(true); }, indy);
+    assert.deepStrictEqual(await page.evaluate(() => RR.TRACKS.map((t, i) => RR.game.weaponsOn(i))), [true, true, true, false]);
+    // UP from EVENT goes round to WEAPONS (the fourth row in a Grand Prix); RIGHT switches it on
+    await page.keyboard.press('ArrowUp');
+    await page.waitForTimeout(60);
+    assert.strictEqual(await page.evaluate(() => RR.game.menuRow), 3);
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(60);
+    assert.strictEqual(await page.evaluate((i) => RR.game.weaponsOn(i), indy), true);
+    assert.ok(await crates() > 0, 'the race behind the menu shows the crates');
+    // a tap on ON / OFF switches Lunar Loop's off, and only Lunar Loop's
+    await page.evaluate(() => { RR.game.trackIdx = 0; RR.game.startRace(true); });
+    await page.waitForTimeout(60);
+    await tap('WEAPONS');
+    assert.deepStrictEqual(await page.evaluate(() => RR.TRACKS.map((t, i) => RR.game.weaponsOn(i))), [false, true, true, true]);
+    assert.deepStrictEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('rocketracer.v1')).arms), { indy: true, lunar: false }, 'remembered, per course');
+    // a race on Lunar Loop now: no crates, and the power-ups are still there
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => RR.game.state === 'play');
+    assert.strictEqual(await crates(), 0);
+    assert.ok(await page.evaluate(() => RR.game.pickups.length > 0));
+    // after a reload, still so
+    await page.reload();
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.state === 'title');
+    assert.deepStrictEqual(await page.evaluate(() => RR.TRACKS.map((t, i) => RR.game.weaponsOn(i))), [false, true, true, true]);
+    // a fight has no WEAPONS row (its weapons are the point): three rows, and UP from EVENT goes to RIVALS
+    await page.evaluate(() => { const g = RR.game; g.modeIdx = 1; g.menuRow = 0; g.startRace(true); });
+    await page.waitForTimeout(60);
+    assert.ok(!(await page.evaluate(() => RR.game.ui.some((b) => b.label === 'WEAPONS'))));
+    await page.keyboard.press('ArrowUp');
+    await page.waitForTimeout(60);
+    assert.strictEqual(await page.evaluate(() => RR.game.menuRow), 2);
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
 test('zoom changes the world scale but not the HUD, and is remembered', { skip }, async () => {
   const { page, ctx, errors } = await openGame({ width: 1280, height: 720 });
   try {

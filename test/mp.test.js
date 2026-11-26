@@ -207,6 +207,30 @@ test('mp: a private room\'s lend key goes to its host alone; joining with it len
   } finally { for (const p of [a, b, c, d]) p.ws.close(); s.close(); }
 });
 
+test('mp: a race room keeps its opener\'s weapons choice; everyone\'s race is built with it', async () => {
+  const s = await serve();
+  const a = player(s.url, 'ALICE'), b = player(s.url, 'BOB'), c = player(s.url, 'CAROL');
+  const indy = require('../lib/engine').createEngine().RR.TRACKS.findIndex((t) => t.id === 'indy');
+  try {
+    for (const p of [a, b, c]) await p.hello();
+    c.send({ t: 'create', mode: 'race', track: indy, diff: 1, setup });
+    assert.strictEqual((await c.wait(isRoom())).room.weapons, false, 'unsaid: as the course was made (the Indy-Galactic 500 without)');
+    a.send({ t: 'create', mode: 'race', track: indy, diff: 1, weapons: true, setup });
+    const ra = await a.wait(isRoom());
+    assert.strictEqual(ra.room.weapons, true, 'Alice switched them on');
+    b.send({ t: 'join', code: ra.room.code, setup });
+    assert.strictEqual((await b.wait(isRoom())).room.weapons, true, 'and Bob sees it in the lobby');
+    a.send({ t: 'ready', on: true }); b.send({ t: 'ready', on: true });
+    const st = await b.wait((m) => m.t === 'start');
+    assert.strictEqual(st.opts.weapons, true);
+    const G = [...s.hub.rooms].find((r) => r.code === ra.room.code).engine.G;
+    assert.ok(G.pickups.some((p) => p.kind === 'W'), 'the crates are out');
+    b.snaps.length = 0;
+    await sleep(200);
+    assert.strictEqual(b.snaps[b.snaps.length - 1].pickups.length, G.pickups.length, 'snapshots carry the same pickups');
+  } finally { for (const p of [a, b, c]) p.ws.close(); s.close(); }
+});
+
 test('mp: a race runs to the results; only finishes the player flew themselves go to the leaderboard, marked online', async () => {
   const posted = [];
   const s = await serve({ speed: 40, resultsMs: 400, post: (body) => posted.push(body) });

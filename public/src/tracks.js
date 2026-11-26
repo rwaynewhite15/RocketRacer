@@ -22,6 +22,9 @@
    *          kind 'P' = power-ups, 'W' = weapons, 'N' = nitro and nothing else
    * cpR      how near a gate's middle counts as through it, when not the usual
    *          (CFG.CP_R: the donut's hole)
+   * weapons  false: a course made without weapons, so its weapon crates ('W'
+   *          rows) are only out once the player switches weapons on. Every
+   *          course can be switched either way on the menu (G.weaponsOn).
    */
 
   /**
@@ -128,10 +131,10 @@
       ],
     },
     {
-      // the easiest and fastest course: a big oval flown flat out, nitro on both straights, no rocks and no
-      // weapons, and brushing a donut counts as going through it. The infield's worlds sit well clear of
-      // the line and pull only lightly
-      id: 'indy', name: 'INDY-GALACTIC 500', blurb: 'FLAT OUT ROUND THE NITRO OVAL', laps: 5, seed: 43, cpR: 58,
+      // the easiest and fastest course: a big oval flown flat out, nitro on both straights, no rocks, no
+      // weapons unless they are switched on, and brushing a donut counts as going through it. The infield's
+      // worlds sit well clear of the line and pull only lightly
+      id: 'indy', name: 'INDY-GALACTIC 500', blurb: 'FLAT OUT ROUND THE NITRO OVAL', laps: 5, seed: 43, cpR: 58, weapons: false,
       nebula: ['#26100a', '#3c1a0e', '#542612', '#0e1a3a', '#142a5a', '#1a3a72'],
       cps: oval(2000, 1300, 1400, 420, 45),
       planets: [
@@ -140,13 +143,15 @@
         { x: 1300, y: 1300, r: 66, type: 'ice', seed: 46 },
       ],
       // a nitro strip on each half of both straights (one boost runs into the next, and the last carries you
-      // round the end), and power-ups at the apex of each end
+      // round the end), power-ups going into each end, and (weapons on) crates coming out of it
       pickups: [
         { seg: 0, t: 0.5, n: 3, kind: 'N' },
         { seg: 2, t: 0.5, n: 2, kind: 'P' },
+        { seg: 3, t: 0.5, n: 3, kind: 'W' },
         { seg: 5, t: 0.5, n: 3, kind: 'N' },
         { seg: 6, t: 0.5, n: 3, kind: 'N' },
         { seg: 8, t: 0.5, n: 2, kind: 'P' },
+        { seg: 9, t: 0.5, n: 3, kind: 'W' },
         { seg: 11, t: 0.5, n: 3, kind: 'N' },
       ],
     },

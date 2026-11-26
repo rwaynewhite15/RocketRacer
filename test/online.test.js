@@ -345,12 +345,12 @@ test('online: capture the flag - two players on opposite teams; a flag taken on 
   } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
 });
 
-test('online: humans only - the switch on the ONLINE screen (RIGHT, or a tap) is remembered, and two players race the Indy-Galactic 500 with no bots', { skip }, async () => {
+test('online: humans only - the switch on the ONLINE screen (RIGHT, or a tap) is remembered, and two players race the Indy-Galactic 500 with no bots (and, switched on, its weapons)', { skip }, async () => {
   const s = await serve();
   const A = await player(s.url, 'ALICE'), B = await player(s.url, 'BOB');
   try {
-    // Alice picks the course on the menu, opens ONLINE and switches the empty seats to humans only with RIGHT
-    await A.page.evaluate(() => { const g = RR.game; g.modeIdx = 0; g.trackIdx = RR.TRACKS.findIndex((t) => t.id === 'indy'); g.startRace(true); });
+    // Alice picks the course on the menu with its weapons on, opens ONLINE and switches the empty seats to humans only with RIGHT
+    await A.page.evaluate(() => { const g = RR.game; g.modeIdx = 0; g.trackIdx = RR.TRACKS.findIndex((t) => t.id === 'indy'); g.toggleWeapons(); });
     await A.page.keyboard.press('KeyO');
     await A.page.waitForFunction(() => RR.game.state === 'online' && RR.mp.status === 'online');
     await A.tap('< PILOT BOTS IN EMPTY SEATS >'); // (a tap switches it...)
@@ -361,7 +361,7 @@ test('online: humans only - the switch on the ONLINE screen (RIGHT, or a tap) is
     assert.strictEqual(await A.page.evaluate(() => JSON.parse(localStorage.getItem('rocketracer.v1')).humansOnly), true, 'remembered');
     await A.page.keyboard.press('Enter'); // QUICK MATCH
     await A.page.waitForFunction(() => RR.mp.room);
-    assert.deepStrictEqual(await A.page.evaluate(() => [RR.mp.room.bots, RR.mp.room.priv]), [false, false]);
+    assert.deepStrictEqual(await A.page.evaluate(() => [RR.mp.room.bots, RR.mp.room.priv, RR.mp.room.weapons]), [false, false, true]);
     await A.page.keyboard.press('Enter'); // READY: alone, nothing starts
     await A.page.waitForTimeout(400);
     assert.deepStrictEqual(await A.page.evaluate(() => [RR.game.state, RR.mp.room.state, RR.mp.isReady()]), ['online', 'lobby', true]);
@@ -375,8 +375,11 @@ test('online: humans only - the switch on the ONLINE screen (RIGHT, or a tap) is
     assert.deepStrictEqual(await B.page.evaluate(() => [RR.mp.room.bots, RR.mp.room.humans.map((h) => h.name)]), [false, ['ALICE', 'BOB']], 'into Alice\'s room');
     await B.tap('READY (ENTER)');
     for (const P of [A, B]) await P.page.waitForFunction(() => RR.game.state === 'play' && RR.game.online, null, { timeout: 5000 });
-    const look = (P) => P.page.evaluate(() => ({ course: RR.game.track.def.id, ships: RR.game.ships.map((x) => [x.name, x.human]) }));
-    const want = { course: 'indy', ships: [['ALICE', true], ['BOB', true]] };
+    const look = (P) => P.page.evaluate(() => ({ course: RR.game.track.def.id, ships: RR.game.ships.map((x) => [x.name, x.human]), pickups: RR.game.pickups.map((p) => p.kind).join('') }));
+    const srv = [...s.hub.rooms][0].engine.G;
+    // (Bob's own menu has Indy's weapons off: the room's choice is what counts, the same on every screen as on the server)
+    const want = { course: 'indy', ships: [['ALICE', true], ['BOB', true]], pickups: srv.pickups.map((p) => p.kind).join('') };
+    assert.ok(want.pickups.includes('W'), 'weapon crates out on the server');
     assert.deepStrictEqual(await look(A), want, 'just the two of them, on the oval');
     assert.deepStrictEqual(await look(B), want);
     assert.deepStrictEqual([A.errors, B.errors], [[], []]);

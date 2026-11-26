@@ -197,8 +197,8 @@
     if (!send(msg)) { pendingAction = msg; connect(); }
   }
   function game() {
-    const G = RR.game, mode = RR.MODES[G.modeIdx].id;
-    return { mode: mode, track: G.mapIdx(), diff: G.diffIdx, bots: !G.humansOnly };
+    const G = RR.game, mode = RR.MODES[G.modeIdx].id, track = G.mapIdx();
+    return { mode: mode, track: track, diff: G.diffIdx, bots: !G.humansOnly, weapons: mode !== 'race' || G.weaponsOn(track) };
   }
   M.quick = function () { act(Object.assign({ t: 'quick', setup: setup() }, game())); };
   M.create = function () { act(Object.assign({ t: 'create', setup: setup() }, game())); };
