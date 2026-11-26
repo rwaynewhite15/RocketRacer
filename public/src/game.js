@@ -47,6 +47,7 @@
   const ROLL = {
     P: [['nitro', 38], ['shield', 26], ['repair', 22], ['defer', 14]],
     W: [['blaster', 35], ['missile', 30], ['mine', 20], ['emp', 15]],
+    N: [['nitro', 1]], // a course's nitro strip
     // combat modes: every ship already has a cannon, and there are no gates to defer
     CP: [['nitro', 30], ['shield', 35], ['repair', 35]],
     CW: [['missile', 45], ['mine', 25], ['emp', 30]],
@@ -179,6 +180,8 @@
     // as fractions of the screen so they survive other screen sizes (see RR.touchLayout)
     controls: {},
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
+    humansOnly: false, // online: rooms the player opens or quick-matches into race people only, no bots
+    arms: {}, // weapons on (true) or off (false) for each course the player has switched: course id -> bool (see weaponsOn)
     hist: null, // the player's history: games played, wins, 1st / 2nd / 3rd places, by event (see records.js)
     inset: { l: 0, t: 0, r: 0, b: 0 }, // notch / rounded-corner margins, in game pixels
     // The world layer can zoom; the HUD layer (W x H) keeps its pixel size.
@@ -209,6 +212,8 @@
       if (typeof s.pid === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(s.pid)) G.pid = s.pid;
       if (s.mode >= 0 && s.mode < MODES.length) G.modeIdx = s.mode;
       if (s.arena >= 0 && s.arena < RR.ARENAS.length) G.arenaIdx = s.arena;
+      G.humansOnly = s.humansOnly === true;
+      G.arms = cleanArms(s.arms);
       loadProgress(s.prog);
       G.hist = RR.records.cleanHistory(s.hist);
     } catch (e) { /* storage unavailable: play without saved records */ }
@@ -217,12 +222,19 @@
     if (!G.pid) G.pid = RR.net.randomId();
   }
   G.saveSettings = function () { save(); };
+  /** Saved weapon switches: only known courses, only true or false. */
+  function cleanArms(raw) {
+    const out = {};
+    if (raw && typeof raw === 'object') RR.TRACKS.forEach(function (t) { if (typeof raw[t.id] === 'boolean') out[t.id] = raw[t.id]; });
+    return out;
+  }
   function save() {
     try {
       window.localStorage.setItem(STORE, JSON.stringify({
         best: G.best, crt: G.crt, muted: RR.audio.muted, autoFull: G.autoFull, controls: G.controls, diff: G.diffIdx, track: G.trackIdx,
         name: G.name, pid: G.pid, zoom: G.zoomOffset,
         mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog, steerSlide: RR.input.steerSlide, controlsV: CONTROLS_V, hist: G.hist,
+        humansOnly: G.humansOnly, arms: G.arms,
       }));
     } catch (e) { /* ignore */ }
   }
@@ -447,7 +459,7 @@
 
   /** What a pick-up spot holds next. `noReflag`: anything but a Replace Flag (the map has its share). */
   function roll(kind, g, noReflag) {
-    let table = ROLL[(g.ctf ? 'F' : g.combat ? 'C' : '') + kind];
+    let table = ROLL[(g.ctf ? 'F' : g.combat ? 'C' : '') + kind] || ROLL[kind];
     if (noReflag) table = table.filter(function (t) { return t[0] !== 'reflag'; });
     let total = 0, i;
     for (i = 0; i < table.length; i++) total += table[i][1];
@@ -496,6 +508,16 @@
     });
   }
 
+  /**
+   * The pick-up spots of a race: the course's, without its weapon crates when
+   * weapons are off (`g.weapons`; the fights always have theirs).
+   */
+  function pickupsFor(g, tr) {
+    return tr.pickups.filter(function (p) { return g.weapons || p.kind !== 'W'; }).map(function (p, i) {
+      return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind, g), on: true, timer: 0, ph: i * 1.7 };
+    });
+  }
+
   /** Reset the world. `demo` runs an all-AI race behind the title screen. */
   G.startRace = function (demo) {
     const g = this;
@@ -524,6 +546,7 @@
       return s;
     });
     g.player = g.ships[0];
+    g.weapons = g.combat || g.weaponsOn(g.trackIdx);
     setupTeams(g);
     // what the player is flying, for the leaderboard (the hangar cannot change it mid-race)
     g.player.setup = {
@@ -533,9 +556,7 @@
     if (!demo) g.player.plv = Object.assign({}, g.prog.pup); // upgrades make the player's pick-ups stronger
     g.order = g.ships.slice();
     g.rocks = tr.rocks.map(makeRock);
-    g.pickups = tr.pickups.map(function (p, i) {
-      return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind, g), on: true, timer: 0, ph: i * 1.7 };
-    });
+    g.pickups = pickupsFor(g, tr);
     capReflags(g);
     g.shots = []; g.mines = []; g.waves = []; g.parts = []; g.rings = []; g.texts = [];
     g.raceTime = 0;
@@ -556,7 +577,8 @@
    * builds the same world with `me` = their own seat, to draw and predict.
    *   opts: { mode, track, diff, me, server,
    *           seats: [{ name, team, design, hull, human, stats, levels }] }
-   * `track` is a course index for a Grand Prix, an arena index for a fight.
+   * `track` is a course index for a Grand Prix, an arena index for a fight;
+   * `weapons` (a Grand Prix): the course's weapon crates are out (true) or not.
    */
   G.startOnline = function (opts) {
     const g = this, seats = opts.seats, turn = opts.turn || 0;
@@ -594,12 +616,12 @@
     // the server has no player of its own: a stand-in nobody is ever compared equal to
     g.player = g.server ? { x: tr.center ? tr.center.x : 0, y: tr.center ? tr.center.y : 0, progress: 0, gone: false, dead: 0, side: -1 }
       : g.ships[opts.me];
+    // a course's weapons as the room was opened with (every player's screen and the server build the same pickups)
+    g.weapons = g.combat || (typeof opts.weapons === 'boolean' ? opts.weapons : tr.def.weapons !== false);
     setupTeams(g);
     g.order = g.ships.slice();
     g.rocks = tr.rocks.map(makeRock);
-    g.pickups = tr.pickups.map(function (p, i) {
-      return { x: p.x, y: p.y, kind: p.kind, type: roll(p.kind, g), on: true, timer: 0, ph: i * 1.7 };
-    });
+    g.pickups = pickupsFor(g, tr);
     capReflags(g);
     g.shots = []; g.mines = []; g.waves = []; g.parts = []; g.rings = []; g.texts = [];
     g.raceTime = 0;
@@ -878,10 +900,20 @@
     save();
   };
 
-  /* Pilot name: a real HTML text field, so phones bring up their keyboard. */
-  G.editName = function () {
+  /*
+   * Pilot name: a real HTML text field, so phones bring up their keyboard.
+   * `invite` (opened from an invite link: { code, loan }): the box says which
+   * room the player is joining, and JOIN takes them there (see RR.mp.followInvite).
+   */
+  G.editName = function (invite) {
     const box = document.getElementById('namebox'), field = document.getElementById('pilot');
     if (!box || !field || this.state !== 'title') return;
+    const say = function (id, words) { const e = document.getElementById(id); if (e) e.textContent = words; };
+    say('nametitle', invite ? 'JOIN ROOM ' + invite.code : 'PILOT NAME');
+    say('namehelp', invite ? 'Your pilot name in the race. Letters and numbers, up to 10.' +
+      (invite.loan ? ' You are lent a Phoenix with every stat and powerup maxed out.' : '') : 'Shown on the world leaderboard. Letters and numbers, up to 10.');
+    say('nameok', invite ? 'JOIN' : 'OK');
+    say('namecancel', invite ? 'NOT NOW' : 'CANCEL');
     field.value = this.name;
     box.hidden = false;
     RR.input.typing = true;
@@ -900,7 +932,10 @@
     box.hidden = true;
     RR.input.typing = false;
     RR.input.focus(); // keys back to the game
+    if (RR.mp.invite) RR.mp.followInvite(keep); // from an invite link: JOIN goes to the room, NOT NOW stays here
   };
+  /** A short message across the middle of the screen. */
+  G.note = function (words) { toast(this, words); };
   G.pause = function () {
     if (this.online) { this.mpMenu = !this.mpMenu; return; } // online the race goes on: a menu instead
     if (this.state !== 'play') return;
@@ -935,6 +970,24 @@
     }
     RR.audio.sfx('select');
     this.startRace(true);
+    save();
+  };
+  /**
+   * Are course `i`'s weapon crates out? Each course can be switched (and is
+   * remembered); until it is, it is as it was designed: weapons on, except
+   * on a course made without them (`weapons: false`, the Indy-Galactic 500).
+   */
+  G.weaponsOn = function (i) {
+    const t = RR.TRACKS[i] || RR.TRACKS[0];
+    return t.id in this.arms ? this.arms[t.id] : t.weapons !== false;
+  };
+  /** WEAPONS ON / OFF on the menu, for the course on it. */
+  G.toggleWeapons = function () {
+    const t = RR.TRACKS[this.trackIdx];
+    if (!t) return;
+    this.arms[t.id] = !this.weaponsOn(this.trackIdx);
+    RR.audio.sfx('select');
+    this.startRace(true); // (the race behind the menu shows it)
     save();
   };
   G.setDiff = function (d) {
@@ -1927,7 +1980,7 @@
   }
 
   function updateCheckpoints(g) {
-    const cps = g.track.cps, rr = C.CP_R * C.CP_R;
+    const cps = g.track.cps, r = g.track.cpR || C.CP_R, rr = r * r; // (some courses count a brush with the donut)
     for (const s of g.ships) {
       if (s.dead > 0) continue;
       const cp = cps[s.nextCp], dx = s.x - cp.x, dy = s.y - cp.y;
@@ -2871,9 +2924,12 @@
 
     if (hit.full) g.fullscreen();
     if (g.state === 'title') {
-      if (hit.up || hit.down) { g.menuRow = (g.menuRow + (hit.up ? 2 : 1)) % 3; RR.audio.sfx('select'); }
+      // event, course (or arena), rivals, and in a Grand Prix the course's weapons
+      const rows = g.modeIdx === 0 ? 4 : 3;
+      if (g.menuRow >= rows) g.menuRow = rows - 1;
+      if (hit.up || hit.down) { g.menuRow = (g.menuRow + (hit.up ? rows - 1 : 1)) % rows; RR.audio.sfx('select'); }
       const d = hit.left ? -1 : hit.right ? 1 : 0;
-      if (d) { if (g.menuRow === 0) g.setMode(d); else if (g.menuRow === 1) g.setTrack(d); else g.setDiff(d); }
+      if (d) { if (g.menuRow === 0) g.setMode(d); else if (g.menuRow === 1) g.setTrack(d); else if (g.menuRow === 2) g.setDiff(d); else g.toggleWeapons(); }
       if (hit.ok || hit.fire) g.begin();
       else if (hit.name) g.editName();
       else if (hit.board) g.showBoard();

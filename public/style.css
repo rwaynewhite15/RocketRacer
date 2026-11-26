@@ -111,7 +111,7 @@ noscript {
 }
 
 /* Pilot-name dialog: plain HTML so phones can bring up their keyboard. */
-#namebox, #codebox {
+#namebox, #codebox, #linkbox {
   position: fixed;
   left: 50%;
   top: 22%;
@@ -129,11 +129,11 @@ noscript {
   text-align: center;
 }
 
-#namebox[hidden], #codebox[hidden] {
+#namebox[hidden], #codebox[hidden], #linkbox[hidden] {
   display: none;
 }
 
-#namebox label, #codebox label {
+#namebox label, #codebox label, #linkbox label {
   display: block;
   margin-bottom: 10px;
   color: #ffcd75;
@@ -161,7 +161,7 @@ noscript {
   border-color: #ffcd75;
 }
 
-#namebox p, #codebox p {
+#namebox p, #codebox p, #linkbox p {
   margin: 10px 0 14px;
   color: #94b0c2;
   font-size: 12px;
@@ -169,12 +169,12 @@ noscript {
   letter-spacing: 0.02em;
 }
 
-#namebox .row, #codebox .row {
+#namebox .row, #codebox .row, #linkbox .row {
   display: flex;
   gap: 10px;
 }
 
-#namebox button, #codebox button {
+#namebox button, #codebox button, #linkbox button {
   flex: 1;
   min-height: 44px;
   padding: 8px;
@@ -187,11 +187,53 @@ noscript {
   touch-action: manipulation;
 }
 
-#namebox button[type="button"], #codebox button[type="button"] {
+#namebox button[type="button"], #codebox button[type="button"], #linkbox #linkdone {
   border-color: #566c86;
   color: #94b0c2;
 }
 
-#namebox button:active, #codebox button:active {
+#namebox button:active, #codebox button:active, #linkbox button:active {
   background: #333c57;
+}
+
+/* The invite link: the whole address, wrapped, ready to select or copy. */
+#linkbox [hidden] {
+  display: none !important; /* (the lend row is a flex row) */
+}
+
+#linkbox textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px;
+  background: #07071a;
+  border: 3px solid #41a6f6;
+  border-radius: 0;
+  color: #73eff7;
+  font: inherit;
+  font-size: 16px; /* 16px+ stops iOS zooming the page on focus */
+  font-weight: 400;
+  letter-spacing: 0;
+  word-break: break-all;
+  resize: none;
+  outline: none;
+  -webkit-user-select: all;
+  user-select: all;
+}
+
+#linkbox label.check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  color: #ffcd75;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#linkbox label.check input {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  accent-color: #ffcd75;
 }

@@ -40,9 +40,12 @@
     });
   }
 
+  /** Settles once we know whether there is online play (N.mp): an invite link waits for it. */
+  N.ready = Promise.resolve();
+
   N.init = function () {
     if (!window.fetch || window.location.protocol === 'file:') return;
-    api('config').then(function (d) { N.mp = d && typeof d.mp === 'string' ? d.mp : null; }).catch(function () { N.mp = null; });
+    N.ready = api('config').then(function (d) { N.mp = d && typeof d.mp === 'string' ? d.mp : null; }).catch(function () { N.mp = null; });
     api('health').then(function (d) {
       N.online = !!(d && d.ok);
       if (d && typeof d.env === 'string') N.env = d.env;

@@ -83,9 +83,21 @@
     codebox.addEventListener('keydown', function (e) { if (e.key === 'Escape') RR.mp.closeCode(false); });
   }
 
+  /* invite link to share (shown by RR.mp.openLink) */
+  const linkbox = document.getElementById('linkbox');
+  if (linkbox) {
+    linkbox.addEventListener('submit', function (e) { e.preventDefault(); RR.mp.closeLink(); });
+    document.getElementById('lend').addEventListener('change', function () { RR.mp.linkChanged(); });
+    document.getElementById('linkcopy').addEventListener('click', function () { RR.mp.copyLink(); });
+    document.getElementById('linkshare').addEventListener('click', function () { RR.mp.shareLink(); });
+    document.getElementById('linkdone').addEventListener('click', function () { RR.mp.closeLink(); });
+    linkbox.addEventListener('keydown', function (e) { if (e.key === 'Escape') RR.mp.closeLink(); });
+  }
+
   RR.input.attach(hud);
   G.init(); // loads the saved zoom level...
   resize(); // ...which sizes the layers
+  RR.mp.fromLink(); // opened from an invite link: a pilot name, then into the room
 
   let last = performance.now(), fitW = window.innerWidth, fitH = window.innerHeight;
   function frame(now) {

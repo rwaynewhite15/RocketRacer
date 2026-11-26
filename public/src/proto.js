@@ -16,7 +16,9 @@
   'use strict';
 
   const P = {
-    VERSION: 4, // 2: the gate deferral replaced the do-over; 3: capture the flag; 4: two or three teams
+    VERSION: 5, // 2: the gate deferral replaced the do-over; 3: capture the flag; 4: two or three teams;
+    // 5: a fourth course (rooms name courses by number), rooms for humans only, and a course's weapons
+    // on or off (every screen must build the same pickups: snapshots name them by number)
     INPUT: 1, SNAP: 2, // first byte of a binary message
     WEAPONS: [null, 'blaster', 'missile', 'mine', 'emp'],
     ITEMS: ['nitro', 'shield', 'repair', 'defer', 'blaster', 'missile', 'mine', 'emp', 'reflag'],

@@ -13,7 +13,7 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
-const { createApp } = require('../server');
+const { createApp, onlineRecorder } = require('../server');
 const { memoryStore } = require('../lib/store');
 
 let chromium = null;
@@ -95,6 +95,86 @@ test('an autopilot and the rivals finish every course', { skip }, async () => {
     }
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
+});
+
+test('weapons on or off for each course: WEAPONS beside RIVALS on the menu (keys or a tap), remembered per course; off, a race has no weapon crates', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  const indy = await page.evaluate(() => RR.TRACKS.findIndex((t) => t.id === 'indy'));
+  const tap = async (label) => {
+    const u = await page.evaluate((l) => RR.game.ui.find((b) => b.label === l) || null, label);
+    assert.ok(u, 'a button "' + label + '"');
+    const box = await page.locator('#hud').boundingBox(), k = box.width / await page.evaluate(() => RR.game.W);
+    await page.mouse.click(box.x + (u.x + u.w / 2) * k, box.y + (u.y + u.h / 2) * k);
+    await page.waitForTimeout(80);
+  };
+  const crates = () => page.evaluate(() => RR.game.pickups.filter((p) => p.kind === 'W').length);
+  try {
+    // the Indy-Galactic 500 starts with weapons off; the other courses on
+    await page.evaluate((i) => { const g = RR.game; g.modeIdx = 0; g.trackIdx = i; g.menuRow = 0; g.startRace(true); }, indy);
+    assert.deepStrictEqual(await page.evaluate(() => RR.TRACKS.map((t, i) => RR.game.weaponsOn(i))), [true, true, true, false]);
+    // UP from EVENT goes round to WEAPONS (the fourth row in a Grand Prix); RIGHT switches it on
+    await page.keyboard.press('ArrowUp');
+    await page.waitForTimeout(60);
+    assert.strictEqual(await page.evaluate(() => RR.game.menuRow), 3);
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(60);
+    assert.strictEqual(await page.evaluate((i) => RR.game.weaponsOn(i), indy), true);
+    assert.ok(await crates() > 0, 'the race behind the menu shows the crates');
+    // a tap on ON / OFF switches Lunar Loop's off, and only Lunar Loop's
+    await page.evaluate(() => { RR.game.trackIdx = 0; RR.game.startRace(true); });
+    await page.waitForTimeout(60);
+    await tap('WEAPONS');
+    assert.deepStrictEqual(await page.evaluate(() => RR.TRACKS.map((t, i) => RR.game.weaponsOn(i))), [false, true, true, true]);
+    assert.deepStrictEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('rocketracer.v1')).arms), { indy: true, lunar: false }, 'remembered, per course');
+    // a race on Lunar Loop now: no crates, and the power-ups are still there
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => RR.game.state === 'play');
+    assert.strictEqual(await crates(), 0);
+    assert.ok(await page.evaluate(() => RR.game.pickups.length > 0));
+    // after a reload, still so
+    await page.reload();
+    await page.waitForFunction(() => window.RR && RR.game && RR.game.state === 'title');
+    assert.deepStrictEqual(await page.evaluate(() => RR.TRACKS.map((t, i) => RR.game.weaponsOn(i))), [false, true, true, true]);
+    // a fight has no WEAPONS row (its weapons are the point): three rows, and UP from EVENT goes to RIVALS
+    await page.evaluate(() => { const g = RR.game; g.modeIdx = 1; g.menuRow = 0; g.startRace(true); });
+    await page.waitForTimeout(60);
+    assert.ok(!(await page.evaluate(() => RR.game.ui.some((b) => b.label === 'WEAPONS'))));
+    await page.keyboard.press('ArrowUp');
+    await page.waitForTimeout(60);
+    assert.strictEqual(await page.evaluate(() => RR.game.menuRow), 2);
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+});
+
+test('a time set in a lent rocket shows as LENT: a gold star by the name on the top 10 (with a key), and LENT on the pilot\'s card', { skip }, async () => {
+  // a server of our own, with a lent time recorded the way the multiplayer server records one
+  const store = memoryStore();
+  const own = http.createServer(createApp(store));
+  await new Promise((r) => own.listen(0, '127.0.0.1', r));
+  const record = onlineRecorder(store, () => {});
+  const maxed = { ship: 'phoenix', stats: [10, 10, 10, 10, 10], items: { nitro: 6, missile: 1 }, levels: { nitro: 3, missile: 3, shield: 3 } };
+  await record({ track: 'indy', pid: 'lent-pid-0001', name: 'ZED', time: 60.25, lap: 11.5, diff: 1, place: 1, setup: maxed, lent: true });
+  await record({ track: 'indy', pid: 'own-pid-00002', name: 'OWN', time: 66.5, lap: 12.5, diff: 1, place: 1, setup: { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: {}, levels: {} } });
+  const { page, ctx, errors } = await openGame(null, 'http://127.0.0.1:' + own.address().port);
+  try {
+    await page.waitForFunction(() => RR.net.online);
+    await page.evaluate(() => { const g = RR.game; g.modeIdx = 0; g.trackIdx = RR.TRACKS.findIndex((t) => t.id === 'indy'); g.startRace(true); });
+    await page.keyboard.press('KeyT');
+    await page.waitForFunction(() => RR.game.boardShown && RR.game.boardShown.id === 'indy' && RR.game.boardShown.rows.length === 2, null, { timeout: 5000 });
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.boardShown.rows.map((r) => r[1]), RR.game.boardShown.lent]), [['ZED', 'OWN'], [1]], 'ZED\'s row is starred, OWN\'s not');
+    // ZED's card: LENT by the rocket, and the stats LENT, MAXED OUT (one key a frame, as a person presses them)
+    const press = async (k) => { await page.keyboard.press(k); await page.waitForTimeout(100); };
+    await press('ArrowDown');
+    await press('Enter');
+    await page.waitForFunction(() => RR.game.cardShown && RR.game.boardCard, null, { timeout: 5000 });
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.boardCard.e.name, RR.game.cardShown.lent, RR.game.cardShown.ship]), ['ZED', true, 'phoenix']);
+    await press('Enter'); // (closes the card; the arrows go on from ZED)
+    await press('ArrowDown');
+    await press('Enter');
+    await page.waitForFunction(() => RR.game.boardCard && RR.game.boardCard.e.name === 'OWN', null, { timeout: 5000 });
+    assert.strictEqual(await page.evaluate(() => RR.game.cardShown.lent), false);
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); own.close(); }
 });
 
 test('zoom changes the world scale but not the HUD, and is remembered', { skip }, async () => {
@@ -318,7 +398,7 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     await click('PILOT 1');
     let s = await state();
     assert.deepStrictEqual(s.card, { rank: 1, name: 'COMET', shown: {
-      ship: 'phoenix', stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['defer', 1]], numbers: [],
+      ship: 'phoenix', lent: false, stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['defer', 1]], numbers: [],
     } });
     await click('BACK (ENTER)');
     s = await state();
@@ -332,13 +412,13 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     assert.strictEqual((await state()).sel, 3, 'up from the top wraps to the bottom');
     await key('Enter');
     s = await state();
-    assert.deepStrictEqual(s.card, { rank: 4, name: 'OLDIE', shown: { ship: null, stats: null, items: [], numbers: [] } }, 'an old row: no setup on record');
+    assert.deepStrictEqual(s.card, { rank: 4, name: 'OLDIE', shown: { ship: null, lent: false, stats: null, items: [], numbers: [] } }, 'an old row: no setup on record');
     await key('Escape');
     assert.deepStrictEqual([(await state()).state, (await state()).card], ['board', null]);
     await key('ArrowUp');
     await key('Enter');
     s = await state();
-    assert.deepStrictEqual(s.card, { rank: 3, name: 'ROCKY', shown: { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: [], numbers: [] } }, 'a clean run');
+    assert.deepStrictEqual(s.card, { rank: 3, name: 'ROCKY', shown: { ship: 'sparrow', lent: false, stats: [3, 3, 3, 3, 3], items: [], numbers: [] } }, 'a clean run');
     await key('Enter');
     assert.strictEqual((await state()).card, null, 'Enter closes the card too');
     await key('Escape');
@@ -2134,14 +2214,14 @@ test('high score tables for every event, and the pilot history: a fight posts it
     await page.keyboard.press('Enter'); await page.waitForTimeout(80);
     // RIGHT goes through every table and comes round again: the other fights, the top pilots, the courses
     const order = [];
-    for (let k = 0; k < 7; k++) {
+    for (let k = 0; k < 8; k++) {
       await page.keyboard.press('ArrowRight');
       await page.waitForTimeout(100);
       order.push(await page.evaluate(() => RR.game.boardId));
     }
-    assert.deepStrictEqual(order, ['royale', 'ctf', 'pilots', 'lunar', 'eight', 'gauntlet', 'dogfight']);
-    // ...and LEFT goes back the other way: four tables back is the top pilots
-    for (let k = 0; k < 4; k++) { await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(100); }
+    assert.deepStrictEqual(order, ['royale', 'ctf', 'pilots', 'lunar', 'eight', 'gauntlet', 'indy', 'dogfight']);
+    // ...and LEFT goes back the other way: five tables back is the top pilots
+    for (let k = 0; k < 5; k++) { await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(100); }
     // the top pilots: us among them, with our game and win
     await page.waitForFunction((n) => RR.game.boardId === 'pilots' && RR.game.boardShown.rows.some((x) => x[1] === n), name, { timeout: 8000 });
     assert.deepStrictEqual(await page.evaluate((n) => RR.game.boardShown.rows.find((x) => x[1] === n).slice(1), name), [name, 1, 1, 1, 0, 0]);

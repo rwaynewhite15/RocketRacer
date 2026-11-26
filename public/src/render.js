@@ -953,16 +953,18 @@
     const ph = 5 + 27 + gap + 27 + 10 + 10 + gap + 27 + gap + 21 + gap + 2 + lines.length * 18 - 2 + 6;
     panel(ctx, px, y - 5, pw, ph, PAL.navy);
 
-    const row = function (idx, label, value, onL, onR) {
+    // a menu row: its label, its value between < and >; `half`: one of two sharing a line, centred on `cx`
+    const row = function (idx, label, value, onL, onR, half, cx) {
+      cx = half ? cx : W / 2;
       const sel = g.menuRow === idx && !touch;
-      text(ctx, label, W / 2, y, sel ? PAL.yellow : PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, value, W / 2, y + 10, PAL.white, 2, 'center', PAL.ink);
-      const ax = Math.min(pw / 2 - 12, 112), nud = sel ? Math.round(Math.sin(T * 8) * 1.5) : 0;
-      const col = sel || touch ? PAL.yellow : PAL.steel;
-      text(ctx, '<', W / 2 - ax - nud, y + 10, col, 2, 'center', PAL.ink);
-      text(ctx, '>', W / 2 + ax + nud, y + 10, col, 2, 'center', PAL.ink);
-      g.ui.push({ x: W / 2 - ax - 24, y: y - 3, w: 48, h: 31, act: onL });
-      g.ui.push({ x: W / 2 + ax - 24, y: y - 3, w: 48, h: 31, act: onR });
+      text(ctx, label, cx, y, sel ? PAL.yellow : PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, value, cx, y + 10, PAL.white, 2, 'center', PAL.ink);
+      const ax = half ? Math.min(pw / 4 - 8, 56) : Math.min(pw / 2 - 12, 112), nud = sel ? Math.round(Math.sin(T * 8) * 1.5) : 0;
+      const col = sel || touch ? PAL.yellow : PAL.steel, hw = half ? 36 : 48; // (half rows' arrows sit closer: smaller hit areas)
+      text(ctx, '<', cx - ax - nud, y + 10, col, 2, 'center', PAL.ink);
+      text(ctx, '>', cx + ax + nud, y + 10, col, 2, 'center', PAL.ink);
+      g.ui.push({ x: cx - ax - hw / 2, y: y - 3, w: hw, h: 31, act: onL });
+      g.ui.push({ x: cx + ax - hw / 2, y: y - 3, w: hw, h: 31, act: onR });
     };
 
     row(0, 'EVENT', mode.name, function () { g.setMode(-1); }, function () { g.setMode(1); });
@@ -982,7 +984,13 @@
       text(ctx, line, W / 2, y, rec && rec.race ? PAL.yellow : PAL.silver, 1, 'center', PAL.ink);
     }
     y += 10 + gap;
-    row(2, 'RIVALS', RR.DIFFS[g.diffIdx].name, function () { g.setDiff(-1); }, function () { g.setDiff(1); });
+    if (fight) row(2, 'RIVALS', RR.DIFFS[g.diffIdx].name, function () { g.setDiff(-1); }, function () { g.setDiff(1); });
+    else { // a Grand Prix: the rivals, and the course's weapons on or off, side by side
+      const q = Math.round(pw / 4), arm = function () { g.toggleWeapons(); };
+      row(2, 'RIVALS', RR.DIFFS[g.diffIdx].name, function () { g.setDiff(-1); }, function () { g.setDiff(1); }, true, W / 2 - q);
+      row(3, 'WEAPONS', g.weaponsOn(g.trackIdx) ? 'ON' : 'OFF', arm, arm, true, W / 2 + q);
+      g.ui.push({ x: W / 2 + q - 24, y: y + 7, w: 48, h: 20, act: arm, label: 'WEAPONS' }); // (a tap on ON / OFF switches it too)
+    }
     y += 27 + gap;
 
     const bw = Math.min(150, pw - 20), bx = Math.round(W / 2 - bw / 2), hot = Math.floor(T * 3) & 1;
@@ -1125,7 +1133,7 @@
     const cSetup = x + 94, cPlace = x + pw - 92, cDiff = x + pw - 62, cTime = x + pw - 10;
     panel(ctx, x, y, pw, ph, PAL.pink);
     boardHeader(g, ctx, W, x, y, pw, 'WORLD TOP 10', fight ? REC.NAMES[id] : def.name, PAL.pink, PAL.plum);
-    g.boardShown = { id: id, fight: fight, rows: [] }; // (what is on screen, for the tests)
+    g.boardShown = { id: id, fight: fight, rows: [], lent: [] }; // (what is on screen, for the tests)
 
     const rows = (g.boardRows = []); // what the arrows can pick, in order
     const row = function (ry, rank, e, col) {
@@ -1137,6 +1145,7 @@
         ctx.fillRect(x + 5, ry - 3, 1, rowH); ctx.fillRect(x + pw - 6, ry - 3, 1, rowH);
       }
       text(ctx, String(rank), x + 22, ry, col, 1, 'right');
+      if (e.lent) { text(ctx, '*', x + 24, ry, PAL.gold); g.boardShown.lent.push(rank); } // in a rocket an invite lent
       text(ctx, e.name, x + 30, ry, col);
       r.strip = setupStrip(ctx, e.setup, cSetup, ry);
       r.at = [cSetup, ry];
@@ -1189,7 +1198,9 @@
     if (fight) { // how the points are made
       REC.explain(id).forEach(function (ln, k) { text(ctx, ln, W / 2, y + 190 + k * 9, PAL.silver, 1, 'center'); });
     }
-    text(ctx, 'R ROOKIE  P PILOT  A ACE', W / 2, y + ph - 45, PAL.steel, 1, 'center');
+    const KEY = 'R ROOKIE  P PILOT  A ACE', anyLent = g.boardShown.lent.length > 0;
+    text(ctx, KEY + (anyLent ? '  * LENT ROCKET' : ''), W / 2, y + ph - 45, PAL.steel, 1, 'center');
+    if (anyLent) text(ctx, '*', W / 2 - RR.textW(KEY + '  * LENT ROCKET') / 2 + RR.textW(KEY + '  ') + 1, y + ph - 45, PAL.gold); // (the key's star, gold too)
     const bw = 90;
     button(g, ctx, touch ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
       function () { g.closeBoard(); }, PAL.lime);
@@ -1273,6 +1284,7 @@
       const spr = Art.ship(hull.design, 0);
       ctx.drawImage(spr, x + 14, y + 38, spr.width * 2, spr.height * 2);
       text(ctx, hull.name, tx, y + 40, PAL.white, 2, 'left', PAL.ink);
+      if (e.lent) text(ctx, 'LENT', tx + RR.textW(hull.name, 2) + 6, y + 44, PAL.gold); // an invite link lent it (see lib/mp.js)
     }
     const place = e.place >= 1 && e.place <= 6 ? ORD[e.place - 1] : '-';
     const vs = place + ' VS ' + ((RR.DIFFS[e.diff] && RR.DIFFS[e.diff].name) || '?') + ' RIVALS';
@@ -1286,7 +1298,7 @@
       text(ctx, 'BEST LAP ' + fmt(e.lap), tx, y + 68, PAL.silver);
       text(ctx, vs, tx, y + 78, DIFF_COL[e.diff] || PAL.silver);
     }
-    const shown = { ship: hull ? hull.id : null, stats: null, items: [], numbers: [] };
+    const shown = { ship: hull ? hull.id : null, lent: !!e.lent, stats: null, items: [], numbers: [] };
     g.cardShown = shown;
 
     if (!hull) {
@@ -1297,7 +1309,7 @@
       /* stats */
       const tuned = su.stats.reduce(function (a, lv, k) { return a + Math.max(0, lv - hull.base[k]); }, 0);
       text(ctx, fight && e.map ? mapName(e.map) : 'STATS', x + 14, y + 88, PAL.steel);
-      text(ctx, tuned ? '+' + tuned + ' POINTS PUT IN' : 'STOCK', x + pw - 14, y + 88, tuned ? PAL.yellow : PAL.steel, 1, 'right');
+      text(ctx, e.lent ? 'LENT, MAXED OUT' : tuned ? '+' + tuned + ' POINTS PUT IN' : 'STOCK', x + pw - 14, y + 88, e.lent ? PAL.gold : tuned ? PAL.yellow : PAL.steel, 1, 'right');
       shown.stats = su.stats.slice();
       RR.STATS.forEach(function (st, k) {
         const ry = y + 98 + k * 10, lv = su.stats[k], base = hull.base[k], cap = hull.cap[k], bx = x + 86;
@@ -1471,6 +1483,10 @@
 
   const modeName = function (mode) { return (RR.MODES.find(function (m) { return m.id === mode; }) || RR.MODES[0]).name; };
   const placeName = function (mode, track) { const list = RR.mapsFor(mode); return (list[track] || list[0]).name; };
+  /** What a room plays: a fight and its arena (or flag map); a race, its course and whether its weapons are out. */
+  const roomLine = function (mode, track, weapons) {
+    return mode === 'race' ? placeName(mode, track) + ' - WEAPONS ' + (weapons ? 'ON' : 'OFF') : modeName(mode) + ' - ' + placeName(mode, track);
+  };
 
   /** The ONLINE screen: find or make a room, then wait in its lobby until everyone is READY. */
   function drawOnline(g, ctx, W, H) {
@@ -1486,26 +1502,37 @@
     const bw = Math.min(150, pw - 40), bx = Math.round(W / 2 - bw / 2);
 
     if (!room) {
-      const mode = RR.MODES[g.modeIdx].id, track = g.mapIdx();
-      text(ctx, modeName(mode) + ' - ' + placeName(mode, track), W / 2, y + 44, PAL.white, 1, 'center');
-      text(ctx, RR.DIFFS[g.diffIdx].name + ' BOTS IN EMPTY SEATS', W / 2, y + 56, PAL.steel, 1, 'center');
-      button(g, ctx, touch ? 'QUICK MATCH' : 'QUICK MATCH (ENTER)', bx, y + 74, bw, 20, function () { M.quick(); }, PAL.lime);
-      button(g, ctx, 'CREATE ROOM', bx, y + 100, bw, 20, function () { M.create(); }, PAL.yellow);
-      button(g, ctx, 'JOIN ROOM', bx, y + 126, bw, 20, function () { M.askCode(); }, PAL.cyan);
-      text(ctx, 'QUICK MATCH: RACE ANYONE IN A ROOM', W / 2, y + 156, PAL.steel, 1, 'center');
-      text(ctx, 'CREATE ROOM: A CODE FOR YOUR FRIENDS', W / 2, y + 167, PAL.steel, 1, 'center');
-      text(ctx, 'PICK THE MODE AND COURSE ON THE MENU', W / 2, y + 178, PAL.steel, 1, 'center');
+      const mode = RR.MODES[g.modeIdx].id, track = g.mapIdx(), only = g.humansOnly;
+      text(ctx, roomLine(mode, track, g.weaponsOn(track)), W / 2, y + 44, PAL.white, 1, 'center');
+      // who takes the empty seats: bots at the menu's rival level, or nobody (LEFT / RIGHT, or tap, to switch)
+      const sw = Math.min(pw - 24, 210), sx = Math.round(W / 2 - sw / 2);
+      button(g, ctx, '< ' + (only ? 'HUMANS ONLY - NO BOTS' : RR.DIFFS[g.diffIdx].name + ' BOTS IN EMPTY SEATS') + ' >', sx, y + 56, sw, 16,
+        function () { M.toggleBots(); }, only ? PAL.gold : PAL.steel);
+      button(g, ctx, touch ? 'QUICK MATCH' : 'QUICK MATCH (ENTER)', bx, y + 80, bw, 20, function () { M.quick(); }, PAL.lime);
+      button(g, ctx, 'CREATE ROOM', bx, y + 104, bw, 20, function () { M.create(); }, PAL.yellow);
+      button(g, ctx, 'JOIN ROOM', bx, y + 128, bw, 20, function () { M.askCode(); }, PAL.cyan);
+      text(ctx, 'QUICK MATCH: RACE ANYONE IN A ROOM', W / 2, y + 158, PAL.steel, 1, 'center');
+      text(ctx, 'CREATE ROOM: A CODE FOR YOUR FRIENDS', W / 2, y + 169, PAL.steel, 1, 'center');
+      text(ctx, 'PICK THE MODE AND COURSE ON THE MENU', W / 2, y + 180, PAL.steel, 1, 'center');
+      text(ctx, only ? 'HUMANS ONLY: NEEDS 2 PILOTS OR MORE' : touch ? 'TAP THE BOTS LINE FOR HUMANS ONLY' : 'LEFT / RIGHT: HUMANS ONLY',
+        W / 2, y + 191, only ? PAL.gold : PAL.steel, 1, 'center');
     } else {
       // the room: its code, what it races, who is in it
+      const only = room.bots === false, mine = room.humans[M.you];
+      const lent = mine && mine.loan && RR.HULLS.find(function (h) { return h.design === mine.design; }); // flying a rocket an invite lent
       if (room.priv) {
         text(ctx, 'ROOM ' + room.code, W / 2, y + 38, PAL.gold, 2, 'center', PAL.plum);
-        text(ctx, 'FRIENDS JOIN WITH THIS CODE', W / 2, y + 56, PAL.steel, 1, 'center');
-      } else text(ctx, 'QUICK MATCH', W / 2, y + 42, PAL.gold, 2, 'center', PAL.plum);
-      text(ctx, modeName(room.mode) + ' - ' + placeName(room.mode, room.track), W / 2, y + 68, PAL.white, 1, 'center');
+        if (lent) text(ctx, 'LENT TO YOU: A MAXED-OUT ' + lent.name, W / 2, y + 56, PAL.gold, 1, 'center');
+        else text(ctx, only ? 'HUMANS ONLY - JOIN WITH THIS CODE' : 'FRIENDS JOIN WITH THIS CODE', W / 2, y + 56, only ? PAL.gold : PAL.steel, 1, 'center');
+      } else {
+        text(ctx, 'QUICK MATCH', W / 2, y + (only ? 36 : 42), PAL.gold, 2, 'center', PAL.plum);
+        if (only) text(ctx, 'HUMANS ONLY - NO BOTS', W / 2, y + 55, PAL.gold, 1, 'center');
+      }
+      text(ctx, roomLine(room.mode, room.track, room.weapons !== false), W / 2, y + 68, PAL.white, 1, 'center');
       const shown = [];
       for (let k = 0; k < 6; k++) {
         const h = room.humans[k], ry = y + 82 + k * 12;
-        if (!h) { text(ctx, (k + 1) + '  ' + 'BOT (' + RR.DIFFS[room.diff].name + ')', x + 24, ry, PAL.slate); continue; }
+        if (!h) { text(ctx, (k + 1) + '  ' + (only ? 'OPEN SEAT' : 'BOT (' + RR.DIFFS[room.diff].name + ')'), x + 24, ry, PAL.slate); continue; }
         const you = k === M.you;
         if (you) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 8, ry - 2, pw - 16, 11); }
         text(ctx, String(k + 1), x + 24, ry, you ? PAL.yellow : PAL.silver);
@@ -1513,12 +1540,14 @@
         text(ctx, h.name + (you ? ' (YOU)' : ''), x + 50, ry, you ? PAL.yellow : PAL.white);
         const tag = !h.connected ? 'AWAY' : h.waiting ? 'NEXT RACE' : h.ready ? 'READY' : '...';
         text(ctx, tag, x + pw - 14, ry, h.ready ? PAL.lime : !h.connected ? PAL.alarm : PAL.steel, 1, 'right');
+        if (h.loan) text(ctx, 'LENT', x + pw - 72, ry, PAL.gold, 1, 'right'); // a maxed-out rocket, lent by an invite
         shown.push([h.name, tag]);
       }
       g.onlineShown = shown;
       const racing = room.state !== 'lobby';
-      text(ctx, room.state === 'race' ? 'A RACE IS ON - YOU ARE IN THE NEXT ONE' : racing ? 'NEXT RACE IN A MOMENT' : 'STARTS WHEN EVERYONE IS READY',
-        W / 2, y + 158, room.state === 'race' ? PAL.orange : PAL.steel, 1, 'center');
+      const alone = only && room.humans.filter(function (h) { return h.connected; }).length < 2; // humans only: nobody to race yet
+      text(ctx, room.state === 'race' ? 'A RACE IS ON - YOU ARE IN THE NEXT ONE' : racing ? 'NEXT RACE IN A MOMENT' : alone ? 'WAITING FOR ANOTHER PILOT' : 'STARTS WHEN EVERYONE IS READY',
+        W / 2, y + 158, room.state === 'race' || alone ? PAL.orange : PAL.steel, 1, 'center');
       const ready = M.isReady();
       if (!racing) {
         button(g, ctx, ready ? 'NOT READY' : touch ? 'READY' : 'READY (ENTER)', bx, y + 172, bw, 20, function () { M.ready(!ready); },
@@ -1526,7 +1555,11 @@
       }
     }
     const lw = 80;
-    button(g, ctx, touch ? 'BACK' : 'BACK (ESC)', Math.round(W / 2 - lw / 2), y + ph - 23, lw, 17, function () { M.leave(); }, PAL.orange);
+    if (room && room.code) { // a private room: its invite link beside BACK
+      const iw = 100, ix = Math.round(W / 2 - (iw + 8 + lw) / 2);
+      button(g, ctx, touch ? 'INVITE LINK' : 'INVITE LINK (L)', ix, y + ph - 23, iw, 17, function () { M.openLink(); }, PAL.cyan);
+      button(g, ctx, touch ? 'BACK' : 'BACK (ESC)', ix + iw + 8, y + ph - 23, lw, 17, function () { M.leave(); }, PAL.orange);
+    } else button(g, ctx, touch ? 'BACK' : 'BACK (ESC)', Math.round(W / 2 - lw / 2), y + ph - 23, lw, 17, function () { M.leave(); }, PAL.orange);
   }
 
   /** Over an online race: the connection, and the menu (the race goes on behind it). */
@@ -1562,7 +1595,7 @@
       const ry = y + 42 + k * 12, col = r.you ? PAL.yellow : r.human ? PAL.white : PAL.silver;
       if (r.you) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 6, ry - 2, pw - 12, 11); }
       text(ctx, ORD[r.place - 1] || String(r.place), x + 12, ry, PLACE_COL[r.place - 1] || PAL.silver);
-      text(ctx, r.name + (r.human ? '' : ' (BOT)'), x + 40, ry, col);
+      text(ctx, r.name + (!r.human ? ' (BOT)' : r.lent ? ' (LENT)' : ''), x + 40, ry, col);
       text(ctx, g.ctf ? (r.caps || 0) + '      ' + r.kills : fight ? r.kills + '      ' + r.deaths : r.time != null ? fmt(r.time) : 'DNF', x + pw - 12, ry, col, 1, 'right');
     });
     const rw = M.reward, by = y + 46 + list.length * 12;

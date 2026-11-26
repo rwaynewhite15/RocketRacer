@@ -15,6 +15,10 @@
  *   - keeps its clock in step with the server's (ping / pong).
  * A dropped connection reconnects and resumes the seat (a bot flies the
  * ship meanwhile).
+ *
+ * Invite links: a private room's lobby gives a link (INVITE LINK) that opens
+ * the game, asks for a pilot name and joins the room. The room's host can
+ * make it lend a maxed-out Phoenix (the server checks the room's lend key).
  * ======================================================================== */
 (function () {
   'use strict';
@@ -30,6 +34,8 @@
     status: 'off', // off | connecting | online | lost
     error: null, notice: null,
     room: null, you: -1, token: null, results: null, reward: null,
+    key: null, // the room's lend key, when we host it (see inviteLink)
+    invite: null, // an invite link the page was opened from, waiting for the pilot name: { code, loan }
     me: -1, // the player's ship in the current race
     rtt: 0, offset: 0,
   });
@@ -134,7 +140,7 @@
       return;
     }
     if (m.t === 'room') {
-      M.room = m.room; M.you = m.you; M.token = m.token; M.error = null;
+      M.room = m.room; M.you = m.you; M.token = m.token; M.key = m.key || null; M.error = null;
       storage(TOKEN_KEY, m.token);
       // after the results, the room is back in its lobby
       if (m.room.state === 'lobby' && G.state === 'mpresults' && M.resultsShown > 2) M.backToRoom();
@@ -143,7 +149,7 @@
     if (m.t === 'start') { start(m); return; }
     if (m.t === 'ev') { for (const e of m.e) events.push({ ms: m.ms, e: e }); return; }
     if (m.t === 'results') { results(m); return; }
-    if (m.t === 'left') { M.room = null; M.token = null; storage(TOKEN_KEY, null); return; }
+    if (m.t === 'left') { M.room = null; M.token = null; M.key = null; storage(TOKEN_KEY, null); return; }
     if (m.t === 'bye') { M.notice = 'SERVER UPDATING - RECONNECTING...'; }
   }
 
@@ -152,6 +158,7 @@
     G.startOnline(Object.assign({}, m.opts, { me: m.you }));
     G.ships.forEach(function (s, i) { s.remote = i !== m.you; });
     G.mpMenu = false;
+    M.closeLink();
     M.me = m.you; M.results = null; M.reward = null; M.error = null;
     snaps = []; events = []; steps = []; seq = 0; stepN = 0; acc = 0; wantDefer = false; last = null;
     RR.audio.sfx('confirm');
@@ -190,23 +197,34 @@
     if (!send(msg)) { pendingAction = msg; connect(); }
   }
   function game() {
-    const G = RR.game, mode = RR.MODES[G.modeIdx].id;
-    return { mode: mode, track: G.mapIdx(), diff: G.diffIdx };
+    const G = RR.game, mode = RR.MODES[G.modeIdx].id, track = G.mapIdx();
+    return { mode: mode, track: track, diff: G.diffIdx, bots: !G.humansOnly, weapons: mode !== 'race' || G.weaponsOn(track) };
   }
   M.quick = function () { act(Object.assign({ t: 'quick', setup: setup() }, game())); };
   M.create = function () { act(Object.assign({ t: 'create', setup: setup() }, game())); };
-  M.join = function (code) {
+  /** Join a friend's room by its code. `loan`: the lend key from an invite link. */
+  M.join = function (code, loan) {
     code = String(code || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
-    if (code.length === 4) act({ t: 'join', code: code, setup: setup() });
+    if (code.length === 4) act({ t: 'join', code: code, loan: loan || undefined, setup: setup() });
   };
   M.ready = function (on) { send({ t: 'ready', on: on }); };
+
+  /** Empty seats: bots at the menu's rival level, or nobody (a room for humans only). Remembered. */
+  M.toggleBots = function () {
+    const G = RR.game;
+    if (M.room) return; // (a room keeps the way it was opened)
+    G.humansOnly = !G.humansOnly;
+    G.save();
+    RR.audio.sfx('select');
+  };
   M.isReady = function () { const h = M.room && M.room.humans[M.you]; return !!(h && h.ready); };
 
   /** Leave the room (and the race, if there is one): back to the title screen. */
   M.leave = function () {
     const G = RR.game;
     send({ t: 'leave' });
-    M.room = null; M.token = null; M.results = null;
+    M.closeLink();
+    M.room = null; M.token = null; M.key = null; M.results = null;
     storage(TOKEN_KEY, null);
     leaving = true;
     if (ws) ws.close();
@@ -224,7 +242,9 @@
     if (hit.pause || hit.quit) { M.leave(); return; }
     if (!M.room) {
       if (hit.ok || hit.fire) M.quick();
+      else if (hit.left || hit.right) M.toggleBots();
     } else if (hit.ok || hit.fire) M.ready(!M.isReady());
+    else if (hit.link) M.openLink();
   };
 
   M.defer = function () { wantDefer = true; }; // a gate deferral, asked for with the next input
@@ -244,6 +264,91 @@
     if (!box || box.hidden) return;
     if (join) M.join(field.value);
     field.blur();
+    box.hidden = true;
+    RR.input.typing = false;
+    RR.input.focus(); // keys back to the game
+  };
+
+  /* ---------------------------------------------------- invite links */
+
+  const el = function (id) { return document.getElementById(id); };
+
+  /** A link that opens the game straight into this room. `lend` (the host only): it lends a maxed-out Phoenix. */
+  M.inviteLink = function (lend) {
+    const room = M.room, loc = window.location;
+    if (!room || !room.code) return '';
+    return loc.origin + loc.pathname + '?room=' + room.code + (lend && M.key ? '&loan=' + M.key : '');
+  };
+
+  /**
+   * At start-up: was the page opened from an invite link? Then note the room (and lend key), take them out
+   * of the address bar (so a reload does not join a second time) and ask for a pilot name; the game joins
+   * the room once it is given (see followInvite).
+   */
+  M.fromLink = function () {
+    let q;
+    try { q = new URLSearchParams(window.location.search); } catch (e) { return false; }
+    const code = String(q.get('room') || '').toUpperCase(), loan = String(q.get('loan') || '').toLowerCase();
+    if (!/^[A-Z]{4}$/.test(code)) return false;
+    M.invite = { code: code, loan: /^[0-9a-f]{12}$/.test(loan) ? loan : null };
+    try { window.history.replaceState(null, '', window.location.pathname + window.location.hash); } catch (e) { /* ignore */ }
+    RR.game.editName(M.invite);
+    return true;
+  };
+
+  /** The pilot name is in (`go`), or the player said NOT NOW: into the invite's room, once we know where online play is. */
+  M.followInvite = function (go) {
+    const inv = M.invite;
+    M.invite = null;
+    if (!inv || !go) return;
+    RR.net.ready.then(function () {
+      const G = RR.game;
+      if (!M.available()) { G.note('NO ONLINE PLAY HERE'); return; }
+      if (G.state !== 'title') return; // (off racing meanwhile)
+      M.open();
+      M.join(inv.code, inv.loan);
+    });
+  };
+
+  /** INVITE LINK (L in a private room's lobby): the room's link, to copy or share. */
+  M.openLink = function () {
+    const box = el('linkbox');
+    if (!box || !M.room || !M.room.code || RR.game.state !== 'online') return;
+    el('linktitle').textContent = 'INVITE TO ROOM ' + M.room.code;
+    el('lendrow').hidden = !M.key; // only the host can lend the rocket
+    el('lend').checked = false;
+    el('linkshare').hidden = !navigator.share;
+    M.linkChanged();
+    box.hidden = false;
+    RR.input.typing = true;
+    RR.input.down = {};
+    el('linkcopy').focus();
+    RR.audio.sfx('select');
+  };
+  /** The link as the box now asks for it: with or without the lent rocket. */
+  M.linkChanged = function () {
+    const lend = !!(M.key && el('lend').checked);
+    el('invitelink').value = M.inviteLink(lend);
+    el('linkhelp').textContent = 'Opens the game, asks for a pilot name and joins this room.' +
+      (lend ? ' They are lent a Phoenix with every stat and powerup maxed out, in this room only; what they do in it is marked LENT.' : '');
+    el('linkcopy').textContent = 'COPY';
+  };
+  M.copyLink = function () {
+    const field = el('invitelink'), done = function () { el('linkcopy').textContent = 'COPIED!'; };
+    const fallback = function () { // (no clipboard API, e.g. a plain http page): select it and copy the old way
+      field.focus(); field.select();
+      try { if (document.execCommand('copy')) done(); } catch (e) { /* they can still copy it by hand */ }
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(field.value).then(done, fallback);
+    else fallback();
+  };
+  M.shareLink = function () {
+    if (!navigator.share || !M.room) return;
+    navigator.share({ title: 'Rocket Racer', text: 'Race me in Rocket Racer! Room ' + M.room.code, url: el('invitelink').value }).catch(function () { /* closed */ });
+  };
+  M.closeLink = function () {
+    const box = el('linkbox');
+    if (!box || box.hidden) return;
     box.hidden = true;
     RR.input.typing = false;
     RR.input.focus(); // keys back to the game

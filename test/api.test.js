@@ -240,6 +240,10 @@ test('name and score validation helpers', () => {
   assert.strictEqual(cleanName('señor-ñ_1.!'), 'SEOR-_1.!');
   assert.strictEqual(validateScore(run()), null);
   assert.strictEqual(validateScore(run({ track: 'gauntlet', time: 150, lap: 45 })), null);
+  // the Indy-Galactic 500: five quick laps
+  assert.strictEqual(validateScore(run({ track: 'indy', time: 72.4, lap: 13.9 })), null);
+  assert.strictEqual(validateScore(run({ track: 'indy', time: 30, lap: 5.9 })), 'Race time out of range');
+  assert.strictEqual(validateScore(run({ track: 'indy', time: 50, lap: 10.5 })), 'Lap and race times disagree', 'five laps, not three');
   for (let p = 1; p <= 6; p++) assert.strictEqual(validateScore(run({ place: p })), null);
 
   // staging keeps its scores in a different collection
@@ -247,6 +251,32 @@ test('name and score validation helpers', () => {
   assert.strictEqual(collectionName({}), 'rocketracer');
   assert.strictEqual(collectionName({ LEADERBOARD_COLLECTION: 'rocketracer-staging' }), 'rocketracer-staging');
   assert.throws(() => collectionName({ LEADERBOARD_COLLECTION: 'a/b' }));
+});
+
+test('rows made in a lent rocket are marked lent - only when the multiplayer server says so', async () => {
+  const store = memoryStore();
+  const record = onlineRecorder(store, () => {});
+  const setup = { ship: 'phoenix', stats: [10, 10, 10, 10, 10], items: { nitro: 4 }, levels: { nitro: 3, missile: 3 } };
+  await record({ track: 'indy', pid: 'pilot-lent0001', name: 'ZED', time: 61.5, lap: 11.9, diff: 1, place: 1, setup, lent: true });
+  await record({ track: 'dogfight', pid: 'pilot-lent0001', name: 'ZED', diff: 1, map: 'crucible', result: { place: 1, win: true, kills: 5, deaths: 0, left: 90 }, setup, lent: true });
+  await record({ track: 'indy', pid: 'pilot-own00002', name: 'OWN', time: 70.1, lap: 13.2, diff: 1, place: 2, setup: null });
+  assert.deepStrictEqual((await store.top('indy', 10)).map((e) => [e.name, e.lent]), [['ZED', true], ['OWN', false]]);
+  assert.strictEqual((await store.top('dogfight', 10))[0].lent, true);
+  // a page cannot mark its own time lent (nor would it want to)
+  const { server, base } = await start();
+  try {
+    const r = await post(base, run({ track: 'indy', pid: 'pilot-self0003', name: 'SELF', time: 72.4, lap: 13.9, lent: true }));
+    assert.strictEqual(r.status, 200);
+    const rows = (await (await fetch(base + '/api/scores?track=indy')).json()).scores;
+    assert.deepStrictEqual(rows.map((e) => [e.name, e.lent]), [['SELF', false]]);
+  } finally { server.close(); }
+});
+
+test('the leaderboard knows every course the game has, with the same number of laps', () => {
+  const { TRACKS } = require('../server');
+  const { RR } = require('../lib/engine').createEngine();
+  assert.deepStrictEqual(Object.keys(TRACKS), Array.from(RR.TRACKS, (t) => t.id)); // (the engine's arrays are from its own context)
+  for (const t of RR.TRACKS) assert.strictEqual(TRACKS[t.id].laps, t.laps, t.id + ': laps');
 });
 
 /* ------------------------------------------------- every event's table, and histories */
