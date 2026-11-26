@@ -16,8 +16,10 @@ and a second runs online multiplayer over WebSockets.
   corner between gates is gentle (an eighth of a turn at most), there are no rocks, no weapon crates
   until you switch weapons on, its worlds sit in the infield well clear of the line, a nitro strip lies across each half
   of both straights (one boost runs into the next, and the last carries you round the end), and
-  brushing a donut counts as flying through it. The same rivals average about a third faster
-  here than on Lunar Loop.
+  its donuts are giants, two and a half times the usual size (275 pixels across), that count
+  anywhere on them, tube and all: round each end they nearly touch, a tunnel to follow, so a
+  beginner can hardly miss one. The same rivals average about a third faster here than on Lunar
+  Loop.
 - **Donut checkpoints**: fly through every donut in order. The next one glows and an arrow
   at the screen edge points to it. The checkered donut is start/finish. Three laps (five on the
   Indy-Galactic 500).

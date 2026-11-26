@@ -433,7 +433,8 @@
     if (!G.combat && me.cpCount > was.cp && was.cp >= 0 && G.phase === 'race') {
       RR.audio.sfx('cp');
       const cp = G.track.cps[(me.nextCp + G.track.cps.length - 1) % G.track.cps.length];
-      fx.ring(cp.x, cp.y, RR.Art.DONUT_RC - 12, RR.Art.DONUT_RC + 26, 0.35, PAL.yellow);
+      const dr = G.track.donutR, k = G.track.donut; // (the course's donut size)
+      fx.ring(cp.x, cp.y, dr - 12 * k, dr + 26 * k, 0.35, PAL.yellow);
     }
     if (!G.combat && me.lap > was.lap && was.lap > 0 && !me.finished) {
       const lastLap = me.lap === G.laps;

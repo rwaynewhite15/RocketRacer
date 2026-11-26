@@ -1360,7 +1360,8 @@
 
   /** What the player sees and hears when their own deferral goes through. */
   function deferFx(g, p, cp) {
-    ringFx(g, cp.x, cp.y, Art.DONUT_RC + 26, Art.DONUT_RC - 12, 0.4, PAL.violet);
+    const r = g.track.donutR, k = g.track.donut; // (the course's donut size)
+    ringFx(g, cp.x, cp.y, r + 26 * k, r - 12 * k, 0.4, PAL.violet);
     ringFx(g, p.x, p.y, 8, 40, 0.35, PAL.violet);
     burst(g, p.x, p.y, 16, 150, FX.ion, 0.5);
     banner(g, 'GATE DEFERRED!', PAL.violet, 1.2, 3);
@@ -1955,9 +1956,10 @@
     if (s.ai) s.ai.stuckN = 0;
     if (isP) {
       RR.audio.sfx('cp');
-      ringFx(g, cp.x, cp.y, Art.DONUT_RC - 12, Art.DONUT_RC + 26, 0.35, PAL.yellow);
+      const dr = g.track.donutR, k = g.track.donut; // (the course's donut size)
+      ringFx(g, cp.x, cp.y, dr - 12 * k, dr + 26 * k, 0.35, PAL.yellow);
       for (let i = 0; i < 40; i++) {
-        const a = Math.random() * TAU, r = Art.DONUT_RC + (Math.random() - 0.5) * 10, v = 60 + Math.random() * 140;
+        const a = Math.random() * TAU, r = dr + (Math.random() - 0.5) * 10 * k, v = 60 + Math.random() * 140;
         part(g, cp.x + Math.cos(a) * r, cp.y + Math.sin(a) * r, Math.cos(a) * v, Math.sin(a) * v,
           0.4 + Math.random() * 0.5, 2, FX.confetti[i % 6], 2, 1);
       }
