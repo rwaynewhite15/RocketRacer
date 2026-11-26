@@ -30,7 +30,7 @@
     // capture the flag: touch reach, the capture zone round a base, how long a dropped flag lies, the win, the clock
     FLAG_R: 30, BASE_R: 100, FLAG_RETURN: 25, CTF_CAPS: 3, CTF_TIME: 300,
     CTF_RESPAWN: 4, // ...and a wreck takes longer to come back than in a dogfight, so a cleared base stays clear for a moment
-    REFLAG_MAX: 2, // ...and no more than this many Replace Flags lying on the map at once
+    REFLAG_MAX: 1, // ...and one Replace Flag in the whole match: lying on the map, or held by one pilot
   });
 
   const ITEMS = (RR.ITEMS = {
@@ -61,10 +61,11 @@
     { id: 'royale', name: 'BATTLE ROYALE', go: 'FIGHT', rule: 'ONE LIFE - THE ZONE CLOSES IN' },
     { id: 'ctf', name: 'CAPTURE THE FLAG', go: 'FIGHT', rule: 'RED V BLUE - BRING THEIR FLAG HOME' },
   ]);
-  // capture the flag's two teams: ship i flies for side i % 2
+  // capture the flag's teams, one per base on the map (two or three): ship i flies for side i % teams
   const SIDES = (RR.SIDES = [
     { name: 'RED', color: '#e5404f', light: '#ff9d8f' },
     { name: 'BLUE', color: '#3b82f6', light: '#9bd8ff' },
+    { name: 'GREEN', color: '#3fbf5a', light: '#cdf7a0' },
   ]);
 
   /*
@@ -178,6 +179,7 @@
     // as fractions of the screen so they survive other screen sizes (see RR.touchLayout)
     controls: {},
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
+    hist: null, // the player's history: games played, wins, 1st / 2nd / 3rd places, by event (see records.js)
     inset: { l: 0, t: 0, r: 0, b: 0 }, // notch / rounded-corner margins, in game pixels
     // The world layer can zoom; the HUD layer (W x H) keeps its pixel size.
     vw: 640, vh: 360, // size of the world view in world pixels
@@ -208,7 +210,9 @@
       if (s.mode >= 0 && s.mode < MODES.length) G.modeIdx = s.mode;
       if (s.arena >= 0 && s.arena < RR.ARENAS.length) G.arenaIdx = s.arena;
       loadProgress(s.prog);
+      G.hist = RR.records.cleanHistory(s.hist);
     } catch (e) { /* storage unavailable: play without saved records */ }
+    if (!G.hist) G.hist = RR.records.emptyHistory();
     if (!G.name) G.name = RR.net.randomName();
     if (!G.pid) G.pid = RR.net.randomId();
   }
@@ -218,7 +222,7 @@
       window.localStorage.setItem(STORE, JSON.stringify({
         best: G.best, crt: G.crt, muted: RR.audio.muted, autoFull: G.autoFull, controls: G.controls, diff: G.diffIdx, track: G.trackIdx,
         name: G.name, pid: G.pid, zoom: G.zoomOffset,
-        mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog, steerSlide: RR.input.steerSlide, controlsV: CONTROLS_V,
+        mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog, steerSlide: RR.input.steerSlide, controlsV: CONTROLS_V, hist: G.hist,
       }));
     } catch (e) { /* ignore */ }
   }
@@ -361,6 +365,17 @@
     RR.audio.sfx('select');
   };
 
+  /**
+   * A finished event in the player's history (kept with their progress).
+   * Offline it goes to their history on the server too; online, the
+   * multiplayer server, which saw it, records it there itself.
+   */
+  function recordGame(g, mode, place, win, online) {
+    RR.records.addGame(g.hist, mode, place, win);
+    save();
+    if (!online) RR.net.game(mode, place, win);
+  }
+
   /** Stat points and wins for a finished event; new ships unlock on wins. */
   function award(g, place) {
     const pr = g.prog, had = HULLS.map(function (h, i) { return g.shipUnlocked(i); });
@@ -408,7 +423,7 @@
       input: { turn: 0, thrust: 0, brake: 0, fire: false },
       ai: null, speedMult: 1, thrusting: 0, exh: 0, smk: 0, hitFlash: 0, out: false, wrong: 0,
       defer: 0, // gate deferrals held
-      side: 0, flag: null, caps: 0, reflag: 0, // capture the flag: team, the flag carried, captures, Replace Flags held
+      side: 0, flag: null, caps: 0, reflag: 0, returns: 0, // capture the flag: team, the flag carried, captures, Replace Flags held, flags touched home
     };
   }
 
@@ -455,19 +470,26 @@
     G.startRace(true);
   };
 
+  /** How many teams fly on a map: one per base (capture the flag), else none. */
+  function teamsOf(tr) { return tr.bases ? tr.bases.length : 0; }
+
   /**
-   * Capture the flag: every ship's side (i % 2: red, blue), the AI's jobs
-   * (the last of each team guards the base, the rest go for the flag), and
-   * both flags standing on their bases. Elsewhere: no flags.
+   * Capture the flag: every ship's side (i % teams: red, blue, and green on
+   * a three-team map), the AI's jobs (the last of each team guards the base,
+   * the rest go for a flag), and every flag standing on its base.
+   * Elsewhere: no flags.
    */
   function setupTeams(g) {
-    g.caps = [0, 0];
+    const n = g.ctf ? teamsOf(g.track) : 2;
+    g.teams = n;
+    g.caps = [];
+    for (let k = 0; k < n; k++) g.caps.push(0);
     g.flags = null;
     g.plan = null; // (the AI's team plans: see ctfPlan)
     if (!g.ctf) return;
     for (const s of g.ships) {
-      s.side = s.idx % 2;
-      if (s.ai) s.ai.role = s.idx >= 4 ? 'defend' : 'attack';
+      s.side = s.idx % n;
+      if (s.ai) s.ai.role = s.idx >= g.ships.length - n ? 'defend' : 'attack';
     }
     g.flags = g.track.bases.map(function (b, side) {
       return { side: side, home: b, x: b.x, y: b.y, state: 'home', carrier: null, dropT: 0 };
@@ -493,7 +515,7 @@
       // racing, the player starts at the back; in an arena everyone gets a random spawn point
       // (capture the flag: each team beside its own base, in its own colours)
       const slot = tr.grid[g.ctf ? i : g.combat ? (i + turn) % 6 : i === 0 ? 5 : i - 1];
-      const team = g.ctf ? i % 2 : r.team;
+      const team = g.ctf ? i % teamsOf(tr) : r.team;
       const s = i === 0 ? makeShip(i, { name: r.name, team: team, design: hull.design }, slot, loadout(g.prog.ship))
         : makeShip(i, { name: r.name, team: team, design: r.design }, slot, STOCK);
       if (demo || i > 0) s.ai = makeAI(diff);
@@ -523,7 +545,7 @@
     g.shake = 0; g.flash = 0; g.msg = null;
     g.playerDone = false; g.doneT = 0; g.newRecord = false;
     g.zone = g.royale ? { r: tr.radius * 1.42, r0: tr.radius * 1.42 } : null; // starts around the whole arena
-    g.over = false; g.elimN = 0; g.feed = []; g.spec = null; g.reward = null;
+    g.over = false; g.elimN = 0; g.feed = []; g.spec = null; g.reward = null; g.fightScore = null;
     g.state = demo ? 'title' : 'play';
   };
 
@@ -555,7 +577,7 @@
     g.laps = tr.laps;
     g.ships = seats.map(function (seat, i) {
       const slot = tr.grid[g.ctf ? i : (i + turn) % tr.grid.length];
-      const s = makeShip(i, { name: seat.name, team: g.ctf ? i % 2 : seat.team, design: seat.design }, slot,
+      const s = makeShip(i, { name: seat.name, team: g.ctf ? i % teamsOf(tr) : seat.team, design: seat.design }, slot,
         seat.human ? loadoutOf(seat.stats) : STOCK);
       s.human = !!seat.human;
       if (s.human) {
@@ -587,7 +609,7 @@
     g.shake = 0; g.flash = 0; g.msg = null;
     g.playerDone = false; g.doneT = 0; g.newRecord = false;
     g.zone = g.royale ? { r: tr.radius * 1.42, r0: tr.radius * 1.42 } : null;
-    g.over = false; g.elimN = 0; g.feed = []; g.spec = null; g.reward = null;
+    g.over = false; g.elimN = 0; g.feed = []; g.spec = null; g.reward = null; g.fightScore = null;
     g.state = 'play';
   };
 
@@ -638,8 +660,9 @@
   };
 
   /** Online: what the player earned in a race or fight that just ended (once). */
-  G.awardOnline = function (place) {
+  G.awardOnline = function (place, win) {
     award(this, place);
+    recordGame(this, this.mode, place, !!win, true);
     return this.reward;
   };
 
@@ -669,12 +692,44 @@
     this.startRace(true);
   };
   /** World top-10 for the selected course (only when the backend is reachable). */
+  /**
+   * The world's high score tables, in the order LEFT and RIGHT go through
+   * them: each course's race times, each fight mode's points, then the
+   * pilots with the most wins.
+   */
+  G.boards = function () { return RR.TRACKS.map(function (t) { return t.id; }).concat(RR.records.FIGHTS, ['pilots']); };
+  /** The tables, opening on the one for the event (and course) on the menu. */
   G.showBoard = function () {
-    if (this.state !== 'title' || !RR.net.online || this.modeIdx !== 0) return; // only races have times
-    RR.net.load(RR.TRACKS[this.trackIdx].id);
+    if (this.state !== 'title' || !RR.net.online) return;
+    const mode = MODES[this.modeIdx].id;
+    this.boardId = mode === 'race' ? RR.TRACKS[this.trackIdx].id : mode;
+    this.loadBoard();
     RR.audio.sfx('select');
     this.state = 'board';
     this.boardSel = -1; this.boardCard = null;
+  };
+  G.loadBoard = function () {
+    if (this.boardId === 'pilots') RR.net.loadPilots('all');
+    else RR.net.load(this.boardId);
+  };
+  /** The next table (d = 1) or the one before (d = -1). */
+  G.turnBoard = function (d) {
+    if (this.state !== 'board') return;
+    const list = this.boards(), i = Math.max(0, list.indexOf(this.boardId));
+    this.boardId = list[(i + d + list.length) % list.length];
+    this.boardSel = -1; this.boardCard = null;
+    this.loadBoard();
+    RR.audio.sfx('select');
+  };
+  /** The player's own history: games played, wins and podium places in each event (Y on the menu). */
+  G.showHistory = function () {
+    if (this.state !== 'title') return;
+    RR.net.loadPilots('all'); // (for the world rank by wins)
+    RR.audio.sfx('select');
+    this.state = 'history';
+  };
+  G.closeHistory = function () {
+    if (this.state === 'history') { this.state = 'title'; RR.audio.sfx('select'); }
   };
   G.closeBoard = function () {
     if (this.state === 'board') { this.state = 'title'; this.boardCard = null; RR.audio.sfx('select'); }
@@ -949,9 +1004,19 @@
 
   /* ----------------------------------------------------- damage + death */
 
-  /** Capture the flag: is there room on the map for another Replace Flag (not counting spot `except`)? */
+  /** Capture the flag: the ship holding the Replace Flag, if any does. */
+  function reflagHolder(g) {
+    for (const s of g.ships) if (s.reflag > 0 && !s.gone) return s;
+    return null;
+  }
+  G.reflagHolder = function () { return this.ctf ? reflagHolder(this) : null; };
+  /**
+   * Capture the flag: is there room for another Replace Flag on the map (not
+   * counting spot `except`)? There are only ever REFLAG_MAX of them in the
+   * match, lying on the map or held: none appears while a pilot holds one.
+   */
   function reflagRoom(g, except) {
-    let n = 0;
+    let n = reflagHolder(g) ? 1 : 0;
     for (const q of g.pickups) if (q !== except && q.on && q.type === 'reflag') n++;
     return n < C.REFLAG_MAX;
   }
@@ -1000,6 +1065,7 @@
 
   function destroy(s, g) {
     dropFlag(g, s);
+    if (s.reflag > 0 && g.ctf) { s.reflag = 0; flagNews(g, 'rlost', s.side, s); } // the Replace Flag is lost with its holder
     boom(g, s.x, s.y, 1.6);
     s.hp = 0; s.dead = g.ctf ? C.CTF_RESPAWN : 2; s.vx = s.vy = 0;
     s.weapon = null; s.ammo = 0; s.nitro = 0; s.shield = 0; s.stun = 0; s.emp = 0; s.thrusting = 0;
@@ -1144,6 +1210,7 @@
   /** A flag back on its base; `kind` says why ('return', 'replace', 'score'), `by` who did it. */
   function flagHome(g, f, kind, by) {
     if (f.carrier) f.carrier.flag = null;
+    if (kind === 'return' && by) by.returns++;
     f.state = 'home'; f.carrier = null; f.x = f.home.x; f.y = f.home.y; f.dropT = 0;
     if (kind) flagNews(g, kind, f.side, by);
   }
@@ -1159,34 +1226,39 @@
 
   /**
    * What just happened to `side`'s flag ('take', 'drop', 'return',
-   * 'replace', 'score'), and by whom: a line in the feed, and the player's
-   * banners and sounds. The server sends it to the players instead.
+   * 'replace', 'score') or to the Replace Flag ('rtake', 'rlost'), and which
+   * ship did it: a line in the feed naming the teams (the one that did it,
+   * and the flag's), and the player's banners and sounds, which name the
+   * flag's team too. The server sends it to the players instead.
    */
   function flagNews(g, kind, side, s) {
     if (g.server) { g.events.push(['f', kind, side, s ? s.idx : -1]); return; }
-    const F = SIDES[side].name, who = s ? (s === g.player && !g.online ? g.name : s.name) : '';
-    const line = kind === 'take' ? who + ' TOOK THE ' + F + ' FLAG'
-      : kind === 'drop' ? who + ' DROPPED THE ' + F + ' FLAG'
-        : kind === 'return' ? (who ? who + ' RETURNED THE ' + F + ' FLAG' : 'THE ' + F + ' FLAG WENT HOME')
-          : kind === 'replace' ? who + ' REPLACED THE ' + F + ' FLAG'
-            : who + ' CAPTURED THE ' + F + ' FLAG!';
-    const by = s ? s.side : side; // the team the news is good for
-    g.feed.push({ text: line, col: SIDES[kind === 'drop' ? side : kind === 'take' || kind === 'score' ? (s ? s.side : 1 - side) : by].light, t: 0 });
+    const F = SIDES[side].name, team = s ? SIDES[s.side].name : '', by = team + ' TEAM';
+    const line = kind === 'rtake' ? by + ' HAS THE REPLACE FLAG'
+      : kind === 'rlost' ? by + ' LOST THE REPLACE FLAG'
+        : kind === 'take' ? by + ' TOOK THE ' + F + ' FLAG'
+          : kind === 'drop' ? by + ' DROPPED THE ' + F + ' FLAG'
+            : kind === 'return' ? (s ? by + ' RETURNED THE ' + F + ' FLAG' : 'THE ' + F + ' FLAG WENT HOME')
+              : kind === 'replace' ? by + ' REPLACED THE ' + F + ' FLAG'
+                : by + ' CAPTURED THE ' + F + ' FLAG!';
+    // in the colours of the team it is good news for: the taker's or scorer's, else the flag's own
+    const col = (kind === 'take' || kind === 'score') && s ? s.side : side;
+    g.feed.push({ text: line, col: SIDES[col].light, t: 0 });
     if (g.feed.length > 3) g.feed.shift();
-    if (g.demo) return;
+    if (g.demo || kind === 'rtake' || kind === 'rlost') return;
     const p = g.player, ours = side === p.side;
     if (kind === 'take') {
-      if (s === p) banner(g, 'GOT THE FLAG!', PAL.yellow, 1.8, 3);
-      else if (ours) banner(g, 'YOUR FLAG IS TAKEN!', PAL.alarm, 1.6, 2);
+      if (s === p) banner(g, 'GOT THE ' + F + ' FLAG!', PAL.yellow, 1.8, 3);
+      else if (ours) banner(g, F + ' FLAG TAKEN BY ' + team + '!', PAL.alarm, 1.6, 2);
       RR.audio.sfx(ours ? 'deny' : 'power');
     } else if (kind === 'score') {
       const won = s && s.side === p.side;
-      banner(g, won ? 'CAPTURED!' : SIDES[s ? s.side : 1 - side].name + ' SCORES', won ? PAL.yellow : PAL.alarm, 2, won ? 4 : 3);
+      banner(g, won ? 'CAPTURED THE ' + F + ' FLAG!' : team + ' CAPTURED THE ' + F + ' FLAG', won ? PAL.yellow : PAL.alarm, 2, won ? 4 : 3);
       RR.audio.sfx(won ? 'finish' : 'lose');
     } else if ((kind === 'return' || kind === 'replace') && ours) {
-      banner(g, kind === 'replace' ? 'FLAG REPLACED!' : 'FLAG HOME', PAL.cyan, 1.4, 2);
+      banner(g, F + (kind === 'replace' ? ' FLAG REPLACED!' : ' FLAG HOME'), PAL.cyan, 1.4, 2);
       RR.audio.sfx('power');
-    } else if (kind === 'drop' && s === p) banner(g, 'FLAG DROPPED!', PAL.alarm, 1.4, 2);
+    } else if (kind === 'drop' && s === p) banner(g, F + ' FLAG DROPPED!', PAL.alarm, 1.4, 2);
   }
   RR.fx.flag = function (kind, side, idx) { flagNews(G, kind, side, G.ships[idx] || null); }; // online: the server's word
 
@@ -1562,6 +1634,7 @@
     } else if (p.type === 'reflag') {
       s.reflag = k; // counted as used when a flag is replaced
       if (isP) { RR.audio.sfx('power'); banner(g, 'REPLACE FLAG READY', PAL.gold, 1.6, 2); }
+      flagNews(g, 'rtake', s.side, s);
     }
     if (!T.ammo && p.type !== 'defer' && p.type !== 'reflag') tally(s, p.type); // nitro, shield and repair act at once
     burst(g, p.x, p.y, 12, 120, T.ammo ? FX.fire : p.type === 'defer' || p.type === 'reflag' ? FX.ion : FX.shield, 0.45);
@@ -1581,7 +1654,7 @@
         if (s.dead > 0) continue;
         // only humans defer gates, and one pick-up at a time: otherwise leave it for later
         if (p.type === 'defer' && (s.ai || s.defer > 0)) continue;
-        if (p.type === 'reflag' && (s.reflag > 0 || (s.ai && teamReflag(g, s.side)))) continue; // (any ship may hold a Replace Flag, one pick-up at a time; the AI, one to a team)
+        if (p.type === 'reflag' && reflagHolder(g)) continue; // (one pilot holds it at a time)
         const dx = s.x - p.x, dy = s.y - p.y;
         if (dx * dx + dy * dy < rr) { collect(s, p, g); break; }
       }
@@ -1705,13 +1778,18 @@
     s.vx = ca * vf - sa * vl; s.vy = sa * vf + ca * vl;
     s.x += s.vx * dt; s.y += s.vy * dt;
 
-    // leash: a soft wall well outside the course
-    const b = g.track.bounds;
+    // leash: a soft wall well outside the course (a round arena's is a circle)
+    const b = g.track.bounds, rw = g.track.wall;
     s.out = false;
-    if (s.x < b.x0) { s.vx += (b.x0 - s.x) * 5 * dt; s.out = true; }
-    else if (s.x > b.x1) { s.vx -= (s.x - b.x1) * 5 * dt; s.out = true; }
-    if (s.y < b.y0) { s.vy += (b.y0 - s.y) * 5 * dt; s.out = true; }
-    else if (s.y > b.y1) { s.vy -= (s.y - b.y1) * 5 * dt; s.out = true; }
+    if (rw) {
+      const wx = s.x - rw.x, wy = s.y - rw.y, wd = Math.hypot(wx, wy);
+      if (wd > rw.r) { const k = (wd - rw.r) * 5 * dt / wd; s.vx -= wx * k; s.vy -= wy * k; s.out = true; }
+    } else {
+      if (s.x < b.x0) { s.vx += (b.x0 - s.x) * 5 * dt; s.out = true; }
+      else if (s.x > b.x1) { s.vx -= (s.x - b.x1) * 5 * dt; s.out = true; }
+      if (s.y < b.y0) { s.vy += (b.y0 - s.y) * 5 * dt; s.out = true; }
+      else if (s.y > b.y1) { s.vy -= (s.y - b.y1) * 5 * dt; s.out = true; }
+    }
 
     // planets are solid
     for (const p of planets) {
@@ -1810,6 +1888,7 @@
     if (s.bestLap && (!rec.lap || s.bestLap < rec.lap)) rec.lap = s.bestLap;
     g.best[id] = rec;
     award(g, s.place); // (saves)
+    recordGame(g, 'race', s.place, s.place === 1, false);
     RR.net.submit(id, {
       name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx, place: s.place,
       setup: { ship: s.setup.ship, stats: s.setup.stats.slice(), items: Object.assign({}, s.used), levels: s.setup.levels },
@@ -1889,6 +1968,10 @@
     for (let i = 0; i < g.order.length; i++) g.order[i].place = i + 1;
   }
 
+  /** Capture the flag: the team with the most captures, or -1 while two or more share the most. */
+  function leader(g) { return RR.records.leader(g.caps); }
+  G.ctfLeader = function () { return this.ctf ? leader(this) : -1; };
+
   /** The player's part in a combat event is settled: either it ended, or they are out of a battle royale. */
   function playerResult(g) {
     const p = g.player;
@@ -1898,15 +1981,26 @@
     rankCombat(g);
     const win = p.place === 1;
     if (g.ctf) {
-      const mine = g.caps[p.side], theirs = g.caps[1 - p.side];
-      banner(g, mine > theirs ? 'YOUR TEAM WINS!' : mine < theirs ? SIDES[1 - p.side].name + ' TEAM WINS' : 'A DRAW',
-        mine > theirs ? PAL.yellow : PAL.white, 2.2, 3);
+      const top = leader(g);
+      banner(g, top === p.side ? 'YOUR TEAM WINS!' : top >= 0 ? SIDES[top].name + ' TEAM WINS' : 'A DRAW',
+        top === p.side ? PAL.yellow : PAL.white, 2.2, 3);
     } else if (g.royale) banner(g, win ? 'LAST SHIP FLYING!' : 'ELIMINATED!', win ? PAL.yellow : PAL.alarm, 2.2, 4);
     else banner(g, win ? 'VICTORY!' : 'MATCH OVER', win ? PAL.yellow : PAL.white, 2.2, 5);
     RR.audio.sfx(p.place <= 3 ? 'finish' : 'lose');
     RR.audio.music({ tempo: 0.9 });
     if (!p.gone) p.ai = makeAI(DEMO_DIFF); // autopilot while the results are up
     award(g, p.place);
+    // the history (a win: 1st place, or your team's in capture the flag), and the points for the mode's high score table
+    const won = g.ctf ? leader(g) === p.side : p.place === 1;
+    recordGame(g, g.mode, p.place, won, false);
+    const result = { place: p.place, win: won, kills: p.kills, deaths: p.deaths };
+    if (g.mode === 'dogfight') result.left = won && p.kills >= C.KILL_TARGET ? clamp(Math.floor(C.DOGFIGHT_TIME - g.endT), 0, C.DOGFIGHT_TIME) : 0;
+    if (g.ctf) { result.caps = p.caps; result.returns = p.returns; }
+    g.fightScore = RR.records.score(g.mode, result, g.diffIdx);
+    RR.net.submit(g.mode, {
+      name: g.name, pid: g.pid, diff: g.diffIdx, map: g.track.def.id, result: result,
+      setup: { ship: p.setup.ship, stats: p.setup.stats.slice(), items: Object.assign({}, p.used), levels: p.setup.levels },
+    });
   }
 
   function endMatch(g) {
@@ -2105,7 +2199,9 @@
       for (let i = 0; i < W; i++) {
         const x = b.x0 + (i + 0.5) * cs, y = b.y0 + (j + 0.5) * cs;
         let c = 1;
-        if (Math.min(x - b.x0, b.x1 - x, y - b.y0, b.y1 - y) < 110) c += 0.5; // hugging the wall
+        const wall = tr.wall ? tr.wall.r - Math.hypot(x - tr.wall.x, y - tr.wall.y) : Math.min(x - b.x0, b.x1 - x, y - b.y0, b.y1 - y);
+        if (wall < 40) c += 50; // (outside a round arena: as good as solid)
+        else if (wall < 110) c += 0.5; // hugging the wall
         for (const p of tr.planets) {
           const d = Math.hypot(x - p.x, y - p.y), solid = p.r + 50, safe = Math.max(p.r + 90, p.r * Math.sqrt(p.g / NAV_PULL));
           if (d < solid) c += 50;
@@ -2138,12 +2234,14 @@
   /**
    * The cheapest route from (sx, sy) to (tx, ty), as a list of points.
    * `opt.avoid`: ships to give a wide berth (a carrier, round its hunters);
-   * `opt.lane`: -1 or 1, the north or south way across the middle.
+   * `opt.lane`: -1 or 1, which side of the straight line to keep to along
+   * the middle of the way (on the Great Divide: the north or south way).
    */
   function navPath(g, sx, sy, tx, ty, opt) {
     const N = navGrid(g), W = N.W, H = N.H, cs = N.cs, cost = N.cost, gs = N.gs, from = N.from, seen = N.seen, done = N.done;
     const hf = N.hf, hi = N.hi, avoid = opt.avoid, lane = opt.lane || 0;
     const stamp = ++N.stamp, start = navCell(N, sx, sy), goal = navCell(N, tx, ty), gi = goal % W, gj = (goal / W) | 0;
+    const ll = Math.hypot(tx - sx, ty - sy) || 1, lx = (tx - sx) / ll, ly = (ty - sy) / ll; // (the straight line, for the lane)
     let hn = 0;
     const push = function (f, c) { // a binary heap on f
       let k = hn++;
@@ -2166,7 +2264,10 @@
     const extra = function (c) { // what moving things and the lane add to a square
       const x = N.x0 + ((c % W) + 0.5) * cs, y = N.y0 + (((c / W) | 0) + 0.5) * cs;
       let e = 0;
-      if (lane && (y - N.cy) * lane < -150 && Math.abs(x - N.cx) < 2400) e += 1.5;
+      if (lane) {
+        const rx = x - sx, ry = y - sy, along = (rx * lx + ry * ly) / ll;
+        if (along > 0.15 && along < 0.85 && (lx * ry - ly * rx) * lane < -150) e += 1.5; // the other side of the line
+      }
       if (avoid) {
         for (const o of avoid) {
           const d = Math.hypot(x - o.x, y - o.y);
@@ -2238,6 +2339,20 @@
     return steerTo;
   }
 
+  /** (x, y) brought `pad` inside the map's walls: a rectangle's, or a round arena's circle. Left in `inPt`. */
+  const inPt = { x: 0, y: 0 };
+  function insideWalls(g, x, y, pad) {
+    const tr = g.track, w = tr.wall, b = tr.bounds;
+    if (w) {
+      const dx = x - w.x, dy = y - w.y, d = Math.hypot(dx, dy), r = w.r - pad;
+      if (d > r) { x = w.x + (dx / d) * r; y = w.y + (dy / d) * r; }
+    } else {
+      x = clamp(x, b.x0 + pad, b.x1 - pad); y = clamp(y, b.y0 + pad, b.y1 - pad);
+    }
+    inPt.x = x; inPt.y = y;
+    return inPt;
+  }
+
   /** The pull of the planets at (x, y), as updateShip works it out. Left in `pull`. */
   const pull = { x: 0, y: 0 };
   function pullAt(g, x, y) {
@@ -2280,8 +2395,8 @@
     for (const f of g.flags) key += f.state + (f.carrier ? f.carrier.idx : '') + ',';
     if (g.plan && g.plan.key === key && g.raceTime < g.plan.t) return;
     g.plan = { key: key, t: g.raceTime + 0.5 };
-    for (let side = 0; side < 2; side++) {
-      const mine = g.flags[side], theirs = g.flags[1 - side];
+    for (let side = 0; side < g.teams; side++) {
+      const mine = g.flags[side];
       const free = g.ships.filter(function (s) { return s.side === side && s.ai && !s.gone && s.dead <= 0 && !s.flag; });
       const give = function (job, mark, at) { // the free ship nearest `at` takes the job
         let best = -1, bd = 1e9;
@@ -2291,36 +2406,73 @@
         s.ai.job = job; s.ai.mark = mark;
         return s;
       };
-      for (const s of g.ships) if (s.side === side && s.ai && s.flag) { s.ai.job = 'carry'; s.ai.mark = null; }
-      if (mine.state === 'carried') { give('hunt', mine.carrier, mine.carrier); give('hunt', mine.carrier, mine.carrier); }
-      else if (mine.state === 'dropped') give('recover', null, mine);
-      if (theirs.state === 'carried') { // cover the carrier; all of them, unless one is wanted at home
-        const c = theirs.carrier;
-        give('escort', c, c);
-        if (mine.state === 'home') {
-          const d = free.find(function (s) { return s.ai.role === 'defend'; });
-          if (d) { free.splice(free.indexOf(d), 1); d.ai.job = 'defend'; d.ai.mark = null; }
-        }
-        while (free.length) give('escort', c, c);
-        continue;
-      }
-      if (mine.state === 'home') {
+      const guard = function () { // the ship whose role is to guard; or, with none, the nearest home of two or more
         let d = free.find(function (s) { return s.ai.role === 'defend'; });
         if (!d && free.length >= 2 && !g.ships.some(function (s) { return s.side === side && s.ai && s.ai.role === 'defend' && !s.gone; })) {
           d = free.reduce(function (a, s) { return Math.hypot(s.x - mine.home.x, s.y - mine.home.y) < Math.hypot(a.x - mine.home.x, a.y - mine.home.y) ? s : a; });
         }
         if (d) { free.splice(free.indexOf(d), 1); d.ai.job = 'defend'; d.ai.mark = null; }
-      }
-      // the rest attack, split between the two ways round the middle
+      };
+      for (const s of g.ships) if (s.side === side && s.ai && s.flag) { s.ai.job = 'carry'; s.ai.mark = null; }
+      if (mine.state === 'carried') { give('hunt', mine.carrier, mine.carrier); give('hunt', mine.carrier, mine.carrier); }
+      else if (mine.state === 'dropped') give('recover', null, mine);
+      // a teammate (a bot, or the player) with an enemy flag: cover them; all of us, unless one is wanted at home,
+      // or (three teams) there is another enemy flag to raid
+      const c = g.ships.find(function (o) { return o.side === side && o.flag && !o.gone && o.dead <= 0; });
+      if (c) {
+        give('escort', c, c);
+        if (mine.state === 'home') guard();
+        if (g.teams < 3) { while (free.length) give('escort', c, c); continue; }
+      } else if (mine.state === 'home') guard();
+      // the rest attack: an enemy flag each (see targetFlag), split between the two ways round anything in between
       let lane = 0;
       for (const s of free) {
         s.ai.job = 'attack'; s.ai.mark = null;
+        s.ai.tflag = targetFlag(s, g, s.ai.tflag);
         if (!s.ai.lane) s.ai.lane = Math.random() < 0.5 ? -1 : 1;
         if (lane && s.ai.lane === lane) s.ai.lane = -lane;
         lane = s.ai.lane;
       }
     }
   }
+
+  /**
+   * The enemy flag ship `s` should raid: the nearest of those not in
+   * anyone's hands, the more so one lying loose or the leading team's (it
+   * stops them scoring), and the one it was already after; null when every
+   * enemy flag is being carried.
+   */
+  function targetFlag(s, g, prev) {
+    const lead = leader(g);
+    let best = null, bc = 1e9;
+    for (const f of g.flags) {
+      if (f.side === s.side || f.state === 'carried') continue;
+      const c = Math.hypot(f.x - s.x, f.y - s.y) * (f.state === 'dropped' ? 0.6 : 1) * (f.side === lead ? 0.8 : 1) * (f === prev ? 0.85 : 1);
+      if (c < bc) { bc = c; best = f; }
+    }
+    return best;
+  }
+
+  /**
+   * Capture the flag: where the edge arrow leads pilot `p`, as { at, hostile }:
+   * home with an enemy flag; after the thief who has ours; to a teammate
+   * carrying one; else to the enemy flag to raid (see targetFlag), or, with
+   * every enemy flag in someone's hands, the nearest enemy carrying one.
+   */
+  G.flagGoal = function (p) {
+    const g = this, mine = g.flags[p.side];
+    if (p.flag) return { at: mine.home, hostile: false };
+    if (mine.state === 'carried' && mine.carrier) return { at: mine.carrier, hostile: true };
+    let near = null, bd = 1e9;
+    for (const o of g.ships) {
+      if (o === p || !o.flag || o.dead > 0 || o.gone) continue;
+      if (o.side === p.side) return { at: o, hostile: false };
+      const d = Math.hypot(o.x - p.x, o.y - p.y);
+      if (d < bd) { bd = d; near = o; }
+    }
+    const f = (g.arrowFlag = targetFlag(p, g, g.arrowFlag));
+    return f ? { at: f, hostile: false } : { at: near, hostile: !!near };
+  };
 
   /**
    * Replace Flag, as a sharp pilot plays it: kept for the moment it
@@ -2341,13 +2493,13 @@
   }
 
   /**
-   * A pick-up worth a detour on this job, within `reach`. A Replace Flag
-   * only while our flag is away, and one to a team: no hoarding them.
+   * A pick-up worth a detour on this job, within `reach`. The Replace Flag
+   * too, a short way off the route: there is only one, and while we hold it
+   * nobody else can.
    */
-  function teamReflag(g, side) { return g.ships.some(function (o) { return o.side === side && o.reflag > 0; }); }
   function ctfPickup(s, g, reach, far) {
     let best = null, bd = reach;
-    const wantFlag = g.flags[s.side].state !== 'home' && !teamReflag(g, s.side);
+    const wantFlag = !reflagHolder(g);
     for (const p of g.pickups) {
       if (!p.on) continue;
       const t = p.type;
@@ -2415,7 +2567,7 @@
    * way, the guns on whoever matters most, and Replace Flag at the right time.
    */
   function thinkCTF(s, g, dt) {
-    const ai = s.ai, me = s.side, mine = g.flags[me], theirs = g.flags[1 - me], home = mine.home, b = g.track.bounds;
+    const ai = s.ai, me = s.side, mine = g.flags[me], home = mine.home;
     s.speedMult = ai.skill;
     ctfPlan(g);
     aiReflag(s, g, dt);
@@ -2454,10 +2606,22 @@
         tx = home.x + (at.x - home.x) / k * 200; ty = home.y + (at.y - home.y) / k * 200; idle = 45;
       }
     } else {
-      // attack: their flag, wherever it is, by this ship's way round the middle
-      tx = theirs.x; ty = theirs.y;
-      opt = { lane: ai.lane };
-      far = Math.hypot(tx - s.x, ty - s.y) > 900;
+      // attack: an enemy flag (see targetFlag), by this ship's way round whatever is in between;
+      // with every enemy flag in someone's hands, the nearest enemy carrying one (wrecked, they drop it)
+      if (!ai.tflag || ai.tflag.state === 'carried') ai.tflag = targetFlag(s, g, null);
+      const f = ai.tflag;
+      if (f) {
+        tx = f.x; ty = f.y;
+        opt = { lane: ai.lane };
+        far = Math.hypot(tx - s.x, ty - s.y) > 900;
+      } else {
+        let bd = 1e9;
+        for (const o of g.ships) {
+          const d = Math.hypot(o.x - s.x, o.y - s.y);
+          if (o.side !== me && o.flag && o.dead <= 0 && d < bd) { bd = d; chase = o; }
+        }
+        if (!chase) idle = 45; // (nothing to raid: hold at home)
+      }
     }
 
     // a pick-up on the way, if it is close and worth it on this job
@@ -2471,7 +2635,8 @@
       const d = Math.hypot(chase.x - s.x, chase.y - s.y), lead = Math.min(0.6, d / 700);
       tx = chase.x + chase.vx * lead; ty = chase.y + chase.vy * lead;
     }
-    tx = clamp(tx, b.x0 + 80, b.x1 - 80); ty = clamp(ty, b.y0 + 80, b.y1 - 80); // inside the walls
+    const inside = insideWalls(g, tx, ty, 80);
+    tx = inside.x; ty = inside.y;
     const near = Math.hypot(tx - s.x, ty - s.y);
     const at = routeTo(s, g, dt, tx, ty, opt);
     flyAt(s, g, dt, at.x, at.y, !!chase && near < 300, idle > 0 && near < idle);
@@ -2712,6 +2877,7 @@
       if (hit.ok || hit.fire) g.begin();
       else if (hit.name) g.editName();
       else if (hit.board) g.showBoard();
+      else if (hit.history) g.showHistory();
       else if (hit.hangar) g.openHangar();
       else if (hit.online && RR.mp.available()) RR.mp.open();
     } else if (g.state === 'hangar') {
@@ -2734,12 +2900,15 @@
       const rows = g.boardRows || [], n = rows.length;
       if (g.boardCard) {
         if (hit.ok || hit.pause || hit.board || hit.fire) g.closeCard();
-      } else if ((hit.up || hit.down) && n) {
+      } else if (hit.left || hit.right) g.turnBoard(hit.left ? -1 : 1); // the next table
+      else if ((hit.up || hit.down) && n) {
         // arrows pick a row, Enter opens it; with nothing picked, Enter closes the board as before
         g.boardSel = hit.up ? (g.boardSel <= 0 ? n - 1 : g.boardSel - 1) : (g.boardSel + 1) % n;
         RR.audio.sfx('select');
       } else if (hit.ok && rows[g.boardSel]) g.openCard(rows[g.boardSel]);
       else if (hit.ok || hit.pause || hit.board || hit.fire) g.closeBoard();
+    } else if (g.state === 'history') {
+      if (hit.ok || hit.pause || hit.history || hit.fire) g.closeHistory();
     } else if (g.state === 'play' && g.online) {
       if (hit.pause) g.mpMenu = !g.mpMenu; // the world goes on: a menu, not a pause
       else if (hit.quit && g.mpMenu) RR.mp.leave();

@@ -151,20 +151,43 @@
   ];
 
   /*
-   * Capture the Flag maps: huge and wide, a base at each end. A flag map has
-   * `flags: true`, half sizes `w` and `h` round (cx, cy) instead of a radius,
-   * `bases` [red, blue] (each team's flag stands on its base and it spawns
-   * beside it), and `spots`: pickups placed by hand { x, y, kind }. The two
-   * halves mirror each other through the middle, so neither side is better.
+   * Capture the Flag maps. A flag map has `flags: true`, `bases` (one per
+   * team, two or three: each team's flag stands on its base and it spawns
+   * beside it) and `spots`: pickups placed by hand { x, y, kind }. Its walls
+   * are a rectangle (half sizes `w` and `h` round (cx, cy)) or, with
+   * `round: true`, a circle of `radius`. `rule` is the line the menu shows.
+   * Every map is fair: two teams' halves are each other turned half way round
+   * the middle (`mirror`), three teams' thirds each other turned a third of
+   * the way (`turn3`), so no team's side is better.
    */
-  const mirror = function (list) { // each item, and its twin turned half way round the middle (4000, 2000)
+  const turned = function (o, cx, cy, a, k) { // o turned by angle a round (cx, cy); copy k gets its own art
+    const c = Math.cos(a), sn = Math.sin(a), dx = o.x - cx, dy = o.y - cy;
+    const t = Object.assign({}, o, { x: Math.round(cx + dx * c - dy * sn), y: Math.round(cy + dx * sn + dy * c) });
+    if (o.seed) t.seed = o.seed + 50 * k;
+    if (o.rx && Math.abs(a - Math.PI) > 1e-9) t.rot = (o.rot || 0) + a; // (a half turn leaves an ellipse as it was)
+    return t;
+  };
+  const mirror = function (list, cx, cy) { // each item, and its twin turned half way round (cx, cy)
     const out = [];
-    list.forEach(function (o) { out.push(o, Object.assign({}, o, { x: 8000 - o.x, y: 4000 - o.y, seed: o.seed ? o.seed + 50 : o.seed })); });
+    list.forEach(function (o) { out.push(o, turned(o, cx, cy, Math.PI, 1)); });
     return out;
   };
+  const turn3 = function (list, cx, cy) { // each item, and two copies turned a third and two thirds of the way round (cx, cy)
+    const out = [];
+    list.forEach(function (o) { out.push(o, turned(o, cx, cy, TAU / 3, 1), turned(o, cx, cy, (2 * TAU) / 3, 2)); });
+    return out;
+  };
+  /** The point `r` from (cx, cy), `deg` degrees round from east (90: south), with `more` fields added. */
+  const polar = function (cx, cy, r, deg, more) {
+    const a = (deg * Math.PI) / 180;
+    return Object.assign({ x: Math.round(cx + Math.cos(a) * r), y: Math.round(cy + Math.sin(a) * r) }, more);
+  };
+  const TRI = function (cx, cy, r) { return [polar(cx, cy, r, -90), polar(cx, cy, r, 30), polar(cx, cy, r, 150)]; }; // three bases, a third of the way round from each other
+
   RR.FLAG_MAPS = [
     {
       id: 'divide', name: 'THE GREAT DIVIDE', blurb: 'TWO BASES AND A VAST GULF OF SPACE', arena: true, flags: true, seed: 79,
+      rule: '3 V 3 - BRING THEIR FLAG HOME',
       nebula: ['#0c1a3a', '#12285a', '#1a3a7a', '#3a0f22', '#5a1630', '#7a1e3c'],
       cx: 4000, cy: 2000, w: 3300, h: 1500, // 6600 x 3000: about nine arenas
       bases: [{ x: 1100, y: 2000 }, { x: 6900, y: 2000 }],
@@ -176,18 +199,97 @@
         { x: 1750, y: 1250, r: 62, type: 'moon', seed: 74 },
         { x: 1800, y: 2800, r: 74, type: 'desert', seed: 75 },
         { x: 3350, y: 3150, r: 58, type: 'moon', seed: 76 },
-      ])),
+      ], 4000, 2000)),
       fields: mirror([
         { x: 3250, y: 2000, rx: 170, ry: 560, n: 18, max: 3 },
         { x: 4000, y: 850, rx: 520, ry: 160, n: 14, max: 2 },
         { x: 2150, y: 2000, rx: 120, ry: 300, n: 7, max: 2 },
-      ]),
+      ], 4000, 2000),
       spots: mirror([
         { x: 1550, y: 1700, kind: 'P' }, { x: 1550, y: 2300, kind: 'P' }, { x: 1950, y: 2000, kind: 'W' },
         { x: 2700, y: 1650, kind: 'W' }, { x: 2750, y: 2400, kind: 'P' },
         { x: 3300, y: 1150, kind: 'P' }, { x: 3200, y: 2900, kind: 'W' },
         { x: 4000, y: 1350, kind: 'W' }, { x: 3700, y: 1550, kind: 'P' },
-      ]),
+      ], 4000, 2000),
+    },
+    {
+      // small and quick: a slanting asteroid wall across the middle, a narrow gap at each end beside a planet
+      id: 'crossing', name: 'THE CROSSING', blurb: 'A SHORT HOP AND A SLANTING ROCK WALL', arena: true, flags: true, seed: 83,
+      rule: '3 V 3 - BRING THEIR FLAG HOME',
+      nebula: ['#0e1f2e', '#13304a', '#1a4566', '#2a1036', '#3d1650', '#521e6a'],
+      cx: 3000, cy: 1700, w: 2300, h: 1200, // 4600 x 2400
+      bases: [{ x: 1150, y: 1700 }, { x: 4850, y: 1700 }],
+      planets: mirror([
+        { x: 2300, y: 1150, r: 150, type: 'terra', seed: 84 },
+        { x: 1700, y: 2450, r: 70, type: 'moon', seed: 85 },
+      ], 3000, 1700),
+      fields: [{ x: 3000, y: 1700, rx: 600, ry: 120, rot: 1.05, n: 24, max: 3 }].concat(mirror([
+        { x: 2000, y: 1150, rx: 220, ry: 90, rot: 0.3, n: 6, max: 2 },
+      ], 3000, 1700)),
+      spots: mirror([
+        { x: 1550, y: 1450, kind: 'P' }, { x: 1550, y: 1950, kind: 'P' }, { x: 1900, y: 1700, kind: 'W' },
+        { x: 2500, y: 2150, kind: 'W' }, { x: 2900, y: 900, kind: 'P' }, { x: 2600, y: 1750, kind: 'P' },
+      ], 3000, 1700),
+    },
+    {
+      // corner bases on a long diagonal: a rock belt across it, and a sun beyond each end of the belt to swing round
+      id: 'suns', name: 'TWIN SUNS', blurb: 'CORNER BASES - SWING ROUND THE SUNS', arena: true, flags: true, seed: 87,
+      rule: '3 V 3 - BRING THEIR FLAG HOME',
+      nebula: ['#2a0e0a', '#44160e', '#5e2010', '#1a1030', '#241848', '#30205e'],
+      cx: 3700, cy: 2300, w: 2900, h: 1800, // 5800 x 3600
+      bases: [{ x: 1550, y: 1200 }, { x: 5850, y: 3400 }],
+      planets: mirror([
+        { x: 3150, y: 3250, r: 185, type: 'lava', seed: 88, g: 320 },
+        { x: 2350, y: 2650, r: 80, type: 'ice', seed: 89 },
+        { x: 1500, y: 2300, r: 60, type: 'moon', seed: 90 },
+      ], 3700, 2300),
+      fields: [{ x: 3700, y: 2300, rx: 660, ry: 130, rot: 2.03, n: 26, max: 3 }].concat(mirror([
+        { x: 2500, y: 1400, rx: 260, ry: 100, rot: 0.5, n: 8, max: 2 },
+      ], 3700, 2300)),
+      spots: mirror([
+        { x: 2050, y: 950, kind: 'P' }, { x: 1500, y: 1700, kind: 'P' }, { x: 2150, y: 1550, kind: 'W' },
+        { x: 2800, y: 2000, kind: 'W' }, { x: 2700, y: 3050, kind: 'P' }, { x: 3500, y: 1500, kind: 'P' },
+      ], 3700, 2300),
+    },
+    {
+      // three teams: bases a third of the way round from each other, a ringed giant in the middle with rocks
+      // circling it, and across the straight way between each pair of bases a rock wall: squeeze past it on the
+      // inside, by the giant, or go the long way round the outside
+      id: 'triad', name: 'THE TRIAD', blurb: 'THREE BASES ROUND A RINGED GIANT', arena: true, flags: true, round: true, seed: 91,
+      rule: '2 V 2 V 2 - BRING ANY FLAG HOME',
+      nebula: ['#0a1e1a', '#0e2e28', '#144038', '#10183a', '#162256', '#1e2e72'],
+      cx: 3000, cy: 3000, radius: 2500,
+      bases: TRI(3000, 3000, 1750),
+      planets: [{ x: 3000, y: 3000, r: 210, type: 'gasBlue', seed: 92, ring: true, g: 270 }].concat(turn3([
+        polar(3000, 3000, 1520, -48, { r: 64, type: 'moon', seed: 93 }),
+      ], 3000, 3000)),
+      orbiters: [{ planet: 0, dist: 360, n: 6, speed: 0.22, size: 1 }],
+      fields: turn3([
+        polar(3000, 3000, 880, -30, { rx: 340, ry: 120, rot: -Math.PI / 6, n: 16, max: 3 }),
+      ], 3000, 3000),
+      spots: turn3([
+        polar(3000, 3000, 1480, -112, { kind: 'P' }), polar(3000, 3000, 1480, -68, { kind: 'P' }), polar(3000, 3000, 1180, -90, { kind: 'W' }),
+        polar(3000, 3000, 1550, -30, { kind: 'W' }), polar(3000, 3000, 470, -30, { kind: 'P' }),
+      ], 3000, 3000),
+    },
+    {
+      // three teams round a broken moon (a ball of rocks); a world sits on the straight way between each pair of bases
+      id: 'crown', name: 'TRIPLE CROWN', blurb: 'THREE WORLDS GUARD A BROKEN MOON', arena: true, flags: true, round: true, seed: 95,
+      rule: '2 V 2 V 2 - BRING ANY FLAG HOME',
+      nebula: ['#22102e', '#331648', '#461e62', '#0e2430', '#123448', '#164660'],
+      cx: 3200, cy: 3200, radius: 2700,
+      bases: TRI(3200, 3200, 1900),
+      planets: turn3([
+        polar(3200, 3200, 1080, -30, { r: 150, type: 'lava', seed: 96, g: 300 }),
+        polar(3200, 3200, 1950, -132, { r: 70, type: 'ice', seed: 97 }),
+      ], 3200, 3200),
+      fields: [{ x: 3200, y: 3200, rx: 380, ry: 380, n: 24, max: 3 }].concat(turn3([
+        polar(3200, 3200, 1500, -62, { rx: 170, ry: 90, rot: 0.6, n: 6, max: 2 }),
+      ], 3200, 3200)),
+      spots: turn3([
+        polar(3200, 3200, 1600, -110, { kind: 'P' }), polar(3200, 3200, 1600, -70, { kind: 'P' }), polar(3200, 3200, 1300, -90, { kind: 'W' }),
+        polar(3200, 3200, 1750, -30, { kind: 'W' }), polar(3200, 3200, 640, -30, { kind: 'P' }),
+      ], 3200, 3200),
     },
   ];
 
@@ -241,11 +343,15 @@
     const grid = [];
     let c0 = null, ux = 0, uy = 0, laneEnd = null;
     if (def.flags) {
-      // three spawn points beside each base, facing the far side; ship i spawns on side i % 2
+      // spawn points in a line beside each base, on its side towards the middle, facing it;
+      // ship i spawns on side i % (number of bases)
+      const nb = def.bases.length, per = Math.ceil(6 / nb);
       for (let i = 0; i < 6; i++) {
-        const b = def.bases[i % 2], j = i >> 1, dir = i % 2 ? -1 : 1;
-        const pt = offPlanets({ x: b.x + dir * 260, y: b.y + (j - 1) * 170 }, 80);
-        grid.push({ x: pt.x, y: pt.y, a: dir > 0 ? 0 : Math.PI, side: i % 2 });
+        const side = i % nb, j = Math.floor(i / nb), b = def.bases[side];
+        const d = Math.hypot(def.cx - b.x, def.cy - b.y) || 1, ex = (def.cx - b.x) / d, ey = (def.cy - b.y) / d;
+        const off = (j - (per - 1) / 2) * 170;
+        const pt = offPlanets({ x: b.x + ex * 260 - ey * off, y: b.y + ey * 260 + ex * off }, 80);
+        grid.push({ x: pt.x, y: pt.y, a: Math.atan2(ey, ex), side: side });
       }
     } else if (arena) {
       for (let i = 0; i < 6; i++) {
@@ -301,7 +407,8 @@
       if (arena) {
         for (let k = 0; k < grid.length; k++) if (Math.hypot(x - grid[k].x, y - grid[k].y) < 70 + r) return false;
         if (def.flags) {
-          if (Math.abs(x - def.cx) > def.w - r - 20 || Math.abs(y - def.cy) > def.h - r - 20) return false;
+          if (def.round ? Math.hypot(x - def.cx, y - def.cy) > def.radius - r - 20
+            : Math.abs(x - def.cx) > def.w - r - 20 || Math.abs(y - def.cy) > def.h - r - 20) return false;
           for (let k = 0; k < def.bases.length; k++) if (Math.hypot(x - def.bases[k].x, y - def.bases[k].y) < 300 + r) return false;
         } else if (Math.hypot(x - def.cx, y - def.cy) > def.radius - r - 20) return false;
       }
@@ -345,7 +452,7 @@
     });
     let bounds = { x0: x0 - 420, y0: y0 - 420, x1: x1 + 420, y1: y1 + 420 };
     if (arena) {
-      const hw = def.flags ? def.w : def.radius, hh = def.flags ? def.h : def.radius;
+      const box = def.flags && !def.round, hw = box ? def.w : def.radius, hh = box ? def.h : def.radius;
       x0 = def.cx - hw; y0 = def.cy - hh; x1 = def.cx + hw; y1 = def.cy + hh;
       bounds = { x0: x0, y0: y0, x1: x1, y1: y1 };
     }
@@ -361,6 +468,7 @@
     planets.forEach(function (p) {
       RR.disc(mini.g, p.x * ms + mox, p.y * ms + moy, Math.max(1, p.r * ms), p.map);
     });
+    if (def.round) RR.ring(mini.g, def.cx * ms + mox, def.cy * ms + moy, def.radius * ms, PAL.slate); // a round arena's wall
 
     return {
       def: def, name: def.name, laps: def.laps,
@@ -368,6 +476,7 @@
       bounds: bounds, arena: arena,
       center: arena ? { x: def.cx, y: def.cy } : null, radius: arena ? def.radius || Math.max(def.w, def.h) : 0,
       bases: def.bases ? def.bases.map(function (b) { return { x: b.x, y: b.y }; }) : null, flags: !!def.flags,
+      wall: def.round ? { x: def.cx, y: def.cy, r: def.radius } : null, // a round arena's wall (else: the bounds)
       mini: { cv: mini, w: MW, h: MH, s: ms, ox: mox, oy: moy },
       nebula: Art.nebula(def.seed, def.nebula),
     };

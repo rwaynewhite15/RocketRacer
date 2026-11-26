@@ -161,10 +161,12 @@
   function results(m) {
     const G = RR.game;
     M.results = m.list;
-    M.score = m.score || null; // capture the flag: red's and blue's captures
+    M.score = m.score || null; // capture the flag: each team's captures
     M.resultsShown = 0;
     const mine = m.list.find(function (r) { return r.you; });
-    M.reward = mine ? G.awardOnline(mine.place) : null;
+    // a win: 1st place, or (capture the flag) your team's
+    const win = mine && (G.ctf && M.score ? RR.records.leader(M.score) === mine.side : mine.place === 1);
+    M.reward = mine ? G.awardOnline(mine.place, win) : null;
     G.state = 'mpresults';
     G.mpMenu = false;
     RR.audio.sfx(mine && mine.place <= 3 ? 'finish' : 'lose');

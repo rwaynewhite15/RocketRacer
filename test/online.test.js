@@ -327,17 +327,20 @@ test('online: capture the flag - two players on opposite teams; a flag taken on 
     await A.page.waitForFunction(() => RR.game.flags[0].state === 'carried', null, { timeout: 3000 });
     a = await look(A);
     assert.strictEqual(a.carrier, 1, 'on Alice\'s screen, Bob has her flag');
-    await A.page.waitForFunction(() => RR.game.feed.some((f) => f.text === 'BOB TOOK THE RED FLAG'), null, { timeout: 3000 });
-    await B.page.waitForFunction(() => RR.game.player.flag && RR.game.msg && RR.game.msg.text === 'GOT THE FLAG!', null, { timeout: 3000 });
+    await A.page.waitForFunction(() => RR.game.feed.some((f) => f.text === 'BLUE TEAM TOOK THE RED FLAG'), null, { timeout: 3000 });
+    await B.page.waitForFunction(() => RR.game.player.flag && RR.game.msg && RR.game.msg.text === 'GOT THE RED FLAG!', null, { timeout: 3000 });
     bob.x = 4000; bob.y = 600; // off into the middle
 
     // Alice holds a Replace Flag (given on the server); E sends her flag home
     G.ships[0].reflag = 1;
     await A.page.waitForFunction(() => RR.game.player.reflag === 1, null, { timeout: 3000 });
+    // both screens say which team holds it (not who)
+    await B.page.waitForFunction(() => RR.game.reflagShown === 'REPLACE FLAG: RED TEAM', null, { timeout: 3000 });
     await A.page.keyboard.press('KeyE');
-    await A.page.waitForFunction(() => RR.game.flags[0].state === 'home' && RR.game.msg && RR.game.msg.text === 'FLAG REPLACED!', null, { timeout: 3000 });
+    await A.page.waitForFunction(() => RR.game.flags[0].state === 'home' && RR.game.msg && RR.game.msg.text === 'RED FLAG REPLACED!', null, { timeout: 3000 });
     assert.deepStrictEqual([red.state, bob.flag, G.ships[0].reflag], ['home', null, 0], 'on the server');
     await B.page.waitForFunction(() => !RR.game.player.flag && RR.game.flags[0].state === 'home', null, { timeout: 3000 });
+    await B.page.waitForFunction(() => RR.game.reflagShown === null, null, { timeout: 3000 }); // (used up: nobody holds it)
     assert.deepStrictEqual([A.errors, B.errors], [[], []]);
   } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
 });

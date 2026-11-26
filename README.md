@@ -31,33 +31,54 @@ and a second runs online multiplayer over WebSockets.
   - **Battle Royale**: the same arenas with one life each. After 12 seconds a zone starts
     closing on the middle of the arena and burns any hull outside it, shield or not. Last ship
     flying wins. Once you are out, the camera follows a survivor.
-  - **Capture the Flag**: red against blue, three ships a side (you fly for red with two AI
-    teammates; online, players split between the teams and bots fill the seats). The map, The
-    Great Divide, is huge: 6600 by 3000, about nine arenas, with a base at each end and the two
-    halves mirror images of each other. Fly into the enemy flag to take it and bring it to your
-    own base to capture it, but only while your own flag is at home. A wrecked carrier drops the
-    flag where it was hit; touching your own dropped flag sends it home, and a dropped flag goes
-    home by itself after 25 seconds. First to 3 captures wins, or the most when the 5-minute
-    clock runs out. Every ship has the cannon, there is no friendly fire (a team's mines never
-    go off for it either), and wrecks respawn beside their own base after 4 seconds, twice a
-    dogfight's wait, so a base cleared of defenders stays clear for a moment. The gas giant in
-    the middle is vast but light: it pulls, but never holds a ship that touches it. The
-    power-ups are the Grand Prix's, with **Replace Flag** (a gold
-    capsule, no more than two of them on the map at once) instead of the gate deferral: E /
-    Shift, or the FLAG button, sends your flag
-    straight home even while an enemy is carrying it (your deferral upgrade sets how many it
-    holds). An arrow at the screen's edge points to the job in hand: their flag, home while
-    you carry it, or whoever has stolen yours.
+  - **Capture the Flag**: teams of ships, each with a base and a flag, on five maps: three for
+    **red against blue, three ships a side**, and two for **red, blue and green, two a side**
+    (2 v 2 v 2). Offline you fly for red with AI teammates; online, players split between the
+    teams and bots fill the seats.
+    - **The Great Divide** (3 v 3): huge, 6600 by 3000, about nine arenas, a base at each end and
+      a vast but light gas giant in the middle (it pulls, but never holds a ship that touches it).
+    - **The Crossing** (3 v 3): small and quick, a slanting rock wall across the middle with a
+      narrow gap at each end beside a planet.
+    - **Twin Suns** (3 v 3): bases in opposite corners, a rock belt across the diagonal and a sun
+      beyond each end of it to swing round.
+    - **The Triad** (2 v 2 v 2): a round arena, three bases a third of the way round from each
+      other, a ringed giant in the middle with rocks circling it, and a rock wall across the
+      straight way between each pair of bases: squeeze past it on the inside or go the long way.
+    - **Triple Crown** (2 v 2 v 2): a bigger round arena round a broken moon (a ball of rocks),
+      with a world sitting on the straight way between each pair of bases.
+
+    Every map is fair: with two teams one half is the other turned half way round, with three
+    each third is the next turned a third of the way round. Fly into an enemy flag to take it
+    and bring it to your own base to capture it, but only while your own flag is at home (with
+    three teams, either enemy flag will do). A wrecked carrier drops the flag where it was hit;
+    touching your own dropped flag sends it home, and a dropped flag goes home by itself after
+    25 seconds. First to 3 captures wins, or the most when the 5-minute clock runs out (a tie
+    at the top is a draw). Every ship has the cannon, there is no friendly fire (a team's mines
+    never go off for it either), and wrecks respawn beside their own base after 4 seconds,
+    twice a dogfight's wait, so a base cleared of defenders stays clear for a moment. The
+    power-ups are the Grand Prix's, with **Replace Flag** (a gold capsule) instead of the gate
+    deferral: E / Shift, or the FLAG button, sends your flag straight home even while an enemy
+    is carrying it (your deferral upgrade sets how many uses it holds). There is only **one
+    Replace Flag in the match**, lying on the map or held by one pilot: none appears while
+    someone holds it, nobody else can pick one up, and a holder who is wrecked loses it (it
+    comes back on the map later). The HUD shows which team holds it, never which pilot
+    (REPLACE FLAG: BLUE TEAM). Flag news names the teams, and banners name the flag's team:
+    GOT THE BLUE FLAG!, RED FLAG TAKEN BY GREEN!, BLUE CAPTURED THE RED FLAG, RED FLAG
+    REPLACED!, and in the feed BLUE TEAM TOOK THE RED FLAG. The HUD shows every team's score,
+    yours first, and an arrow at the screen's edge points to the job in hand: home while you
+    carry a flag, whoever has stolen yours, a teammate carrying one, or else the flag to raid.
     The AI plays as a team, by a plan it rethinks twice a second and whenever a flag changes
-    hands: one ship guards the base and drops its mines round the flag; the other two raid,
-    one by the north way round the middle and one by the south; a carrier runs for home round
-    the enemy ahead, with its teammates flying cover; a thief is hunted by the two nearest
-    ships, which cut it off at its own base when it has got away; and a loose flag is fetched
-    by the nearest. Rivals plan their routes round planets, their pull and the asteroid fields,
-    aim their guns (within a forward arc, misjudging a jinking target as a person would, the
-    more so the lower the difficulty), pick up what helps on the way, and save Replace Flag
-    for the moment it decides the point: a thief nearly home, or a teammate waiting at home
-    with your flag. They take one only a short way off their route, one to a team.
+    hands: one ship guards the base and drops its mines round the flag; the others raid, two
+    of them splitting between the two ways round whatever is in between; a carrier runs for
+    home round the enemy ahead, with its teammates flying cover; a thief is hunted by the two
+    nearest ships, which cut it off at its own base when it has got away; and a loose flag is
+    fetched by the nearest. With three teams, a raider picks the nearest free enemy flag,
+    sooner one lying loose or the leading team's (taking it stops them scoring). Rivals plan
+    their routes round planets, their pull and the asteroid fields, aim their guns (within a
+    forward arc, misjudging a jinking target as a person would, the more so the lower the
+    difficulty), pick up what helps on the way (the Replace Flag too, a short way off the
+    route), and save Replace Flag for the moment it decides the point: a thief nearly home, or
+    a teammate waiting at home with an enemy flag.
   A kill goes to whoever hit the ship in its last 5 seconds, even if a planet finished it off.
 - **The hangar** (H on the menu): four ships with five stats each: Accel, Top Speed,
   Handling, Hull and Firepower (a weapon damage multiplier).
@@ -91,8 +112,24 @@ and a second runs online multiplayer over WebSockets.
   - Progress is saved in the browser, like your records.
 - **Zoom** the world in or out in whole-pixel steps, so the pixel art stays sharp. The HUD
   keeps its size at every level, and your choice is remembered.
-- **World top 10** for each course: every row shows the pilot's rocket and the powerups they
-  used, with a small 2 or 3 by an upgraded one; tap a row to see their whole setup.
+- **High score tables for every event** (T on the menu, LEFT / RIGHT for the next table): the
+  world top 10 race times for each course, and the world top 10 scores for each fight mode,
+  one match's points:
+
+  | Event | Points |
+  |---|---|
+  | Dogfight | 100 a kill, -25 a loss, 300 / 150 / 75 for 1st / 2nd / 3rd, and a win by kills scores 2 for every second still on the clock |
+  | Battle Royale | 100 a kill, 500 / 300 / 200 / 100 / 50 for 1st to 5th |
+  | Capture the Flag | 300 a flag captured, 100 a flag returned, 50 a kill, 300 when your team wins |
+
+  all times 1.5 against Pilot rivals and 2 against Aces. Every row shows the pilot's rocket and
+  the powerups they used, with a small 2 or 3 by an upgraded one; tap a row to see their whole
+  setup with the race or the fight. A last table, **Top Pilots**, ranks pilots by wins in all
+  events, with their games played and 1st, 2nd and 3rd places.
+- **Pilot history** (Y on the menu): your games played, wins and 1st, 2nd and 3rd place finishes
+  in each event and in all, and online your world rank by wins. A win is a 1st place, except in
+  capture the flag, where it is your team's (the team with the most flags). It is kept with your
+  progress in the browser, and on the server too.
 - Hull damage, wrecks and respawns, lap and race records, an attract-mode race behind the menu.
 - All art is generated in code at start-up and all sound is synthesised, so there are no
   image or audio files to load.
@@ -112,7 +149,7 @@ and a second runs online multiplayer over WebSockets.
 | Menu | Arrows, Enter | Tap |
 | Hangar | H on the menu; up/down move through the ship, its stats, BUY and the powerups (the page turns to POWERUPS past the stats), left/right pick a ship or spend and take back points, Enter closes | HANGAR button; SHIP and POWERUPS pages; arrows, BUY and - / + buttons |
 | Online | O on the menu; Enter for Quick Match, then READY; Esc leaves. In a race P opens a menu (the race goes on) | ONLINE button, then QUICK MATCH, CREATE ROOM or JOIN ROOM, and READY; the II button opens the menu |
-| Other | M mute, C CRT filter, F fullscreen, N pilot name, T world top 10 (arrows and Enter open a pilot's setup) | FULLSCREEN, PILOT, TOP 10 buttons (tap a pilot for their setup) |
+| Other | M mute, C CRT filter, F fullscreen, N pilot name, T high score tables (left / right for the next table; up / down and Enter open a pilot's setup), Y pilot history | FULLSCREEN, PILOT, TOP 10 (< and > for the next table; tap a pilot for their setup) and HISTORY buttons |
 
 A gamepad also works (stick or d-pad to turn, A to thrust, B to brake, X to fire, Y or LB for
 a gate deferral, Back to zoom, Start to pause).
@@ -147,7 +184,9 @@ ONLINE on the menu (when the game's server says online play is available):
   one. Up to six pilots; bots take the empty seats. The race starts when everyone is READY.
 - Each pilot flies their own rocket from the hangar: hull, stat levels and powerup upgrades.
 - Results pay credits and stat points as offline. Grand Prix times the player flew themselves go
-  to the world top 10, marked online (the server timed them).
+  to the world top 10, marked online (the server timed them); so do fights' scores, for pilots
+  no bot stood in for. The server also adds every game to the history of each pilot still there
+  at the end.
 - A dropped connection reconnects and gets the same ship back; a bot flies it meanwhile.
 - Every human pilot's name shows over their rocket on the grid and for the first 2 seconds of
   the race, and again for 2 seconds whenever their rocket comes into view (bots are never
@@ -156,7 +195,7 @@ ONLINE on the menu (when the game's server says online play is available):
 How it works:
 
 - **The server is the authority.** It runs the very same game engine as the browser
-  (`lib/engine.js` loads `core.js`, `art.js`, `tracks.js` and `game.js` headless, one isolated
+  (`lib/engine.js` loads `core.js`, `records.js`, `art.js`, `tracks.js` and `game.js` headless, one isolated
   copy per room) at 120 steps a second. Players send only their controls (60 a second); the
   server sends the world back 20 times a second, with sounds and explosions as timed events.
   Nobody can cheat on positions, hits or times.
@@ -183,9 +222,10 @@ npm test           # API tests, plus browser tests of the game if Playwright is 
 ```
 
 The browser tests drive the real game in headless Chromium (AI races on every course, zoom,
-gate deferral, the hangar, dogfights and battle royales in every arena, capture the flag (the rules,
-the AI's teamwork, routes and Replace Flag timing, bots playing whole matches, and two players
-online), and two players racing
+gate deferral, the hangar, dogfights and battle royales in every arena, capture the flag (the rules
+for two and three teams, the single Replace Flag, the AI's teamwork, routes and Replace Flag timing,
+bots playing every map, and two players online), the high score tables for every event and the
+pilot history, and two players racing
 online against the multiplayer server, also on a slow network). They need `npm install --no-save playwright && npx playwright install chromium`
 and are skipped without it.
 
@@ -322,8 +362,10 @@ The next pipeline run (or `./deploy.sh`) moves traffic back to the newest revisi
 | `GET /api/health` | `{ ok, store, env, version }`: which environment and commit answered |
 | `GET /api/config` | `{ mp }`: where online play is (`MP_URL`, or `/ws` with `MP=embedded`), or `null` |
 | online-play service: `GET /api/health`, WebSocket `/ws` | `mp-server.js` (see Online multiplayer). Online times are stored with `online: true` |
-| `GET /api/scores?track=lunar` | top 10 race times for a course. With an `X-Pilot-Id` header it also returns `me`: that player's own row and world rank |
-| `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff, place, setup }` |
+| `GET /api/scores?track=lunar` | a high score table's top 10: a course's race times (`lunar`, `eight`, `gauntlet`), or a fight mode's scores (`dogfight`, `royale`, `ctf`). With an `X-Pilot-Id` header it also returns `me`: that player's own row and world rank |
+| `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff, place, setup }`, or a fight: `{ track: mode, pid, name, diff, map, result, setup }` (the server works out the points) |
+| `GET /api/history?mode=all` | the 10 pilots with the most wins in all events (or one: `race`, `dogfight`, `royale`, `ctf`); with `X-Pilot-Id`, `me`: that player's whole history and rank |
+| `POST /api/history` | one finished game for the player's history: `{ pid, name, mode, place, win }` (no closer than 5 seconds after their last) |
 
 Leaderboard rows live in Firestore at `rocketracer/{track}/scores/{pid}`. Each player has an
 anonymous id generated in their browser and keeps one row per course, replaced only by a
@@ -336,6 +378,20 @@ gate deferral when a gate is deferred. (Rows from before the deferral replaced t
 still list `rewind`; the game no longer shows it.)
 The setup belongs to the record run, so a slower race leaves it alone. Rows from before either
 field existed have `null`.
+
+Each fight mode has its own table at `rocketracer/{mode}/scores/{pid}`, best score first, one row
+per player replaced only by a better score. A row records the `score`, rival level, `map` (the
+arena or flag map) and `result`: `{ place, win, kills, deaths }`, plus `left` (seconds left on a
+dogfight's clock when it was won) or `caps` and `returns` (capture the flag). The rules live in
+`public/src/records.js`, shared by the game and the server: the server checks that the result is
+one the rules allow (no more kills than a dogfight lasts for or a royale has rivals, one life in a
+royale, time left only on a win by kills, no more flags than end a match) and works out the points
+itself, whatever the caller says.
+
+Pilot histories live at `rocketracer/pilots/history/{pid}`: for each event and in all (`all`),
+`{ played, wins, p1, p2, p3 }`. Games played offline are posted by the game (a few seconds apart);
+online games are recorded by the multiplayer server, which saw them. The Top Pilots table orders
+by wins.
 
 The top-10 screen shows each pilot's rocket and the powerups they used most in the row, with a
 small 2 or 3 beside one they had upgraded (`+` when there were more than three), and your own
@@ -367,10 +423,11 @@ public/               the game (static)
   src/art.js          procedural sprites: ships, planets, asteroids, donuts
   src/audio.js        chip-synth sound effects and music
   src/input.js        keyboard, touch (drag to steer, fire stick), gamepad
-  src/net.js          leaderboard client
+  src/net.js          leaderboard and pilot history client
   src/proto.js        the online message format (shared with the server)
+  src/records.js      high scores' points and pilot histories (shared with the server)
   src/mp.js           online play: connection, prediction, interpolation, lobby
-  src/tracks.js       course and arena definitions and builder
+  src/tracks.js       courses, arenas and flag maps, and the builder
   src/game.js         physics, weapons, AI, laps, combat modes, hangar, game states
   src/render.js       world, HUD, menus
   src/main.js         the two canvas layers (zooming world, fixed-size HUD) and main loop
@@ -378,7 +435,7 @@ server.js             static files + leaderboard API (+ online play with MP=embe
 mp-server.js          the online-play service: rooms over WebSockets
 lib/mp.js             rooms, matchmaking, the race loop, snapshots
 lib/engine.js         the game engine run headless, one copy per room
-lib/store.js          Firestore and in-memory leaderboard storage
+lib/store.js          Firestore and in-memory storage: high score tables and pilot histories
 test/api.test.js      API tests
 test/game.test.js     browser tests of the game (Playwright)
 test/engine.test.js   the headless engine
