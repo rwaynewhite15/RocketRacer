@@ -13,7 +13,7 @@
 const { test, before, after } = require('node:test');
 const assert = require('node:assert');
 const http = require('http');
-const { createApp } = require('../server');
+const { createApp, onlineRecorder } = require('../server');
 const { memoryStore } = require('../lib/store');
 
 let chromium = null;
@@ -144,6 +144,37 @@ test('weapons on or off for each course: WEAPONS beside RIVALS on the menu (keys
     assert.strictEqual(await page.evaluate(() => RR.game.menuRow), 2);
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
+});
+
+test('a time set in a lent rocket shows as LENT: a gold star by the name on the top 10 (with a key), and LENT on the pilot\'s card', { skip }, async () => {
+  // a server of our own, with a lent time recorded the way the multiplayer server records one
+  const store = memoryStore();
+  const own = http.createServer(createApp(store));
+  await new Promise((r) => own.listen(0, '127.0.0.1', r));
+  const record = onlineRecorder(store, () => {});
+  const maxed = { ship: 'phoenix', stats: [10, 10, 10, 10, 10], items: { nitro: 6, missile: 1 }, levels: { nitro: 3, missile: 3, shield: 3 } };
+  await record({ track: 'indy', pid: 'lent-pid-0001', name: 'ZED', time: 60.25, lap: 11.5, diff: 1, place: 1, setup: maxed, lent: true });
+  await record({ track: 'indy', pid: 'own-pid-00002', name: 'OWN', time: 66.5, lap: 12.5, diff: 1, place: 1, setup: { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: {}, levels: {} } });
+  const { page, ctx, errors } = await openGame(null, 'http://127.0.0.1:' + own.address().port);
+  try {
+    await page.waitForFunction(() => RR.net.online);
+    await page.evaluate(() => { const g = RR.game; g.modeIdx = 0; g.trackIdx = RR.TRACKS.findIndex((t) => t.id === 'indy'); g.startRace(true); });
+    await page.keyboard.press('KeyT');
+    await page.waitForFunction(() => RR.game.boardShown && RR.game.boardShown.id === 'indy' && RR.game.boardShown.rows.length === 2, null, { timeout: 5000 });
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.boardShown.rows.map((r) => r[1]), RR.game.boardShown.lent]), [['ZED', 'OWN'], [1]], 'ZED\'s row is starred, OWN\'s not');
+    // ZED's card: LENT by the rocket, and the stats LENT, MAXED OUT (one key a frame, as a person presses them)
+    const press = async (k) => { await page.keyboard.press(k); await page.waitForTimeout(100); };
+    await press('ArrowDown');
+    await press('Enter');
+    await page.waitForFunction(() => RR.game.cardShown && RR.game.boardCard, null, { timeout: 5000 });
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.boardCard.e.name, RR.game.cardShown.lent, RR.game.cardShown.ship]), ['ZED', true, 'phoenix']);
+    await press('Enter'); // (closes the card; the arrows go on from ZED)
+    await press('ArrowDown');
+    await press('Enter');
+    await page.waitForFunction(() => RR.game.boardCard && RR.game.boardCard.e.name === 'OWN', null, { timeout: 5000 });
+    assert.strictEqual(await page.evaluate(() => RR.game.cardShown.lent), false);
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); own.close(); }
 });
 
 test('zoom changes the world scale but not the HUD, and is remembered', { skip }, async () => {
@@ -367,7 +398,7 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     await click('PILOT 1');
     let s = await state();
     assert.deepStrictEqual(s.card, { rank: 1, name: 'COMET', shown: {
-      ship: 'phoenix', stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['defer', 1]], numbers: [],
+      ship: 'phoenix', lent: false, stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['defer', 1]], numbers: [],
     } });
     await click('BACK (ENTER)');
     s = await state();
@@ -381,13 +412,13 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     assert.strictEqual((await state()).sel, 3, 'up from the top wraps to the bottom');
     await key('Enter');
     s = await state();
-    assert.deepStrictEqual(s.card, { rank: 4, name: 'OLDIE', shown: { ship: null, stats: null, items: [], numbers: [] } }, 'an old row: no setup on record');
+    assert.deepStrictEqual(s.card, { rank: 4, name: 'OLDIE', shown: { ship: null, lent: false, stats: null, items: [], numbers: [] } }, 'an old row: no setup on record');
     await key('Escape');
     assert.deepStrictEqual([(await state()).state, (await state()).card], ['board', null]);
     await key('ArrowUp');
     await key('Enter');
     s = await state();
-    assert.deepStrictEqual(s.card, { rank: 3, name: 'ROCKY', shown: { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: [], numbers: [] } }, 'a clean run');
+    assert.deepStrictEqual(s.card, { rank: 3, name: 'ROCKY', shown: { ship: 'sparrow', lent: false, stats: [3, 3, 3, 3, 3], items: [], numbers: [] } }, 'a clean run');
     await key('Enter');
     assert.strictEqual((await state()).card, null, 'Enter closes the card too');
     await key('Escape');

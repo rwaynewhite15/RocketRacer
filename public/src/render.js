@@ -1133,7 +1133,7 @@
     const cSetup = x + 94, cPlace = x + pw - 92, cDiff = x + pw - 62, cTime = x + pw - 10;
     panel(ctx, x, y, pw, ph, PAL.pink);
     boardHeader(g, ctx, W, x, y, pw, 'WORLD TOP 10', fight ? REC.NAMES[id] : def.name, PAL.pink, PAL.plum);
-    g.boardShown = { id: id, fight: fight, rows: [] }; // (what is on screen, for the tests)
+    g.boardShown = { id: id, fight: fight, rows: [], lent: [] }; // (what is on screen, for the tests)
 
     const rows = (g.boardRows = []); // what the arrows can pick, in order
     const row = function (ry, rank, e, col) {
@@ -1145,6 +1145,7 @@
         ctx.fillRect(x + 5, ry - 3, 1, rowH); ctx.fillRect(x + pw - 6, ry - 3, 1, rowH);
       }
       text(ctx, String(rank), x + 22, ry, col, 1, 'right');
+      if (e.lent) { text(ctx, '*', x + 24, ry, PAL.gold); g.boardShown.lent.push(rank); } // in a rocket an invite lent
       text(ctx, e.name, x + 30, ry, col);
       r.strip = setupStrip(ctx, e.setup, cSetup, ry);
       r.at = [cSetup, ry];
@@ -1197,7 +1198,9 @@
     if (fight) { // how the points are made
       REC.explain(id).forEach(function (ln, k) { text(ctx, ln, W / 2, y + 190 + k * 9, PAL.silver, 1, 'center'); });
     }
-    text(ctx, 'R ROOKIE  P PILOT  A ACE', W / 2, y + ph - 45, PAL.steel, 1, 'center');
+    const KEY = 'R ROOKIE  P PILOT  A ACE', anyLent = g.boardShown.lent.length > 0;
+    text(ctx, KEY + (anyLent ? '  * LENT ROCKET' : ''), W / 2, y + ph - 45, PAL.steel, 1, 'center');
+    if (anyLent) text(ctx, '*', W / 2 - RR.textW(KEY + '  * LENT ROCKET') / 2 + RR.textW(KEY + '  ') + 1, y + ph - 45, PAL.gold); // (the key's star, gold too)
     const bw = 90;
     button(g, ctx, touch ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
       function () { g.closeBoard(); }, PAL.lime);
@@ -1281,6 +1284,7 @@
       const spr = Art.ship(hull.design, 0);
       ctx.drawImage(spr, x + 14, y + 38, spr.width * 2, spr.height * 2);
       text(ctx, hull.name, tx, y + 40, PAL.white, 2, 'left', PAL.ink);
+      if (e.lent) text(ctx, 'LENT', tx + RR.textW(hull.name, 2) + 6, y + 44, PAL.gold); // an invite link lent it (see lib/mp.js)
     }
     const place = e.place >= 1 && e.place <= 6 ? ORD[e.place - 1] : '-';
     const vs = place + ' VS ' + ((RR.DIFFS[e.diff] && RR.DIFFS[e.diff].name) || '?') + ' RIVALS';
@@ -1294,7 +1298,7 @@
       text(ctx, 'BEST LAP ' + fmt(e.lap), tx, y + 68, PAL.silver);
       text(ctx, vs, tx, y + 78, DIFF_COL[e.diff] || PAL.silver);
     }
-    const shown = { ship: hull ? hull.id : null, stats: null, items: [], numbers: [] };
+    const shown = { ship: hull ? hull.id : null, lent: !!e.lent, stats: null, items: [], numbers: [] };
     g.cardShown = shown;
 
     if (!hull) {
@@ -1305,7 +1309,7 @@
       /* stats */
       const tuned = su.stats.reduce(function (a, lv, k) { return a + Math.max(0, lv - hull.base[k]); }, 0);
       text(ctx, fight && e.map ? mapName(e.map) : 'STATS', x + 14, y + 88, PAL.steel);
-      text(ctx, tuned ? '+' + tuned + ' POINTS PUT IN' : 'STOCK', x + pw - 14, y + 88, tuned ? PAL.yellow : PAL.steel, 1, 'right');
+      text(ctx, e.lent ? 'LENT, MAXED OUT' : tuned ? '+' + tuned + ' POINTS PUT IN' : 'STOCK', x + pw - 14, y + 88, e.lent ? PAL.gold : tuned ? PAL.yellow : PAL.steel, 1, 'right');
       shown.stats = su.stats.slice();
       RR.STATS.forEach(function (st, k) {
         const ry = y + 98 + k * 10, lv = su.stats[k], base = hull.base[k], cap = hull.cap[k], bx = x + 86;
@@ -1518,7 +1522,7 @@
       const lent = mine && mine.loan && RR.HULLS.find(function (h) { return h.design === mine.design; }); // flying a rocket an invite lent
       if (room.priv) {
         text(ctx, 'ROOM ' + room.code, W / 2, y + 38, PAL.gold, 2, 'center', PAL.plum);
-        if (lent) text(ctx, 'YOU FLY A MAXED-OUT ' + lent.name, W / 2, y + 56, PAL.gold, 1, 'center');
+        if (lent) text(ctx, 'LENT TO YOU: A MAXED-OUT ' + lent.name, W / 2, y + 56, PAL.gold, 1, 'center');
         else text(ctx, only ? 'HUMANS ONLY - JOIN WITH THIS CODE' : 'FRIENDS JOIN WITH THIS CODE', W / 2, y + 56, only ? PAL.gold : PAL.steel, 1, 'center');
       } else {
         text(ctx, 'QUICK MATCH', W / 2, y + (only ? 36 : 42), PAL.gold, 2, 'center', PAL.plum);
@@ -1536,7 +1540,7 @@
         text(ctx, h.name + (you ? ' (YOU)' : ''), x + 50, ry, you ? PAL.yellow : PAL.white);
         const tag = !h.connected ? 'AWAY' : h.waiting ? 'NEXT RACE' : h.ready ? 'READY' : '...';
         text(ctx, tag, x + pw - 14, ry, h.ready ? PAL.lime : !h.connected ? PAL.alarm : PAL.steel, 1, 'right');
-        if (h.loan) text(ctx, 'MAX', x + pw - 72, ry, PAL.gold, 1, 'right'); // a maxed-out rocket, lent by an invite
+        if (h.loan) text(ctx, 'LENT', x + pw - 72, ry, PAL.gold, 1, 'right'); // a maxed-out rocket, lent by an invite
         shown.push([h.name, tag]);
       }
       g.onlineShown = shown;
@@ -1591,7 +1595,7 @@
       const ry = y + 42 + k * 12, col = r.you ? PAL.yellow : r.human ? PAL.white : PAL.silver;
       if (r.you) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 6, ry - 2, pw - 12, 11); }
       text(ctx, ORD[r.place - 1] || String(r.place), x + 12, ry, PLACE_COL[r.place - 1] || PAL.silver);
-      text(ctx, r.name + (r.human ? '' : ' (BOT)'), x + 40, ry, col);
+      text(ctx, r.name + (!r.human ? ' (BOT)' : r.lent ? ' (LENT)' : ''), x + 40, ry, col);
       text(ctx, g.ctf ? (r.caps || 0) + '      ' + r.kills : fight ? r.kills + '      ' + r.deaths : r.time != null ? fmt(r.time) : 'DNF', x + pw - 12, ry, col, 1, 'right');
     });
     const rw = M.reward, by = y + 46 + list.length * 12;

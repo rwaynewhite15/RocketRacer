@@ -173,7 +173,7 @@ test('mp: private rooms by code; a dropped player is flown by a bot and gets the
   } finally { a.ws.close(); c.ws.close(); s.close(); }
 });
 
-test('mp: a private room\'s lend key goes to its host alone; joining with it lends the best rocket maxed out, keeping the pilot\'s upgrades; hosting passes on', async () => {
+test('mp: a private room\'s lend key goes to its host alone; joining with it lends the best rocket, every stat and powerup maxed out; hosting passes on', async () => {
   const s = await serve();
   const a = player(s.url, 'ALICE'), b = player(s.url, 'BOB'), c = player(s.url, 'CAROL'), d = player(s.url, 'DAN');
   try {
@@ -194,17 +194,44 @@ test('mp: a private room\'s lend key goes to its host alone; joining with it len
       [['ALICE', 0, false], ['BOB', 0, false], ['CAROL', 0, false], ['DAN', 3, true]], 'everyone sees who flies a lent rocket');
     for (const p of [a, b, c, d]) p.send({ t: 'ready', on: true });
     const st = await d.wait((m) => m.t === 'start');
-    assert.deepStrictEqual([st.opts.seats[3].hull, st.opts.seats[3].stats, st.opts.seats[3].levels], ['phoenix', [10, 10, 10, 10, 10], { missile: 3 }],
-      'a Phoenix, every stat at its ceiling, with his own powerup upgrades');
+    const TOP = { nitro: 3, shield: 3, repair: 3, blaster: 3, missile: 3, mine: 3, emp: 3, defer: 3 };
+    assert.deepStrictEqual([st.opts.seats[3].hull, st.opts.seats[3].stats, st.opts.seats[3].levels], ['phoenix', [10, 10, 10, 10, 10], TOP],
+      'a Phoenix, every stat at its ceiling, every powerup upgraded as far as it goes');
+    assert.deepStrictEqual(st.opts.seats[0].levels, {}, 'everyone else keeps their own');
     assert.deepStrictEqual([st.opts.seats[1].hull, st.opts.seats[2].hull], ['sparrow', 'sparrow']);
     const G = [...s.hub.rooms][0].engine.G;
     assert.deepStrictEqual([G.ships[3].maxHp, G.ships[0].maxHp], [Math.round(100 * (1 + 0.12 * 7)), 100], 'and it flies as one: a maxed hull');
+    assert.deepStrictEqual([G.ships[3].plv.missile, G.ships[3].plv.defer, G.ships[0].plv.missile], [3, 3, undefined], '...and maxed pick-ups');
 
     // the host leaves: Bob, next in, hosts and is told the key
     a.send({ t: 'leave' });
     const nb = await b.wait(isRoom((m) => !m.room.humans.some((h) => h.name === 'ALICE')));
     assert.strictEqual(nb.key, ra.key);
   } finally { for (const p of [a, b, c, d]) p.ws.close(); s.close(); }
+});
+
+test('mp: what a pilot does in a lent rocket is marked LENT - in the results and on the leaderboard', async () => {
+  const posted = [];
+  const s = await serve({ speed: 40, resultsMs: 400, post: (body) => posted.push(body) });
+  const a = player(s.url, 'ALICE'), b = player(s.url, 'BOB');
+  try {
+    await a.hello('alice-pid-1'); await b.hello('bob-pid-22');
+    a.send({ t: 'create', mode: 'race', track: 0, diff: 1, setup });
+    const ra = await a.wait(isRoom());
+    b.send({ t: 'join', code: ra.room.code, loan: ra.key, setup });
+    await b.wait(isRoom((m) => m.room.humans.length === 2));
+    a.send({ t: 'ready', on: true }); b.send({ t: 'ready', on: true });
+    await b.wait((m) => m.t === 'start');
+    const G = [...s.hub.rooms][0].engine.G;
+    while (G.phase !== 'race') await sleep(20);
+    G.botTakeover(G.ships[1], true); G.ships[1].botFlown = false; // (an autopilot standing in for Bob's flying)
+    a.ws.close(); // Alice drops out: a bot flies her ship, so her time does not count
+    const res = await b.wait((m) => m.t === 'results', 20000);
+    const bob = res.list.find((r) => r.you);
+    assert.deepStrictEqual([bob.name, bob.lent, res.list.find((r) => r.name === 'ALICE').lent], ['BOB', true, false]);
+    assert.strictEqual(posted.length, 1);
+    assert.deepStrictEqual([posted[0].name, posted[0].lent, posted[0].setup.ship, posted[0].setup.levels.nitro], ['BOB', true, 'phoenix', 3]);
+  } finally { b.ws.close(); s.close(); }
 });
 
 test('mp: a race room keeps its opener\'s weapons choice; everyone\'s race is built with it', async () => {

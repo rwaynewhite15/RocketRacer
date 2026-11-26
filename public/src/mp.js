@@ -330,7 +330,7 @@
     const lend = !!(M.key && el('lend').checked);
     el('invitelink').value = M.inviteLink(lend);
     el('linkhelp').textContent = 'Opens the game, asks for a pilot name and joins this room.' +
-      (lend ? ' They fly a Phoenix with every stat maxed out, in this room only.' : '');
+      (lend ? ' They are lent a Phoenix with every stat and powerup maxed out, in this room only; what they do in it is marked LENT.' : '');
     el('linkcopy').textContent = 'COPY';
   };
   M.copyLink = function () {

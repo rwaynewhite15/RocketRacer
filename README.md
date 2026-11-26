@@ -210,10 +210,14 @@ ONLINE on the menu (when the game's server says online play is available):
 - **Lending the best rocket**: the room's host (whoever opened it; the next pilot in if they leave)
   can tick LEND THEM A MAXED-OUT PHOENIX in that box. The link then carries the room's secret lend
   key (`&loan=…`), and whoever joins with it flies the best rocket there is, a Phoenix with every stat
-  at its ceiling, with their own powerup upgrades, for as long as they are in the room. Their own
+  at its ceiling and every powerup upgraded to level 3, for as long as they are in the room. Their own
   hangar is never touched. The server checks the key (it is never shown to anyone but the host), so
-  a link cannot be edited into a lending one, and the lobby shows MAX by a lent rocket so everyone
-  can see it.
+  a link cannot be edited into a lending one.
+- **Lent shows everywhere**: the lobby says LENT by a lent rocket (and LENT TO YOU: A MAXED-OUT
+  PHOENIX to its pilot), the results say ZED (LENT), and what a pilot does in a lent rocket still
+  goes on the world top 10 but marked: a gold `*` before the name (the key under the table says
+  `* LENT ROCKET`), and on their card LENT by the rocket and LENT, MAXED OUT over the stats. Only
+  the multiplayer server can mark a row lent; a page posting its own score cannot.
 - Each pilot flies their own rocket from the hangar (unless an invite lent them one): hull, stat
   levels and powerup upgrades.
 - Results pay credits and stat points as offline. Grand Prix times the player flew themselves go
@@ -401,7 +405,8 @@ The next pipeline run (or `./deploy.sh`) moves traffic back to the newest revisi
 | `GET /api/history?mode=all` | the 10 pilots with the most wins in all events (or one: `race`, `dogfight`, `royale`, `ctf`); with `X-Pilot-Id`, `me`: that player's whole history and rank |
 | `POST /api/history` | one finished game for the player's history: `{ pid, name, mode, place, win }` (no closer than 5 seconds after their last) |
 
-Leaderboard rows live in Firestore at `rocketracer/{track}/scores/{pid}`. Each player has an
+Leaderboard rows live in Firestore at `rocketracer/{track}/scores/{pid}`. A row made in a rocket an
+invite link lent has `lent: true` (set only by the multiplayer server). Each player has an
 anonymous id generated in their browser and keeps one row per course, replaced only by a
 faster time. A row records the time, best lap, rival level, `place` (where the pilot finished
 in that race, 1 to 6) and `setup`: `{ ship, stats, items, levels }`, the rocket flown, its

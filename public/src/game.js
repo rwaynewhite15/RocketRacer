@@ -911,7 +911,7 @@
     const say = function (id, words) { const e = document.getElementById(id); if (e) e.textContent = words; };
     say('nametitle', invite ? 'JOIN ROOM ' + invite.code : 'PILOT NAME');
     say('namehelp', invite ? 'Your pilot name in the race. Letters and numbers, up to 10.' +
-      (invite.loan ? ' You fly a Phoenix with every stat maxed out.' : '') : 'Shown on the world leaderboard. Letters and numbers, up to 10.');
+      (invite.loan ? ' You are lent a Phoenix with every stat and powerup maxed out.' : '') : 'Shown on the world leaderboard. Letters and numbers, up to 10.');
     say('nameok', invite ? 'JOIN' : 'OK');
     say('namecancel', invite ? 'NOT NOW' : 'CANCEL');
     field.value = this.name;

@@ -426,7 +426,7 @@ test('online: invite links - the host\'s INVITE LINK opens the game for a friend
     // Bob opens the lending link: JOIN ROOM, a name, and he is in, in a maxed-out Phoenix
     const B = await opens(lending);
     assert.strictEqual(await B.page.textContent('#nametitle'), 'JOIN ROOM ' + code);
-    assert.match(await B.page.textContent('#namehelp'), /Phoenix with every stat maxed out/);
+    assert.match(await B.page.textContent('#namehelp'), /lent a Phoenix with every stat and powerup maxed out/);
     assert.strictEqual(B.page.url(), s.url, 'the link is taken out of the address bar (a reload will not join twice)');
     const hangar = await B.page.evaluate(() => JSON.stringify(RR.game.prog));
     await B.page.fill('#pilot', 'zed');
@@ -452,7 +452,8 @@ test('online: invite links - the host\'s INVITE LINK opens the game for a friend
     const seats = [...s.hub.rooms][0].opts.seats;
     assert.deepStrictEqual(seats.slice(0, 3).map((x) => [x.name, x.hull, x.stats.join()]),
       [['ALICE', 'sparrow', '3,3,3,3,3'], ['ZED', 'phoenix', '10,10,10,10,10'], [seats[2].name, 'sparrow', '3,3,3,3,3']]);
-    assert.strictEqual(await B.page.evaluate(() => RR.game.player.design), 3, 'his own screen flies the Phoenix too');
+    assert.deepStrictEqual(Object.values(seats[1].levels), [3, 3, 3, 3, 3, 3, 3, 3], 'every powerup maxed too');
+    assert.deepStrictEqual(await B.page.evaluate(() => [RR.game.player.design, RR.game.player.plv.missile]), [3, 3], 'his own screen flies the Phoenix too');
     assert.strictEqual(await B.page.evaluate(() => JSON.stringify(RR.game.prog)), hangar, 'and his own hangar is untouched');
     assert.deepStrictEqual([A.errors, ...guests.map((P) => P.errors)], [[], [], [], []]);
   } finally { await A.ctx.close(); for (const P of guests) await P.ctx.close(); s.close(); }

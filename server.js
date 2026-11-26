@@ -282,12 +282,17 @@ function clientIp(req) {
   return xff.length ? xff[xff.length - 1] : req.socket.remoteAddress || 'unknown';
 }
 
-/** A leaderboard row from a checked submission. `online`: timed (or refereed) by the multiplayer server itself. */
+/**
+ * A leaderboard row from a checked submission. `online`: timed (or refereed)
+ * by the multiplayer server itself, which alone can say the rocket was lent
+ * (by an invite link: see lib/mp.js); a row is marked `lent` only then.
+ */
 function makeEntry(body, online) {
+  const lent = !!(online && body.lent === true);
   if (isFight(body.track)) {
     return {
       name: cleanName(body.name), score: R.score(body.track, body.result, body.diff), diff: body.diff,
-      map: body.map || null, result: R.clean(body.track, body.result), setup: cleanSetup(body.setup), online: !!online, at: Date.now(),
+      map: body.map || null, result: R.clean(body.track, body.result), setup: cleanSetup(body.setup), online: !!online, lent, at: Date.now(),
     };
   }
   return {
@@ -299,6 +304,7 @@ function makeEntry(body, online) {
     place: body.place == null ? null : body.place,
     setup: cleanSetup(body.setup),
     online: !!online,
+    lent,
     at: Date.now(),
   };
 }
