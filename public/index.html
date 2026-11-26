@@ -23,14 +23,15 @@
     <div id="crt" aria-hidden="true"></div>
   </div>
 
-  <!-- Pilot name for the online leaderboard: a real text field so phones show a keyboard. -->
+  <!-- Pilot name for the online leaderboard: a real text field so phones show a keyboard.
+       Opened from an invite link, it also says which room the player is about to join. -->
   <form id="namebox" hidden autocomplete="off">
-    <label for="pilot">PILOT NAME</label>
+    <label for="pilot" id="nametitle">PILOT NAME</label>
     <input id="pilot" name="pilot" type="text" maxlength="10" inputmode="text" autocapitalize="characters"
            autocorrect="off" spellcheck="false" enterkeyhint="done">
-    <p>Shown on the world leaderboard. Letters and numbers, up to 10.</p>
+    <p id="namehelp">Shown on the world leaderboard. Letters and numbers, up to 10.</p>
     <div class="row">
-      <button type="submit">OK</button>
+      <button type="submit" id="nameok">OK</button>
       <button type="button" id="namecancel">CANCEL</button>
     </div>
   </form>
@@ -44,6 +45,19 @@
     <div class="row">
       <button type="submit">JOIN</button>
       <button type="button" id="codecancel">CANCEL</button>
+    </div>
+  </form>
+
+  <!-- An invite link to a private room, to copy or share (the room's host can have it lend a maxed-out rocket). -->
+  <form id="linkbox" class="box" hidden autocomplete="off">
+    <label for="invitelink" id="linktitle">INVITE LINK</label>
+    <textarea id="invitelink" readonly rows="3" spellcheck="false"></textarea>
+    <label id="lendrow" class="check"><input type="checkbox" id="lend"> LEND THEM A MAXED-OUT PHOENIX</label>
+    <p id="linkhelp"></p>
+    <div class="row">
+      <button type="button" id="linkcopy">COPY</button>
+      <button type="button" id="linkshare" hidden>SHARE</button>
+      <button type="button" id="linkdone">DONE</button>
     </div>
   </form>
 

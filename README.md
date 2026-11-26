@@ -155,7 +155,7 @@ and a second runs online multiplayer over WebSockets.
 | Move the controls | | Pause > MOVE CONTROLS: drag the FLY and fire sticks and the buttons where you like (kept separately for sideways and upright; RESET restores them). GAS, BRAKE and DEFER follow the fire stick wherever it goes, unless you move them yourself |
 | Menu | Arrows, Enter | Tap |
 | Hangar | H on the menu; up/down move through the ship, its stats, BUY and the powerups (the page turns to POWERUPS past the stats), left/right pick a ship or spend and take back points, Enter closes | HANGAR button; SHIP and POWERUPS pages; arrows, BUY and - / + buttons |
-| Online | O on the menu; LEFT / RIGHT switch between bots and humans only; Enter for Quick Match, then READY; Esc leaves. In a race P opens a menu (the race goes on) | ONLINE button, then tap the bots line for humans only, QUICK MATCH, CREATE ROOM or JOIN ROOM, and READY; the II button opens the menu |
+| Online | O on the menu; LEFT / RIGHT switch between bots and humans only; Enter for Quick Match, then READY; L in a private room for its invite link; Esc leaves. In a race P opens a menu (the race goes on) | ONLINE button, then tap the bots line for humans only, QUICK MATCH, CREATE ROOM or JOIN ROOM, and READY; INVITE LINK in a private room; the II button opens the menu |
 | Other | M mute, C CRT filter, F fullscreen, N pilot name, T high score tables (left / right for the next table; up / down and Enter open a pilot's setup), Y pilot history | FULLSCREEN, PILOT, TOP 10 (< and > for the next table; tap a pilot for their setup) and HISTORY buttons |
 
 A gamepad also works (stick or d-pad to turn, A to thrust, B to brake, X to fire, Y or LB for
@@ -196,7 +196,19 @@ ONLINE on the menu (when the game's server says online play is available):
   says WAITING FOR ANOTHER PILOT). A pilot who drops out is not replaced by a bot: their ship drifts
   with its engines off until they come back. With no rivals to beat, a humans-only room pays credits
   and scores at the middle (Pilot) rate. The choice is remembered.
-- Each pilot flies their own rocket from the hangar: hull, stat levels and powerup upgrades.
+- **Invite links**: a private room's lobby has an INVITE LINK button (L). It shows the room's link
+  (`…/?room=ABCD`), with COPY and, where the device can, SHARE. Whoever opens it gets the pilot-name
+  box first (JOIN ROOM ABCD), and JOIN takes them straight into the room; NOT NOW leaves them on the
+  title screen. The link is taken out of the address bar once read, so a reload does not join twice.
+- **Lending the best rocket**: the room's host (whoever opened it; the next pilot in if they leave)
+  can tick LEND THEM A MAXED-OUT PHOENIX in that box. The link then carries the room's secret lend
+  key (`&loan=…`), and whoever joins with it flies the best rocket there is, a Phoenix with every stat
+  at its ceiling, with their own powerup upgrades, for as long as they are in the room. Their own
+  hangar is never touched. The server checks the key (it is never shown to anyone but the host), so
+  a link cannot be edited into a lending one, and the lobby shows MAX by a lent rocket so everyone
+  can see it.
+- Each pilot flies their own rocket from the hangar (unless an invite lent them one): hull, stat
+  levels and powerup upgrades.
 - Results pay credits and stat points as offline. Grand Prix times the player flew themselves go
   to the world top 10, marked online (the server timed them); so do fights' scores, for pilots
   no bot stood in for. The server also adds every game to the history of each pilot still there

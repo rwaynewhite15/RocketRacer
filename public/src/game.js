@@ -882,10 +882,20 @@
     save();
   };
 
-  /* Pilot name: a real HTML text field, so phones bring up their keyboard. */
-  G.editName = function () {
+  /*
+   * Pilot name: a real HTML text field, so phones bring up their keyboard.
+   * `invite` (opened from an invite link: { code, loan }): the box says which
+   * room the player is joining, and JOIN takes them there (see RR.mp.followInvite).
+   */
+  G.editName = function (invite) {
     const box = document.getElementById('namebox'), field = document.getElementById('pilot');
     if (!box || !field || this.state !== 'title') return;
+    const say = function (id, words) { const e = document.getElementById(id); if (e) e.textContent = words; };
+    say('nametitle', invite ? 'JOIN ROOM ' + invite.code : 'PILOT NAME');
+    say('namehelp', invite ? 'Your pilot name in the race. Letters and numbers, up to 10.' +
+      (invite.loan ? ' You fly a Phoenix with every stat maxed out.' : '') : 'Shown on the world leaderboard. Letters and numbers, up to 10.');
+    say('nameok', invite ? 'JOIN' : 'OK');
+    say('namecancel', invite ? 'NOT NOW' : 'CANCEL');
     field.value = this.name;
     box.hidden = false;
     RR.input.typing = true;
@@ -904,7 +914,10 @@
     box.hidden = true;
     RR.input.typing = false;
     RR.input.focus(); // keys back to the game
+    if (RR.mp.invite) RR.mp.followInvite(keep); // from an invite link: JOIN goes to the room, NOT NOW stays here
   };
+  /** A short message across the middle of the screen. */
+  G.note = function (words) { toast(this, words); };
   G.pause = function () {
     if (this.online) { this.mpMenu = !this.mpMenu; return; } // online the race goes on: a menu instead
     if (this.state !== 'play') return;

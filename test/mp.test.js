@@ -173,6 +173,40 @@ test('mp: private rooms by code; a dropped player is flown by a bot and gets the
   } finally { a.ws.close(); c.ws.close(); s.close(); }
 });
 
+test('mp: a private room\'s lend key goes to its host alone; joining with it lends the best rocket maxed out, keeping the pilot\'s upgrades; hosting passes on', async () => {
+  const s = await serve();
+  const a = player(s.url, 'ALICE'), b = player(s.url, 'BOB'), c = player(s.url, 'CAROL'), d = player(s.url, 'DAN');
+  try {
+    for (const p of [a, b, c, d]) await p.hello();
+    a.send({ t: 'create', mode: 'race', track: 0, diff: 1, setup });
+    const ra = await a.wait(isRoom());
+    assert.match(ra.key, /^[0-9a-f]{12}$/, 'the host is told the lend key');
+    // Bob joins by the code alone, Carol with a wrong key: their own rockets, and no key for them
+    b.send({ t: 'join', code: ra.room.code, setup });
+    const rb = await b.wait(isRoom());
+    c.send({ t: 'join', code: ra.room.code, loan: '0123456789ab', setup });
+    const rc = await c.wait(isRoom());
+    assert.deepStrictEqual([rb.key, rc.key], [undefined, undefined], 'only the host knows the key');
+    // Dan joins with the key (from the host's invite link), flying a Sparrow with a missile upgrade
+    d.send({ t: 'join', code: ra.room.code, loan: ra.key, setup: Object.assign({}, setup, { levels: { missile: 3 } }) });
+    const rd = await d.wait(isRoom((m) => m.room.humans.length === 4));
+    assert.deepStrictEqual(rd.room.humans.map((h) => [h.name, h.design, h.loan]),
+      [['ALICE', 0, false], ['BOB', 0, false], ['CAROL', 0, false], ['DAN', 3, true]], 'everyone sees who flies a lent rocket');
+    for (const p of [a, b, c, d]) p.send({ t: 'ready', on: true });
+    const st = await d.wait((m) => m.t === 'start');
+    assert.deepStrictEqual([st.opts.seats[3].hull, st.opts.seats[3].stats, st.opts.seats[3].levels], ['phoenix', [10, 10, 10, 10, 10], { missile: 3 }],
+      'a Phoenix, every stat at its ceiling, with his own powerup upgrades');
+    assert.deepStrictEqual([st.opts.seats[1].hull, st.opts.seats[2].hull], ['sparrow', 'sparrow']);
+    const G = [...s.hub.rooms][0].engine.G;
+    assert.deepStrictEqual([G.ships[3].maxHp, G.ships[0].maxHp], [Math.round(100 * (1 + 0.12 * 7)), 100], 'and it flies as one: a maxed hull');
+
+    // the host leaves: Bob, next in, hosts and is told the key
+    a.send({ t: 'leave' });
+    const nb = await b.wait(isRoom((m) => !m.room.humans.some((h) => h.name === 'ALICE')));
+    assert.strictEqual(nb.key, ra.key);
+  } finally { for (const p of [a, b, c, d]) p.ws.close(); s.close(); }
+});
+
 test('mp: a race runs to the results; only finishes the player flew themselves go to the leaderboard, marked online', async () => {
   const posted = [];
   const s = await serve({ speed: 40, resultsMs: 400, post: (body) => posted.push(body) });

@@ -382,3 +382,75 @@ test('online: humans only - the switch on the ONLINE screen (RIGHT, or a tap) is
     assert.deepStrictEqual([A.errors, B.errors], [[], []]);
   } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
 });
+
+test('online: invite links - the host\'s INVITE LINK opens the game for a friend, who picks a pilot name and joins at once; a lending link gives them a maxed-out Phoenix for the room', { skip }, async () => {
+  const s = await serve();
+  const A = await player(s.url, 'ALICE');
+  const guests = [];
+  /** A friend opening a link: the page asks for a pilot name before anything else. */
+  const opens = async (link) => {
+    const ctx = await browser.newContext({ viewport: { width: 1000, height: 560 } });
+    const page = await ctx.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e.stack || e)));
+    page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    await page.goto(link);
+    await page.waitForFunction(() => window.RR && RR.game && !document.getElementById('namebox').hidden);
+    const P = { ctx, page, errors };
+    guests.push(P);
+    return P;
+  };
+  try {
+    await A.tap('ONLINE (O)');
+    await A.page.waitForFunction(() => RR.mp.status === 'online');
+    await A.tap('CREATE ROOM');
+    await A.page.waitForFunction(() => RR.mp.room && RR.mp.room.code && RR.mp.key);
+    const code = await A.page.evaluate(() => RR.mp.room.code);
+
+    // INVITE LINK (L): the plain link, then (ticked) the lending one
+    await A.page.keyboard.press('KeyL');
+    await A.page.waitForSelector('#linkbox:not([hidden])');
+    assert.strictEqual(await A.page.textContent('#linktitle'), 'INVITE TO ROOM ' + code);
+    const plain = await A.page.inputValue('#invitelink');
+    assert.strictEqual(plain, s.url + '?room=' + code);
+    await A.page.click('#lend');
+    const lending = await A.page.inputValue('#invitelink');
+    assert.match(lending, new RegExp('\\?room=' + code + '&loan=[0-9a-f]{12}$'));
+    assert.match(await A.page.textContent('#linkhelp'), /MAXED OUT/i);
+    await A.page.click('#linkdone');
+    await A.page.waitForSelector('#linkbox', { state: 'hidden' });
+
+    // Bob opens the lending link: JOIN ROOM, a name, and he is in, in a maxed-out Phoenix
+    const B = await opens(lending);
+    assert.strictEqual(await B.page.textContent('#nametitle'), 'JOIN ROOM ' + code);
+    assert.match(await B.page.textContent('#namehelp'), /Phoenix with every stat maxed out/);
+    assert.strictEqual(B.page.url(), s.url, 'the link is taken out of the address bar (a reload will not join twice)');
+    const hangar = await B.page.evaluate(() => JSON.stringify(RR.game.prog));
+    await B.page.fill('#pilot', 'zed');
+    await B.page.click('#nameok');
+    await B.page.waitForFunction(() => RR.game.state === 'online' && RR.mp.room && RR.mp.room.humans.length === 2, null, { timeout: 6000 });
+    assert.deepStrictEqual(await B.page.evaluate(() => [RR.game.name, RR.mp.room.code, RR.mp.room.humans[RR.mp.you].loan, RR.mp.key]), ['ZED', code, true, null],
+      'named ZED, in the room, flying a lent rocket, and not the host');
+
+    // Carol opens the plain link: her own rocket. Dan opens it and says NOT NOW: he stays on the title screen
+    const C = await opens(plain);
+    assert.doesNotMatch(await C.page.textContent('#namehelp'), /maxed/i);
+    await C.page.click('#nameok');
+    await C.page.waitForFunction(() => RR.mp.room && RR.mp.room.humans.length === 3, null, { timeout: 6000 });
+    const D = await opens(plain);
+    await D.page.click('#namecancel');
+    await D.page.waitForTimeout(500);
+    assert.deepStrictEqual(await D.page.evaluate(() => [RR.game.state, RR.mp.room]), ['title', null]);
+
+    // everyone READY: Bob races in the Phoenix with every stat at its ceiling; Carol in her own Sparrow
+    await A.page.keyboard.press('Enter');
+    for (const P of [B, C]) await P.page.keyboard.press('Enter');
+    await B.page.waitForFunction(() => RR.game.state === 'play' && RR.game.online, null, { timeout: 6000 });
+    const seats = [...s.hub.rooms][0].opts.seats;
+    assert.deepStrictEqual(seats.slice(0, 3).map((x) => [x.name, x.hull, x.stats.join()]),
+      [['ALICE', 'sparrow', '3,3,3,3,3'], ['ZED', 'phoenix', '10,10,10,10,10'], [seats[2].name, 'sparrow', '3,3,3,3,3']]);
+    assert.strictEqual(await B.page.evaluate(() => RR.game.player.design), 3, 'his own screen flies the Phoenix too');
+    assert.strictEqual(await B.page.evaluate(() => JSON.stringify(RR.game.prog)), hangar, 'and his own hangar is untouched');
+    assert.deepStrictEqual([A.errors, ...guests.map((P) => P.errors)], [[], [], [], []]);
+  } finally { await A.ctx.close(); for (const P of guests) await P.ctx.close(); s.close(); }
+});

@@ -1502,10 +1502,12 @@
         W / 2, y + 191, only ? PAL.gold : PAL.steel, 1, 'center');
     } else {
       // the room: its code, what it races, who is in it
-      const only = room.bots === false;
+      const only = room.bots === false, mine = room.humans[M.you];
+      const lent = mine && mine.loan && RR.HULLS.find(function (h) { return h.design === mine.design; }); // flying a rocket an invite lent
       if (room.priv) {
         text(ctx, 'ROOM ' + room.code, W / 2, y + 38, PAL.gold, 2, 'center', PAL.plum);
-        text(ctx, only ? 'HUMANS ONLY - JOIN WITH THIS CODE' : 'FRIENDS JOIN WITH THIS CODE', W / 2, y + 56, only ? PAL.gold : PAL.steel, 1, 'center');
+        if (lent) text(ctx, 'YOU FLY A MAXED-OUT ' + lent.name, W / 2, y + 56, PAL.gold, 1, 'center');
+        else text(ctx, only ? 'HUMANS ONLY - JOIN WITH THIS CODE' : 'FRIENDS JOIN WITH THIS CODE', W / 2, y + 56, only ? PAL.gold : PAL.steel, 1, 'center');
       } else {
         text(ctx, 'QUICK MATCH', W / 2, y + (only ? 36 : 42), PAL.gold, 2, 'center', PAL.plum);
         if (only) text(ctx, 'HUMANS ONLY - NO BOTS', W / 2, y + 55, PAL.gold, 1, 'center');
@@ -1522,6 +1524,7 @@
         text(ctx, h.name + (you ? ' (YOU)' : ''), x + 50, ry, you ? PAL.yellow : PAL.white);
         const tag = !h.connected ? 'AWAY' : h.waiting ? 'NEXT RACE' : h.ready ? 'READY' : '...';
         text(ctx, tag, x + pw - 14, ry, h.ready ? PAL.lime : !h.connected ? PAL.alarm : PAL.steel, 1, 'right');
+        if (h.loan) text(ctx, 'MAX', x + pw - 72, ry, PAL.gold, 1, 'right'); // a maxed-out rocket, lent by an invite
         shown.push([h.name, tag]);
       }
       g.onlineShown = shown;
@@ -1536,7 +1539,11 @@
       }
     }
     const lw = 80;
-    button(g, ctx, touch ? 'BACK' : 'BACK (ESC)', Math.round(W / 2 - lw / 2), y + ph - 23, lw, 17, function () { M.leave(); }, PAL.orange);
+    if (room && room.code) { // a private room: its invite link beside BACK
+      const iw = 100, ix = Math.round(W / 2 - (iw + 8 + lw) / 2);
+      button(g, ctx, touch ? 'INVITE LINK' : 'INVITE LINK (L)', ix, y + ph - 23, iw, 17, function () { M.openLink(); }, PAL.cyan);
+      button(g, ctx, touch ? 'BACK' : 'BACK (ESC)', ix + iw + 8, y + ph - 23, lw, 17, function () { M.leave(); }, PAL.orange);
+    } else button(g, ctx, touch ? 'BACK' : 'BACK (ESC)', Math.round(W / 2 - lw / 2), y + ph - 23, lw, 17, function () { M.leave(); }, PAL.orange);
   }
 
   /** Over an online race: the connection, and the menu (the race goes on behind it). */
