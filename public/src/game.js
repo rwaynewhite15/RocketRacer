@@ -47,6 +47,7 @@
   const ROLL = {
     P: [['nitro', 38], ['shield', 26], ['repair', 22], ['defer', 14]],
     W: [['blaster', 35], ['missile', 30], ['mine', 20], ['emp', 15]],
+    N: [['nitro', 1]], // a course's nitro strip
     // combat modes: every ship already has a cannon, and there are no gates to defer
     CP: [['nitro', 30], ['shield', 35], ['repair', 35]],
     CW: [['missile', 45], ['mine', 25], ['emp', 30]],
@@ -179,6 +180,7 @@
     // as fractions of the screen so they survive other screen sizes (see RR.touchLayout)
     controls: {},
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
+    humansOnly: false, // online: rooms the player opens or quick-matches into race people only, no bots
     hist: null, // the player's history: games played, wins, 1st / 2nd / 3rd places, by event (see records.js)
     inset: { l: 0, t: 0, r: 0, b: 0 }, // notch / rounded-corner margins, in game pixels
     // The world layer can zoom; the HUD layer (W x H) keeps its pixel size.
@@ -209,6 +211,7 @@
       if (typeof s.pid === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(s.pid)) G.pid = s.pid;
       if (s.mode >= 0 && s.mode < MODES.length) G.modeIdx = s.mode;
       if (s.arena >= 0 && s.arena < RR.ARENAS.length) G.arenaIdx = s.arena;
+      G.humansOnly = s.humansOnly === true;
       loadProgress(s.prog);
       G.hist = RR.records.cleanHistory(s.hist);
     } catch (e) { /* storage unavailable: play without saved records */ }
@@ -223,6 +226,7 @@
         best: G.best, crt: G.crt, muted: RR.audio.muted, autoFull: G.autoFull, controls: G.controls, diff: G.diffIdx, track: G.trackIdx,
         name: G.name, pid: G.pid, zoom: G.zoomOffset,
         mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog, steerSlide: RR.input.steerSlide, controlsV: CONTROLS_V, hist: G.hist,
+        humansOnly: G.humansOnly,
       }));
     } catch (e) { /* ignore */ }
   }
@@ -447,7 +451,7 @@
 
   /** What a pick-up spot holds next. `noReflag`: anything but a Replace Flag (the map has its share). */
   function roll(kind, g, noReflag) {
-    let table = ROLL[(g.ctf ? 'F' : g.combat ? 'C' : '') + kind];
+    let table = ROLL[(g.ctf ? 'F' : g.combat ? 'C' : '') + kind] || ROLL[kind];
     if (noReflag) table = table.filter(function (t) { return t[0] !== 'reflag'; });
     let total = 0, i;
     for (i = 0; i < table.length; i++) total += table[i][1];
@@ -1927,7 +1931,7 @@
   }
 
   function updateCheckpoints(g) {
-    const cps = g.track.cps, rr = C.CP_R * C.CP_R;
+    const cps = g.track.cps, r = g.track.cpR || C.CP_R, rr = r * r; // (some courses count a brush with the donut)
     for (const s of g.ships) {
       if (s.dead > 0) continue;
       const cp = cps[s.nextCp], dx = s.x - cp.x, dy = s.y - cp.y;

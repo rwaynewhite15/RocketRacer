@@ -10,10 +10,17 @@ and a second runs online multiplayer over WebSockets.
 
 ## The game
 
-- **Three courses**: Lunar Loop (easy oval), Donut Drift (figure-eight through an asteroid
-  belt) and Gravity Gauntlet (planet slalom, orbiting rocks, long asteroid wall).
+- **Four courses**: Lunar Loop (easy oval), Donut Drift (figure-eight through an asteroid
+  belt), Gravity Gauntlet (planet slalom, orbiting rocks, long asteroid wall) and the
+  **Indy-Galactic 500**, the easiest and fastest: five laps of a big oval flown flat out. Every
+  corner between gates is gentle (an eighth of a turn at most), there are no rocks and no weapon
+  crates, its worlds sit in the infield well clear of the line, a nitro strip lies across each half
+  of both straights (one boost runs into the next, and the last carries you round the end), and
+  brushing a donut counts as flying through it. The same rivals average about a third faster
+  here than on Lunar Loop.
 - **Donut checkpoints**: fly through every donut in order. The next one glows and an arrow
-  at the screen edge points to it. The checkered donut is start/finish. Three laps.
+  at the screen edge points to it. The checkered donut is start/finish. Three laps (five on the
+  Indy-Galactic 500).
 - **Planets** are solid and pull on your rocket. **Asteroids** drift, bounce and can be shot.
 - **Power-ups** (green capsules, used instantly): Nitro, Shield, Repair.
 - **Gate deferral** (rare violet capsule, kept until you use it): marks the gate you are
@@ -148,7 +155,7 @@ and a second runs online multiplayer over WebSockets.
 | Move the controls | | Pause > MOVE CONTROLS: drag the FLY and fire sticks and the buttons where you like (kept separately for sideways and upright; RESET restores them). GAS, BRAKE and DEFER follow the fire stick wherever it goes, unless you move them yourself |
 | Menu | Arrows, Enter | Tap |
 | Hangar | H on the menu; up/down move through the ship, its stats, BUY and the powerups (the page turns to POWERUPS past the stats), left/right pick a ship or spend and take back points, Enter closes | HANGAR button; SHIP and POWERUPS pages; arrows, BUY and - / + buttons |
-| Online | O on the menu; Enter for Quick Match, then READY; Esc leaves. In a race P opens a menu (the race goes on) | ONLINE button, then QUICK MATCH, CREATE ROOM or JOIN ROOM, and READY; the II button opens the menu |
+| Online | O on the menu; LEFT / RIGHT switch between bots and humans only; Enter for Quick Match, then READY; Esc leaves. In a race P opens a menu (the race goes on) | ONLINE button, then tap the bots line for humans only, QUICK MATCH, CREATE ROOM or JOIN ROOM, and READY; the II button opens the menu |
 | Other | M mute, C CRT filter, F fullscreen, N pilot name, T high score tables (left / right for the next table; up / down and Enter open a pilot's setup), Y pilot history | FULLSCREEN, PILOT, TOP 10 (< and > for the next table; tap a pilot for their setup) and HISTORY buttons |
 
 A gamepad also works (stick or d-pad to turn, A to thrust, B to brake, X to fire, Y or LB for
@@ -182,12 +189,20 @@ ONLINE on the menu (when the game's server says online play is available):
 - **Quick Match** joins anyone's room for the mode on the menu (Grand Prix, Dogfight, Battle
   Royale or Capture the Flag), or opens one. **Create room** gives a four-letter code for friends; **Join room** takes
   one. Up to six pilots; bots take the empty seats. The race starts when everyone is READY.
+- **Humans only**: the line above the buttons says who takes the empty seats. Switch it (LEFT /
+  RIGHT, or tap it) from bots at the menu's rival level to HUMANS ONLY - NO BOTS, and the rooms you
+  open or quick-match into race people only. Quick Match keeps the two kinds of room apart, a room's
+  lobby shows OPEN SEAT for each empty seat, and a race needs at least two pilots (alone, the lobby
+  says WAITING FOR ANOTHER PILOT). A pilot who drops out is not replaced by a bot: their ship drifts
+  with its engines off until they come back. With no rivals to beat, a humans-only room pays credits
+  and scores at the middle (Pilot) rate. The choice is remembered.
 - Each pilot flies their own rocket from the hangar: hull, stat levels and powerup upgrades.
 - Results pay credits and stat points as offline. Grand Prix times the player flew themselves go
   to the world top 10, marked online (the server timed them); so do fights' scores, for pilots
   no bot stood in for. The server also adds every game to the history of each pilot still there
   at the end.
-- A dropped connection reconnects and gets the same ship back; a bot flies it meanwhile.
+- A dropped connection reconnects and gets the same ship back; a bot flies it meanwhile (in a
+  humans-only room, nobody does).
 - Every human pilot's name shows over their rocket on the grid and for the first 2 seconds of
   the race, and again for 2 seconds whenever their rocket comes into view (bots are never
   named). Offline, your own name shows at the start.
@@ -362,7 +377,7 @@ The next pipeline run (or `./deploy.sh`) moves traffic back to the newest revisi
 | `GET /api/health` | `{ ok, store, env, version }`: which environment and commit answered |
 | `GET /api/config` | `{ mp }`: where online play is (`MP_URL`, or `/ws` with `MP=embedded`), or `null` |
 | online-play service: `GET /api/health`, WebSocket `/ws` | `mp-server.js` (see Online multiplayer). Online times are stored with `online: true` |
-| `GET /api/scores?track=lunar` | a high score table's top 10: a course's race times (`lunar`, `eight`, `gauntlet`), or a fight mode's scores (`dogfight`, `royale`, `ctf`). With an `X-Pilot-Id` header it also returns `me`: that player's own row and world rank |
+| `GET /api/scores?track=lunar` | a high score table's top 10: a course's race times (`lunar`, `eight`, `gauntlet`, `indy`), or a fight mode's scores (`dogfight`, `royale`, `ctf`). With an `X-Pilot-Id` header it also returns `me`: that player's own row and world rank |
 | `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff, place, setup }`, or a fight: `{ track: mode, pid, name, diff, map, result, setup }` (the server works out the points) |
 | `GET /api/history?mode=all` | the 10 pilots with the most wins in all events (or one: `race`, `dogfight`, `royale`, `ctf`); with `X-Pilot-Id`, `me`: that player's whole history and rank |
 | `POST /api/history` | one finished game for the player's history: `{ pid, name, mode, place, win }` (no closer than 5 seconds after their last) |

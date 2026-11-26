@@ -60,6 +60,73 @@ test('engine: a human who finishes is flown home by autopilot; a gate deferral w
   assert.ok(p.finished && p.ai, 'finished, with the autopilot taking over');
 });
 
+test('engine: the Indy-Galactic 500 is an easy, fast oval - gentle corners, nothing in the way, nitro on the straights, generous gates', () => {
+  const { RR } = createEngine();
+  const idx = RR.TRACKS.findIndex((t) => t.id === 'indy'), lunar = RR.TRACKS.findIndex((t) => t.id === 'lunar');
+  const tr = RR.getTrack(idx), cps = tr.cps, N = cps.length;
+  assert.deepStrictEqual([tr.name, tr.laps, N], ['INDY-GALACTIC 500', 5, 12]);
+  // every corner between one leg and the next is gentle (an eighth of a turn at most), and the lap goes round once
+  let turned = 0;
+  for (let i = 0; i < N; i++) {
+    const a = cps[i], b = cps[(i + 1) % N], c = cps[(i + 2) % N];
+    const t = RR.angDiff(Math.atan2(c.y - b.y, c.x - b.x), Math.atan2(b.y - a.y, b.x - a.x));
+    assert.ok(Math.abs(t) <= Math.PI / 4 + 0.01, 'gate ' + ((i + 1) % N) + ': a sharp corner'); // (gates sit on whole pixels)
+    turned += t;
+  }
+  assert.ok(Math.abs(Math.abs(turned) - 2 * Math.PI) < 1e-6, 'one loop round');
+  // no rocks and no weapon crates; the worlds sit in the infield, well clear of the line
+  assert.strictEqual(tr.rocks.length, 0);
+  assert.ok(tr.pickups.length && tr.pickups.every((p) => p.kind !== 'W'), 'no weapons');
+  const segDist = (p, a, b) => {
+    const dx = b.x - a.x, dy = b.y - a.y, k = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)));
+    return Math.hypot(p.x - (a.x + dx * k), p.y - (a.y + dy * k));
+  };
+  for (const p of tr.planets) for (let i = 0; i < N; i++) assert.ok(segDist(p, cps[i], cps[(i + 1) % N]) - p.r > 250, 'a world near leg ' + i);
+
+  // nitro strips hold nothing but nitro
+  const { G } = createEngine();
+  const seats = [0, 1, 2, 3, 4, 5].map((i) => seat(i, i === 0));
+  G.startOnline({ server: true, mode: 'race', track: idx, diff: 1, seats });
+  assert.deepStrictEqual([...new Set(G.pickups.filter((p) => p.kind === 'N').map((p) => p.type))], ['nitro']);
+  assert.strictEqual(G.pickups.filter((p) => p.kind === 'N').length, 12, 'six on each straight');
+
+  // brushing a donut counts here (not on other courses): 52 from the middle is through the tube, outside the hole
+  run(G, 4);
+  const s = G.ships[0];
+  s.netInput.thrust = 0;
+  s.nextCp = 1; s.cpCount = 1; s.lap = 1;
+  s.x = cps[1].x; s.y = cps[1].y + 52; s.vx = 0; s.vy = 0;
+  G.step(STEP);
+  assert.deepStrictEqual([s.nextCp, s.cpCount], [2, 2], 'a brush with the donut counts');
+  const L = createEngine();
+  L.G.startOnline({ server: true, mode: 'race', track: lunar, diff: 1, seats });
+  run(L.G, 4);
+  const l = L.G.ships[0], lc = L.G.track.cps;
+  l.nextCp = 1; l.cpCount = 1; l.lap = 1;
+  l.x = lc[1].x; l.y = lc[1].y + 52; l.vx = 0; l.vy = 0;
+  L.G.step(STEP);
+  assert.strictEqual(l.nextCp, 1, 'on Lunar Loop it does not');
+
+  // fast: the same bots get round far quicker than on Lunar Loop, the easy course (about a third quicker:
+  // their average speed over the race, gate to gate), and none of them is wrecked or gets stuck
+  const speed = (t) => {
+    const e = createEngine();
+    e.G.startOnline({ server: true, mode: 'race', track: t, diff: 1, seats: [0, 1, 2, 3, 4, 5].map((i) => seat(i)) });
+    let k = 0, wrecks = 0;
+    const was = e.G.ships.map(() => false);
+    while (!e.G.ships.every((x) => x.finished) && k++ < 120 * 400) {
+      e.G.step(STEP);
+      e.G.ships.forEach((x, i) => { if (x.dead > 0 && !was[i]) wrecks++; was[i] = x.dead > 0; });
+    }
+    assert.ok(e.G.ships.every((x) => x.finished), e.G.track.name + ': every bot finishes');
+    const lap = e.G.track.cps.reduce((m, c) => m + c.segLen, 0), mean = e.G.ships.reduce((m, x) => m + x.finishTime, 0) / 6;
+    return { v: (lap * e.G.laps) / mean, wrecks, stuck: e.G.ships.reduce((m, x) => m + x.ai.stuckN, 0) };
+  };
+  const fast = speed(idx), easy = speed(lunar);
+  assert.ok(fast.v > easy.v * 1.15, 'average speed: ' + Math.round(fast.v) + ' here, ' + Math.round(easy.v) + ' on Lunar Loop');
+  assert.deepStrictEqual([fast.wrecks, fast.stuck], [0, 0], 'nobody wrecked or stuck on the oval');
+});
+
 test('engine: online fights end on their own; rooms do not share a world', () => {
   const a = createEngine(), b = createEngine();
   a.G.startOnline({ server: true, mode: 'dogfight', track: 0, diff: 2, seats: [seat(0, true), seat(1), seat(2), seat(3), seat(4), seat(5)] });

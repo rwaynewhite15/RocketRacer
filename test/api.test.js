@@ -240,6 +240,10 @@ test('name and score validation helpers', () => {
   assert.strictEqual(cleanName('señor-ñ_1.!'), 'SEOR-_1.!');
   assert.strictEqual(validateScore(run()), null);
   assert.strictEqual(validateScore(run({ track: 'gauntlet', time: 150, lap: 45 })), null);
+  // the Indy-Galactic 500: five quick laps
+  assert.strictEqual(validateScore(run({ track: 'indy', time: 72.4, lap: 13.9 })), null);
+  assert.strictEqual(validateScore(run({ track: 'indy', time: 30, lap: 5.9 })), 'Race time out of range');
+  assert.strictEqual(validateScore(run({ track: 'indy', time: 50, lap: 10.5 })), 'Lap and race times disagree', 'five laps, not three');
   for (let p = 1; p <= 6; p++) assert.strictEqual(validateScore(run({ place: p })), null);
 
   // staging keeps its scores in a different collection
@@ -247,6 +251,13 @@ test('name and score validation helpers', () => {
   assert.strictEqual(collectionName({}), 'rocketracer');
   assert.strictEqual(collectionName({ LEADERBOARD_COLLECTION: 'rocketracer-staging' }), 'rocketracer-staging');
   assert.throws(() => collectionName({ LEADERBOARD_COLLECTION: 'a/b' }));
+});
+
+test('the leaderboard knows every course the game has, with the same number of laps', () => {
+  const { TRACKS } = require('../server');
+  const { RR } = require('../lib/engine').createEngine();
+  assert.deepStrictEqual(Object.keys(TRACKS), Array.from(RR.TRACKS, (t) => t.id)); // (the engine's arrays are from its own context)
+  for (const t of RR.TRACKS) assert.strictEqual(TRACKS[t.id].laps, t.laps, t.id + ': laps');
 });
 
 /* ------------------------------------------------- every event's table, and histories */

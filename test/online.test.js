@@ -344,3 +344,41 @@ test('online: capture the flag - two players on opposite teams; a flag taken on 
     assert.deepStrictEqual([A.errors, B.errors], [[], []]);
   } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
 });
+
+test('online: humans only - the switch on the ONLINE screen (RIGHT, or a tap) is remembered, and two players race the Indy-Galactic 500 with no bots', { skip }, async () => {
+  const s = await serve();
+  const A = await player(s.url, 'ALICE'), B = await player(s.url, 'BOB');
+  try {
+    // Alice picks the course on the menu, opens ONLINE and switches the empty seats to humans only with RIGHT
+    await A.page.evaluate(() => { const g = RR.game; g.modeIdx = 0; g.trackIdx = RR.TRACKS.findIndex((t) => t.id === 'indy'); g.startRace(true); });
+    await A.page.keyboard.press('KeyO');
+    await A.page.waitForFunction(() => RR.game.state === 'online' && RR.mp.status === 'online');
+    await A.tap('< PILOT BOTS IN EMPTY SEATS >'); // (a tap switches it...)
+    await A.tap('< HUMANS ONLY - NO BOTS >'); // (...and back)
+    await A.page.keyboard.press('ArrowRight');
+    await A.page.waitForTimeout(80);
+    assert.strictEqual(await A.page.evaluate(() => RR.game.humansOnly), true);
+    assert.strictEqual(await A.page.evaluate(() => JSON.parse(localStorage.getItem('rocketracer.v1')).humansOnly), true, 'remembered');
+    await A.page.keyboard.press('Enter'); // QUICK MATCH
+    await A.page.waitForFunction(() => RR.mp.room);
+    assert.deepStrictEqual(await A.page.evaluate(() => [RR.mp.room.bots, RR.mp.room.priv]), [false, false]);
+    await A.page.keyboard.press('Enter'); // READY: alone, nothing starts
+    await A.page.waitForTimeout(400);
+    assert.deepStrictEqual(await A.page.evaluate(() => [RR.game.state, RR.mp.room.state, RR.mp.isReady()]), ['online', 'lobby', true]);
+
+    // Bob, by touch: ONLINE, the switch, QUICK MATCH, READY
+    await B.tap('ONLINE (O)');
+    await B.page.waitForFunction(() => RR.mp.status === 'online');
+    await B.tap('< PILOT BOTS IN EMPTY SEATS >');
+    await B.tap('QUICK MATCH (ENTER)');
+    await B.page.waitForFunction(() => RR.mp.room);
+    assert.deepStrictEqual(await B.page.evaluate(() => [RR.mp.room.bots, RR.mp.room.humans.map((h) => h.name)]), [false, ['ALICE', 'BOB']], 'into Alice\'s room');
+    await B.tap('READY (ENTER)');
+    for (const P of [A, B]) await P.page.waitForFunction(() => RR.game.state === 'play' && RR.game.online, null, { timeout: 5000 });
+    const look = (P) => P.page.evaluate(() => ({ course: RR.game.track.def.id, ships: RR.game.ships.map((x) => [x.name, x.human]) }));
+    const want = { course: 'indy', ships: [['ALICE', true], ['BOB', true]] };
+    assert.deepStrictEqual(await look(A), want, 'just the two of them, on the oval');
+    assert.deepStrictEqual(await look(B), want);
+    assert.deepStrictEqual([A.errors, B.errors], [[], []]);
+  } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
+});

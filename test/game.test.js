@@ -2134,14 +2134,14 @@ test('high score tables for every event, and the pilot history: a fight posts it
     await page.keyboard.press('Enter'); await page.waitForTimeout(80);
     // RIGHT goes through every table and comes round again: the other fights, the top pilots, the courses
     const order = [];
-    for (let k = 0; k < 7; k++) {
+    for (let k = 0; k < 8; k++) {
       await page.keyboard.press('ArrowRight');
       await page.waitForTimeout(100);
       order.push(await page.evaluate(() => RR.game.boardId));
     }
-    assert.deepStrictEqual(order, ['royale', 'ctf', 'pilots', 'lunar', 'eight', 'gauntlet', 'dogfight']);
-    // ...and LEFT goes back the other way: four tables back is the top pilots
-    for (let k = 0; k < 4; k++) { await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(100); }
+    assert.deepStrictEqual(order, ['royale', 'ctf', 'pilots', 'lunar', 'eight', 'gauntlet', 'indy', 'dogfight']);
+    // ...and LEFT goes back the other way: five tables back is the top pilots
+    for (let k = 0; k < 5; k++) { await page.keyboard.press('ArrowLeft'); await page.waitForTimeout(100); }
     // the top pilots: us among them, with our game and win
     await page.waitForFunction((n) => RR.game.boardId === 'pilots' && RR.game.boardShown.rows.some((x) => x[1] === n), name, { timeout: 8000 });
     assert.deepStrictEqual(await page.evaluate((n) => RR.game.boardShown.rows.find((x) => x[1] === n).slice(1), name), [name, 1, 1, 1, 0, 0]);

@@ -191,7 +191,7 @@
   }
   function game() {
     const G = RR.game, mode = RR.MODES[G.modeIdx].id;
-    return { mode: mode, track: G.mapIdx(), diff: G.diffIdx };
+    return { mode: mode, track: G.mapIdx(), diff: G.diffIdx, bots: !G.humansOnly };
   }
   M.quick = function () { act(Object.assign({ t: 'quick', setup: setup() }, game())); };
   M.create = function () { act(Object.assign({ t: 'create', setup: setup() }, game())); };
@@ -200,6 +200,15 @@
     if (code.length === 4) act({ t: 'join', code: code, setup: setup() });
   };
   M.ready = function (on) { send({ t: 'ready', on: on }); };
+
+  /** Empty seats: bots at the menu's rival level, or nobody (a room for humans only). Remembered. */
+  M.toggleBots = function () {
+    const G = RR.game;
+    if (M.room) return; // (a room keeps the way it was opened)
+    G.humansOnly = !G.humansOnly;
+    G.save();
+    RR.audio.sfx('select');
+  };
   M.isReady = function () { const h = M.room && M.room.humans[M.you]; return !!(h && h.ready); };
 
   /** Leave the room (and the race, if there is one): back to the title screen. */
@@ -224,6 +233,7 @@
     if (hit.pause || hit.quit) { M.leave(); return; }
     if (!M.room) {
       if (hit.ok || hit.fire) M.quick();
+      else if (hit.left || hit.right) M.toggleBots();
     } else if (hit.ok || hit.fire) M.ready(!M.isReady());
   };
 

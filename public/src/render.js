@@ -1486,26 +1486,35 @@
     const bw = Math.min(150, pw - 40), bx = Math.round(W / 2 - bw / 2);
 
     if (!room) {
-      const mode = RR.MODES[g.modeIdx].id, track = g.mapIdx();
+      const mode = RR.MODES[g.modeIdx].id, track = g.mapIdx(), only = g.humansOnly;
       text(ctx, modeName(mode) + ' - ' + placeName(mode, track), W / 2, y + 44, PAL.white, 1, 'center');
-      text(ctx, RR.DIFFS[g.diffIdx].name + ' BOTS IN EMPTY SEATS', W / 2, y + 56, PAL.steel, 1, 'center');
-      button(g, ctx, touch ? 'QUICK MATCH' : 'QUICK MATCH (ENTER)', bx, y + 74, bw, 20, function () { M.quick(); }, PAL.lime);
-      button(g, ctx, 'CREATE ROOM', bx, y + 100, bw, 20, function () { M.create(); }, PAL.yellow);
-      button(g, ctx, 'JOIN ROOM', bx, y + 126, bw, 20, function () { M.askCode(); }, PAL.cyan);
-      text(ctx, 'QUICK MATCH: RACE ANYONE IN A ROOM', W / 2, y + 156, PAL.steel, 1, 'center');
-      text(ctx, 'CREATE ROOM: A CODE FOR YOUR FRIENDS', W / 2, y + 167, PAL.steel, 1, 'center');
-      text(ctx, 'PICK THE MODE AND COURSE ON THE MENU', W / 2, y + 178, PAL.steel, 1, 'center');
+      // who takes the empty seats: bots at the menu's rival level, or nobody (LEFT / RIGHT, or tap, to switch)
+      const sw = Math.min(pw - 24, 210), sx = Math.round(W / 2 - sw / 2);
+      button(g, ctx, '< ' + (only ? 'HUMANS ONLY - NO BOTS' : RR.DIFFS[g.diffIdx].name + ' BOTS IN EMPTY SEATS') + ' >', sx, y + 56, sw, 16,
+        function () { M.toggleBots(); }, only ? PAL.gold : PAL.steel);
+      button(g, ctx, touch ? 'QUICK MATCH' : 'QUICK MATCH (ENTER)', bx, y + 80, bw, 20, function () { M.quick(); }, PAL.lime);
+      button(g, ctx, 'CREATE ROOM', bx, y + 104, bw, 20, function () { M.create(); }, PAL.yellow);
+      button(g, ctx, 'JOIN ROOM', bx, y + 128, bw, 20, function () { M.askCode(); }, PAL.cyan);
+      text(ctx, 'QUICK MATCH: RACE ANYONE IN A ROOM', W / 2, y + 158, PAL.steel, 1, 'center');
+      text(ctx, 'CREATE ROOM: A CODE FOR YOUR FRIENDS', W / 2, y + 169, PAL.steel, 1, 'center');
+      text(ctx, 'PICK THE MODE AND COURSE ON THE MENU', W / 2, y + 180, PAL.steel, 1, 'center');
+      text(ctx, only ? 'HUMANS ONLY: NEEDS 2 PILOTS OR MORE' : touch ? 'TAP THE BOTS LINE FOR HUMANS ONLY' : 'LEFT / RIGHT: HUMANS ONLY',
+        W / 2, y + 191, only ? PAL.gold : PAL.steel, 1, 'center');
     } else {
       // the room: its code, what it races, who is in it
+      const only = room.bots === false;
       if (room.priv) {
         text(ctx, 'ROOM ' + room.code, W / 2, y + 38, PAL.gold, 2, 'center', PAL.plum);
-        text(ctx, 'FRIENDS JOIN WITH THIS CODE', W / 2, y + 56, PAL.steel, 1, 'center');
-      } else text(ctx, 'QUICK MATCH', W / 2, y + 42, PAL.gold, 2, 'center', PAL.plum);
+        text(ctx, only ? 'HUMANS ONLY - JOIN WITH THIS CODE' : 'FRIENDS JOIN WITH THIS CODE', W / 2, y + 56, only ? PAL.gold : PAL.steel, 1, 'center');
+      } else {
+        text(ctx, 'QUICK MATCH', W / 2, y + (only ? 36 : 42), PAL.gold, 2, 'center', PAL.plum);
+        if (only) text(ctx, 'HUMANS ONLY - NO BOTS', W / 2, y + 55, PAL.gold, 1, 'center');
+      }
       text(ctx, modeName(room.mode) + ' - ' + placeName(room.mode, room.track), W / 2, y + 68, PAL.white, 1, 'center');
       const shown = [];
       for (let k = 0; k < 6; k++) {
         const h = room.humans[k], ry = y + 82 + k * 12;
-        if (!h) { text(ctx, (k + 1) + '  ' + 'BOT (' + RR.DIFFS[room.diff].name + ')', x + 24, ry, PAL.slate); continue; }
+        if (!h) { text(ctx, (k + 1) + '  ' + (only ? 'OPEN SEAT' : 'BOT (' + RR.DIFFS[room.diff].name + ')'), x + 24, ry, PAL.slate); continue; }
         const you = k === M.you;
         if (you) { ctx.fillStyle = 'rgba(255,205,117,0.16)'; ctx.fillRect(x + 8, ry - 2, pw - 16, 11); }
         text(ctx, String(k + 1), x + 24, ry, you ? PAL.yellow : PAL.silver);
@@ -1517,8 +1526,9 @@
       }
       g.onlineShown = shown;
       const racing = room.state !== 'lobby';
-      text(ctx, room.state === 'race' ? 'A RACE IS ON - YOU ARE IN THE NEXT ONE' : racing ? 'NEXT RACE IN A MOMENT' : 'STARTS WHEN EVERYONE IS READY',
-        W / 2, y + 158, room.state === 'race' ? PAL.orange : PAL.steel, 1, 'center');
+      const alone = only && room.humans.filter(function (h) { return h.connected; }).length < 2; // humans only: nobody to race yet
+      text(ctx, room.state === 'race' ? 'A RACE IS ON - YOU ARE IN THE NEXT ONE' : racing ? 'NEXT RACE IN A MOMENT' : alone ? 'WAITING FOR ANOTHER PILOT' : 'STARTS WHEN EVERYONE IS READY',
+        W / 2, y + 158, room.state === 'race' || alone ? PAL.orange : PAL.steel, 1, 'center');
       const ready = M.isReady();
       if (!racing) {
         button(g, ctx, ready ? 'NOT READY' : touch ? 'READY' : 'READY (ENTER)', bx, y + 172, bw, 20, function () { M.ready(!ready); },
