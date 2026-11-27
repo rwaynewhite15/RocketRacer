@@ -250,6 +250,8 @@ test('online: a hit flashes a ship white only for a moment; human pilots are nam
   const s = await serve();
   const A = await player(s.url, 'ALICE'), B = await player(s.url, 'BOB');
   try {
+    // (flown by hand, from the hangar: left alone, the pilots sit still while the test moves them about)
+    for (const P of [A, B]) await P.page.evaluate(() => { RR.game.autopilot = false; });
     await intoRace(A, B);
     const G = [...s.hub.rooms][0].engine.G, alice = G.ships[0], bob = G.ships[1], bot = G.ships[2];
     const tags = () => A.page.evaluate(() => (RR.game.tagsShown || []).slice().sort());
@@ -292,8 +294,8 @@ test('online: a hit flashes a ship white only for a moment; human pilots are nam
     assert.ok(flash.most > 0, 'the flash shows');
     assert.ok(flash.after <= 0, 'and ends (it used to stay white for good): ' + flash.after);
 
-    // a gate deferral: Alice presses E, the server takes it, and her screen and Bob's show it (her autopilot flies a
-    // Grand Prix, so she is parked well away from the gates, braking, while it happens)
+    // a gate deferral: Alice presses E, the server takes it, and her screen and Bob's show it (parked well away from
+    // the gates, braking, while it happens)
     const far = G.track.cps[6];
     alice.x = far.x; alice.y = far.y; alice.vx = alice.vy = 0;
     await A.page.keyboard.down('ArrowDown');

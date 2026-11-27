@@ -414,7 +414,7 @@
       aggro: diff.aggro, rubber: diff.rubber, margin: Math.random() * 14,
       ox: 0, oy: 0, cpFor: -1, pick: null, pickT: 0,
       stuck: 0, stuckN: 0, rev: 0, revTurn: 1, fireT: 1.5 + Math.random() * 2,
-      lane: Math.floor(Math.random() * 3) - 1, laneT: 0, // a walled lane: the lane it keeps to (see pickLane)
+      raceLane: Math.floor(Math.random() * 7) - 3, raceLaneT: 0, // a walled lane: the lane it keeps to, -3 .. 3 (see pickLane; `lane` is capture the flag's)
       tgt: null, tgtT: 0, wobble: (1.02 - diff.speed) * 0.8, // combat: who to chase, how shaky the aim
     };
   }
@@ -2793,10 +2793,10 @@
       s.speedMult = ai.skill * (1 - ai.rubber * clamp((s.progress - ref.progress) / 1.5, -1, 1));
     } else s.speedMult = ai.skill;
 
-    if (tr.lane) { // a walled lane: keep to a lane, moving over for a pickup or round a slower ship
-      ai.laneT = (ai.laneT || 0) - dt; // (a brain made elsewhere may have no lane yet: the middle)
-      if (ai.laneT <= 0) { ai.laneT = 0.25; ai.lane = pickLane(s, g, ai); }
-      cruise(s, g, ai, dt, ai.lane * tr.lane.gap, false);
+    if (tr.lane) { // a walled lane: keep to one of its seven lanes, moving over for a pickup or round a slower ship
+      ai.raceLaneT = (ai.raceLaneT || 0) - dt; // (a brain made elsewhere may have no lane yet: the middle)
+      if (ai.raceLaneT <= 0) { ai.raceLaneT = 0.25; ai.raceLane = pickLane(s, g, ai); }
+      cruise(s, g, ai, dt, ai.raceLane * tr.lane.gap, false);
     } else cruise(s, g, ai, dt, 0, true);
     if (s.dead > 0) return; // (towed)
 
@@ -2872,37 +2872,41 @@
    */
   function pickLane(s, g, ai) {
     const L = g.track.lane, here = L.at(s.x, s.y), wrap = function (v) { return ((v % L.lap) + L.lap) % L.lap; };
-    const now = ai.lane || 0;
+    const now = ai.raceLane || 0;
     const speed = Math.hypot(s.vx, s.vy);
     let best = null;
     for (const p of g.pickups) {
       if (!p.on || (p.kind === 'W' ? !!s.weapon : p.type === 'defer' || (p.type === 'repair' && s.hp > 80) || (p.type === 'shield' && s.shield > 0))) continue;
       const a = L.at(p.x, p.y), ahead = wrap(a.s - here.s);
-      if (ahead > 120 && ahead < 650 && (!best || ahead < best.ahead)) best = { ahead: ahead, lane: clamp(Math.round(a.d / L.gap), -1, 1) };
+      if (ahead > 120 && ahead < 650 && (!best || ahead < best.ahead)) best = { ahead: ahead, lane: clamp(Math.round(a.d / L.gap), -LANES, LANES) };
     }
     if (best) return best.lane;
     for (const o of g.ships) {
       if (o === s || o.dead > 0 || o.gone) continue;
       const a = L.at(o.x, o.y), ahead = wrap(a.s - here.s);
-      if (ahead > 20 && ahead < 170 && Math.abs(a.d - now * L.gap) < 40 && Math.hypot(o.vx, o.vy) < speed) {
-        return now === 0 ? (Math.random() < 0.5 ? -1 : 1) : 0;
+      if (ahead > 20 && ahead < 170 && Math.abs(a.d - now * L.gap) < L.gap * 0.8 && Math.hypot(o.vx, o.vy) < speed) {
+        const by = Math.random() < 0.5 ? -2 : 2; // two lanes over, whichever way there is room
+        return Math.abs(now + by) <= LANES ? now + by : now - by;
       }
     }
-    return Math.random() < 0.01 ? Math.floor(Math.random() * 3) - 1 : now;
+    return Math.random() < 0.01 ? Math.floor(Math.random() * (2 * LANES + 1)) - LANES : now;
   }
 
   /**
    * The autopilot, chosen in the hangar (on unless the player turns it off):
-   * in a Grand Prix it flies the player's ship round the course, keeping to a
-   * lane, so the player can fight. LEFT and RIGHT change lane rather than
-   * steer: a push left or right (arrows, the fly stick or slider, a drag, the
-   * pad) moves it a lane over, once per push; BRAKE still brakes; firing,
-   * aiming and the gate deferral stay the player's. Off, a Grand Prix is
-   * flown by hand. (Fights, with no course to follow, always are.) Takes the
-   * controls as read and returns the ones to fly with, marked `auto` (online
-   * the server is told, and a time it flew says so on the tables).
+   * in a Grand Prix it flies the player's ship round the course, keeping to
+   * one of seven lanes, so the player can fight. On a touch screen the lane
+   * slider is the only control: the ship flies in the lane under the thumb.
+   * LEFT and RIGHT (keys, the pad) move it a lane over per push, and on
+   * across the lanes while held. BRAKE still brakes; firing, aiming and the
+   * gate deferral stay the player's. Off, a Grand Prix is flown by hand.
+   * (Fights, with no course to follow, always are.) Takes the controls as
+   * read and returns the ones to fly with, marked `auto` (online the server
+   * is told, and a time it flew says so on the tables).
    */
-  const LANES = 1; // lanes either side of the middle
+  const LANES = 3, GATE_GAP = 30; // lanes either side of the middle (seven in all); their spacing on a course of gates
+  const LANE_REPEAT = 0.3, LANE_EVERY = 0.14; // a held key: one lane at once, then on after this long, one lane every so often
+  G.LANES = LANES;
   G.autoOn = function () { return this.autopilot && this.mode === 'race' && !this.demo; };
   /** The hangar's AUTOPILOT: on or off (remembered). */
   G.toggleAutopilot = function () {
@@ -2913,12 +2917,16 @@
   G.autopilotInput = function (s, inp, dt) {
     const g = this;
     if (!g.autoOn() || g.phase !== 'race' || s.dead > 0 || s.finished) return inp;
-    const st = s.pilot || (s.pilot = { lane: 0, held: 0, margin: 6, stuck: 0, stuckN: 0, rev: 0, revTurn: 1, cpFor: -1, ox: 0, oy: 0 });
-    // a push left or right: one lane over, until let go
-    if (inp.turn < -0.5 && st.held >= 0) { st.held = -1; if (st.lane > -LANES) { st.lane--; RR.audio.sfx('select'); } }
-    else if (inp.turn > 0.5 && st.held <= 0) { st.held = 1; if (st.lane < LANES) { st.lane++; RR.audio.sfx('select'); } }
-    else if (Math.abs(inp.turn) < 0.3) st.held = 0;
-    cruise(s, g, st, dt, st.lane * (g.track.lane ? g.track.lane.gap : 70), false);
+    const st = s.pilot || (s.pilot = { lane: 0, held: 0, rep: 0, margin: 6, stuck: 0, stuckN: 0, rev: 0, revTurn: 1, cpFor: -1, ox: 0, oy: 0 });
+    const go = function (lane) { lane = clamp(lane, -LANES, LANES); if (lane !== st.lane) { st.lane = lane; RR.audio.sfx('select'); } };
+    if (inp.slideAt != null) { go(Math.round(inp.slideAt * LANES)); st.held = 0; } // the lane slider: the lane under the thumb
+    else { // a key (or the pad) held left or right: a lane over at once, then on across the lanes while it is held
+      const dir = inp.turn < -0.5 ? -1 : inp.turn > 0.5 ? 1 : 0;
+      if (dir && dir !== st.held) { go(st.lane + dir); st.held = dir; st.rep = LANE_REPEAT; }
+      else if (dir) { st.rep -= dt; if (st.rep <= 0) { go(st.lane + dir); st.rep = LANE_EVERY; } }
+      else if (Math.abs(inp.turn) < 0.3) st.held = 0;
+    }
+    cruise(s, g, st, dt, st.lane * (g.track.lane ? g.track.lane.gap : GATE_GAP), false);
     s.autoUsed = true; // (the high score tables say a time was flown on the autopilot)
     const brake = inp.brake > 0;
     return {
@@ -3119,7 +3127,7 @@
   G.frame = function (dt) {
     const g = this, I = RR.input;
     const TL = g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null;
-    if (TL && g.autoOn()) TL.noGas = true; // (a Grand Prix: the autopilot runs the engine, so no GAS)
+    if (TL && g.autoOn()) { TL.noGas = true; TL.laneSlide = true; } // (the autopilot runs the engine; the lane slider is the only control)
     I.updateTouch(TL, g.ui);
     if (g.state === 'play') I.updateAim(dt, g.player);
     if (g.state === 'layout') dragControls(g);

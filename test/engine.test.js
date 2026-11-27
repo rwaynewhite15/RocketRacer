@@ -65,7 +65,8 @@ test('engine: the Indy-Galactic 500 is a walled oval - three giant donuts (the f
   const idx = RR.TRACKS.findIndex((t) => t.id === 'indy'), lunar = RR.TRACKS.findIndex((t) => t.id === 'lunar');
   const tr = RR.getTrack(idx), cps = tr.cps, L = tr.lane;
   assert.deepStrictEqual([tr.name, tr.laps, cps.length], ['INDY-GALACTIC 500', 5, 3], 'just three donuts');
-  assert.ok(L && L.w === 280 && L.gap === 85, 'a lane 280 across, its three lanes 85 apart');
+  assert.ok(L && L.w === 280 && L.gap === 38, 'a lane 280 across, its seven lanes 38 apart');
+  assert.ok(3 * L.gap + 8 < L.w / 2, 'the outermost lanes clear of the walls');
   // the lane's map is exact: a point s round the lap and d out comes back as just that
   for (let k = 0; k < 60; k++) {
     const s0 = (k / 60) * L.lap, d0 = ((k % 5) - 2) * 60, p = L.point(s0, d0), a = L.at(p.x, p.y);
@@ -91,7 +92,9 @@ test('engine: the Indy-Galactic 500 is a walled oval - three giant donuts (the f
   assert.strictEqual(tr.rocks.length, 0);
   for (const p of tr.planets) assert.ok(L.at(p.x, p.y).d + p.r < -L.w / 2, 'a world in the infield');
   // pickups sit on the three lanes; weapons are off until switched on
-  assert.ok(tr.pickups.every((p) => [-85, 0, 85].includes(Math.round(L.at(p.x, p.y).d))));
+  const onLanes = Array.from(tr.pickups, (p) => Math.round(L.at(p.x, p.y).d / L.gap) + 0);
+  assert.ok(tr.pickups.every((p) => Math.abs(L.at(p.x, p.y).d / L.gap - Math.round(L.at(p.x, p.y).d / L.gap)) < 1e-6), 'every pickup on a lane');
+  assert.deepStrictEqual([...new Set(onLanes)].sort((a, b) => a - b), [-3, -2, -1, 0, 1, 2, 3], 'spread over all seven');
   assert.strictEqual(tr.def.weapons, false);
   const usual = RR.getTrack(lunar);
   assert.deepStrictEqual([usual.donut, usual.cpR, usual.lane, usual.walls.length], [1, 0, null, 0], 'other courses as they were');
@@ -178,12 +181,12 @@ test('engine: in a Grand Prix the autopilot flies the player round any course - 
     return { s, G, seen, touched, L };
   };
   // the walled oval, in every lane: round five laps, never touching a wall, and it keeps to the lane it is in
-  const indy = race('indy', [0, -1, 1, 0]);
+  const indy = race('indy', [0, -3, 3, 1]);
   assert.ok(indy.s.finished, 'finished');
-  assert.deepStrictEqual([...new Set(indy.seen)].sort(), [-1, 0, 1], 'every lane flown');
+  assert.deepStrictEqual([...new Set(indy.seen)].sort((a, b) => a - b), [-3, -2, -1, 0, 1, 2, 3], 'every one of the seven lanes flown');
   assert.strictEqual(indy.touched, 0, 'never touched a wall');
   // a course of gates: lanes too, and every gate still taken (it eases back to each gate's middle)
-  const lunar = race('lunar', [1, -1]);
+  const lunar = race('lunar', [3, -3]);
   assert.ok(lunar.s.finished, 'round Lunar Loop as well');
 
   // one lane per push, however long it is held; brake still brakes
@@ -195,13 +198,16 @@ test('engine: in a Grand Prix the autopilot flies the player round any course - 
   assert.strictEqual(s.pilot.lane, 1, 'held right: one lane over');
   for (let k = 0; k < 5; k++) G.autopilotInput(s, { turn: 1, thrust: 0, brake: 0 }, STEP);
   assert.strictEqual(s.pilot.lane, 1);
+  for (let k = 0; k < 6; k++) { G.autopilotInput(s, { turn: 0, thrust: 0, brake: 0 }, STEP); G.autopilotInput(s, { turn: -1, thrust: 0, brake: 0 }, STEP); }
+  assert.strictEqual(s.pilot.lane, -3, 'six pushes left: as far as the innermost lane, no further');
+  // held on, it sweeps on across the lanes: one at once, then another every so often
   G.autopilotInput(s, { turn: 0, thrust: 0, brake: 0 }, STEP);
-  G.autopilotInput(s, { turn: -1, thrust: 0, brake: 0 }, STEP);
+  for (let k = 0; k < 120; k++) G.autopilotInput(s, { turn: 1, thrust: 0, brake: 0 }, STEP);
+  assert.strictEqual(s.pilot.lane, 3, 'a second held right: right across to the outermost');
+  // the lane slider: the lane under the thumb, at once
   G.autopilotInput(s, { turn: 0, thrust: 0, brake: 0 }, STEP);
-  G.autopilotInput(s, { turn: -1, thrust: 0, brake: 0 }, STEP);
-  G.autopilotInput(s, { turn: 0, thrust: 0, brake: 0 }, STEP);
-  G.autopilotInput(s, { turn: -1, thrust: 0, brake: 0 }, STEP);
-  assert.strictEqual(s.pilot.lane, -1, 'three pushes left: as far as the inside lane, no further');
+  const at = (f) => { G.autopilotInput(s, { turn: 0, thrust: 0, brake: 0, slideAt: f }, STEP); return s.pilot.lane; };
+  assert.deepStrictEqual([at(-1), at(-0.4), at(0.15), at(0.7), at(1)], [-3, -1, 0, 2, 3]);
   const braking = G.autopilotInput(s, { turn: 0, thrust: 1, brake: 1 }, STEP);
   assert.deepStrictEqual([braking.thrust, braking.brake], [0, 1]);
   // switched off (the hangar's AUTOPILOT): a Grand Prix is flown by hand, the controls untouched
