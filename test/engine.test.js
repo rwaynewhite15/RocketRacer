@@ -223,6 +223,30 @@ test('engine: in a Grand Prix the autopilot flies the player round any course - 
   assert.strictEqual(f.G.autopilotInput(f.G.ships[0], own, STEP), own);
 });
 
+test('engine: on the walled oval the autopilot keeps to its lane round the turns as well as down the straights, so it picks up what lies in it (the outermost lane\'s power-ups are on the turns)', () => {
+  const human = { name: 'P', team: 0, design: 0, hull: 'sparrow', human: true, stats: [3, 3, 3, 3, 3], levels: {} };
+  for (let lane = -3; lane <= 3; lane++) {
+    const { G, RR } = createEngine();
+    G.startOnline({ server: true, mode: 'race', track: RR.TRACKS.findIndex((t) => t.id === 'indy'), diff: 1, seats: [human] });
+    const s = G.ships[0], L = G.track.lane;
+    for (const o of G.ships) if (o !== s) o.dead = 1e9; // (no rival to take a pickup first, or to be passed)
+    const mine = G.pickups.filter((p) => Math.abs(L.at(p.x, p.y).d - lane * L.gap) < 5), got = new Set();
+    let k = 0, off = 0, n = 0;
+    while (!s.finished && k++ < 120 * 300) {
+      const push = s.pilot && s.pilot.lane !== lane && (k % 60) < 20 ? Math.sign(lane - s.pilot.lane) : 0;
+      s.netInput = G.autopilotInput(s, { turn: push, thrust: 0, brake: 0, fire: false, aim: null, stick: false }, STEP);
+      const on = mine.map((p) => p.on);
+      G.step(STEP);
+      mine.forEach((p, i) => { if (on[i] && !p.on) got.add(i); });
+      const a = L.at(s.x, s.y);
+      if (s.lap >= 2 && Math.abs(a.ty) > 0.2) { off += Math.abs(a.d - lane * L.gap); n++; } // round the turns, settled in the lane
+    }
+    assert.ok(s.finished, 'lane ' + lane + ': finished');
+    assert.ok(off / n < 16, 'lane ' + lane + ': round the turns, on average well within half a lane of it: ' + (off / n).toFixed(1) + ' px');
+    assert.strictEqual(got.size, mine.length, 'lane ' + lane + ': every pickup in the lane collected');
+  }
+});
+
 test('engine: every course\'s weapons switch on and off - off, its weapon crates stay away and nobody is armed; unsaid, as the course was made', () => {
   const { RR } = createEngine();
   for (let t = 0; t < RR.TRACKS.length; t++) {

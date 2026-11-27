@@ -579,9 +579,10 @@
     text(ctx, 'SPD', hx + 6, hy + 16, PAL.silver);
     bar(ctx, hx + 33, hy + 16, 13, Math.hypot(p.vx, p.vy) / 500, p.nitro > 0 ? PAL.yellow : PAL.cyan);
 
-    /* the autopilot: on, and which of its seven lanes it keeps to (inside to outside, as the ship goes) */
-    if (g.autoOn() && !p.finished) {
-      const ay = touch ? hy + 31 : hy - 21, lane = p.pilot ? p.pilot.lane : 0;
+    /* the autopilot: on, and which of its seven lanes it keeps to (inside to outside, as the ship goes);
+       on keys or a pad only (on a touch screen the lane slider shows the lane) */
+    if (g.autoOn() && !p.finished && !touch) {
+      const ay = hy - 21, lane = p.pilot ? p.pilot.lane : 0;
       panel(ctx, hx, ay, 104, 18, PAL.lime);
       text(ctx, 'AUTO', hx + 6, ay + 6, PAL.lime);
       for (let k = -g.LANES; k <= g.LANES; k++) { // the seven lanes, the one flown lit

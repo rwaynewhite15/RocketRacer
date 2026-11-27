@@ -207,11 +207,28 @@ test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HU
     await page.waitForFunction(() => RR.game.state === 'play');
     await page.evaluate(() => T.run(5));
     assert.ok(await page.evaluate(() => Math.hypot(RR.game.player.vx, RR.game.player.vy) > 200), 'flying itself');
-    const lane = async (key) => {
-      await page.keyboard.down(key); await page.waitForTimeout(120); await page.keyboard.up(key); await page.waitForTimeout(60);
-      await page.evaluate(() => T.run(2.5));
-      return page.evaluate(() => { const g = RR.game, p = g.player; return [p.pilot.lane, g.autoShown, Math.round(g.track.lane.at(p.x, p.y).d / g.track.lane.gap) + 0]; }); // (+ 0: no -0)
-    };
+    // the rivals out of the way (they pick their lanes at random, and one alongside would block a lane change)
+    await page.evaluate(() => { for (const s of RR.game.ships) if (s !== RR.game.player) s.dead = 1e9; });
+    // a push of the key, 0.12 s of game time (under the 0.3 s that starts a sweep), whatever the machine's frame rate;
+    // then the ship flies on into the lane, and on to a straight to see where it is (no turn's lean in it); a frame is drawn for the HUD
+    const lane = (key) => page.evaluate(async (key) => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: key }));
+      T.run(0.12);
+      window.dispatchEvent(new KeyboardEvent('keyup', { code: key }));
+      T.run(2.5);
+      const g = RR.game, p = g.player, L = g.track.lane;
+      for (let k = 0; k < 120 * 6 && Math.abs(L.at(p.x, p.y).ty) > 0.01; k++) g.step(1 / 120);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      return [p.pilot.lane, g.autoShown, Math.round(L.at(p.x, p.y).d / L.gap) + 0]; // (+ 0: no -0)
+    }, key);
+    // LEFT held for 0.3 s of game time: how far the rocket turned
+    const turnLeft = () => page.evaluate(() => {
+      const p = RR.game.player, a = p.angle;
+      window.dispatchEvent(new KeyboardEvent('keydown', { code: 'ArrowLeft' }));
+      T.run(0.3);
+      window.dispatchEvent(new KeyboardEvent('keyup', { code: 'ArrowLeft' }));
+      return Math.abs(p.angle - a);
+    });
     assert.deepStrictEqual(await lane('ArrowRight'), [1, 1, 1], 'outside lane: the HUD shows it, and the ship is in it');
     assert.deepStrictEqual(await lane('ArrowLeft'), [0, 0, 0]);
     assert.deepStrictEqual(await lane('ArrowLeft'), [-1, -1, -1], 'inside lane');
@@ -230,9 +247,8 @@ test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HU
     assert.deepStrictEqual(await page.evaluate(() => [RR.game.autopilot, JSON.parse(localStorage.getItem('rocketracer.v1')).autopilot,
       RR.game.ui.some((b) => b.label === 'AUTOPILOT OFF - STEER YOURSELF')]), [false, false, true]);
     await page.evaluate(() => { const g = RR.game; g.closeHangar(); g.modeIdx = 0; g.trackIdx = 0; window.submitted.length = 0; g.begin(); g.state = 'play'; T.run(4.3); });
-    const h0 = await page.evaluate(() => RR.game.player.angle);
-    await page.keyboard.down('ArrowLeft'); await page.waitForTimeout(300); await page.keyboard.up('ArrowLeft');
-    assert.deepStrictEqual(await page.evaluate((a) => [Math.abs(RR.game.player.angle - a) > 0.3, RR.game.autoOn(), RR.game.autoShown, !!RR.game.player.pilot], h0),
+    const turned = await turnLeft();
+    assert.deepStrictEqual(await page.evaluate((t) => [t > 0.3, RR.game.autoOn(), RR.game.autoShown, !!RR.game.player.pilot], turned),
       [true, false, null, false], 'flown by hand');
     await page.evaluate(() => { const g = RR.game; g.player.ai = T.ai(); let k = 0; while (!g.player.finished && k++ < 120 * 200) g.step(1 / 120); });
     assert.deepStrictEqual(await page.evaluate(() => window.submitted), [['lunar', false]], 'the time says: not the autopilot');
@@ -240,9 +256,8 @@ test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HU
 
     // a fight: LEFT turns the rocket, and no lane panel
     await page.evaluate(() => { const g = RR.game; g.modeIdx = 1; g.arenaIdx = 0; g.startRace(false); g.state = 'play'; T.run(4.3); for (const s of g.ships) if (s !== g.player) s.dead = 1e9; });
-    const a0 = await page.evaluate(() => RR.game.player.angle);
-    await page.keyboard.down('ArrowLeft'); await page.waitForTimeout(300); await page.keyboard.up('ArrowLeft');
-    const fight = await page.evaluate((a) => ({ turned: Math.abs(RR.game.player.angle - a) > 0.3, panel: RR.game.autoShown, pilot: !!RR.game.player.pilot }), a0);
+    const t2 = await turnLeft();
+    const fight = await page.evaluate((t) => ({ turned: t > 0.3, panel: RR.game.autoShown, pilot: !!RR.game.player.pilot }), t2);
     assert.deepStrictEqual(fight, { turned: true, panel: null, pilot: false }, 'flown by hand');
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
@@ -265,7 +280,8 @@ test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HU
     const travel = sl.w / 2 - sl.k / 2, mid = sl.x + sl.w / 2;
     const slideTo = async (f) => { await ph.down([Math.round(mid), sl.y]); await ph.move([Math.round(mid + f * travel), sl.y]); await ph.page.waitForTimeout(150); };
     await slideTo(1);
-    assert.deepStrictEqual(await ph.page.evaluate(() => [RR.game.player.pilot.lane, RR.game.laneSlider.lane]), [3, 3], 'to the right end: the outermost lane');
+    assert.deepStrictEqual(await ph.page.evaluate(() => [RR.game.player.pilot.lane, RR.game.laneSlider.lane, RR.game.autoShown]), [3, 3, null],
+      'to the right end: the outermost lane, shown on the slider (no AUTO panel by the hull bar on a touch screen)');
     await ph.move([Math.round(mid - 0.34 * travel), sl.y]); await ph.page.waitForTimeout(150);
     assert.strictEqual(await ph.page.evaluate(() => RR.game.player.pilot.lane), -1, 'a third of the way left: one lane in');
     await ph.up(); await ph.page.waitForTimeout(150);
@@ -1660,8 +1676,12 @@ test('touch: missiles are aimed with a drag on the fire stick and launch on lett
       }
       window.fired.length = 0;
       me.weapon = weapon; me.ammo = ammo; me.cool = 0; me.angle = -Math.PI / 2; me.angVel = 0; me.vx = me.vy = 0;
+      Object.assign(me, { dead: 0, hp: me.maxHp, stun: 0, emp: 0 }); // whole, whatever the fight did before
       const others = g.ships.filter((o) => o !== me);
-      others.forEach((o, i) => { o.vx = o.vy = 0; o.dead = i < 2 ? 0 : 100; });
+      // the two rivals are targets only: held still and unable to fire (a dogfight's rivals have cannons),
+      // so nothing of theirs can hurt the player or set off the player's mine
+      others.forEach((o, i) => { o.vx = o.vy = 0; o.dead = i < 2 ? 0 : 100; o.stun = 1e9; o.spinRate = 0; });
+      for (let i = g.shots.length - 1; i >= 0; i--) if (g.shots[i].owner !== me) g.shots.splice(i, 1);
       Object.assign(others[0], { x: me.x + 230, y: me.y }); // right
       Object.assign(others[1], { x: me.x, y: me.y - 230 }); // ahead
       return { right: g.ships.indexOf(others[0]), ahead: g.ships.indexOf(others[1]) };
