@@ -195,7 +195,7 @@ test('the Indy-Galactic 500\'s giant donuts are drawn pixel for pixel at their s
   } finally { await ctx.close(); }
 });
 
-test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HUD shows which), the time goes to the world table; a fight is flown by hand; on a touch screen no GAS in a race', { skip }, async () => {
+test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HUD shows which), the time goes to the world table; switched off in the hangar, it is flown by hand; a fight always is; on a touch screen no GAS in a race on the autopilot', { skip }, async () => {
   const { page, ctx, errors } = await openGame();
   try {
     await page.evaluate(() => { const g = RR.game; g.modeIdx = 0; g.trackIdx = RR.TRACKS.findIndex((t) => t.id === 'indy'); g.startRace(true); });
@@ -217,6 +217,26 @@ test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HU
     assert.deepStrictEqual(await lane('ArrowLeft'), [-1, -1, -1], 'inside lane');
     await page.evaluate(() => { let k = 0; while (!RR.game.player.finished && k++ < 120 * 200) RR.game.step(1 / 120); });
     assert.deepStrictEqual(await page.evaluate(() => [RR.game.player.finished, window.submitted]), [true, [['indy', true]]], 'the time goes to the world table, saying the autopilot flew it');
+
+    // the hangar's AUTOPILOT, switched off (a tap), and remembered: a Grand Prix flown by hand, LEFT turns the rocket,
+    // and the time says the autopilot did not fly it
+    await page.evaluate(() => { const g = RR.game; g.toTitle(); g.openHangar(); });
+    await page.waitForTimeout(100);
+    const sw = await page.evaluate(() => RR.game.ui.find((b) => b.label === 'AUTOPILOT ON - CHANGE LANES') || null);
+    assert.ok(sw, 'the switch, on the ship page');
+    const box = await page.locator('#hud').boundingBox(), kk = box.width / await page.evaluate(() => RR.game.W);
+    await page.mouse.click(box.x + (sw.x + sw.w / 2) * kk, box.y + (sw.y + sw.h / 2) * kk);
+    await page.waitForTimeout(100);
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.autopilot, JSON.parse(localStorage.getItem('rocketracer.v1')).autopilot,
+      RR.game.ui.some((b) => b.label === 'AUTOPILOT OFF - STEER YOURSELF')]), [false, false, true]);
+    await page.evaluate(() => { const g = RR.game; g.closeHangar(); g.modeIdx = 0; g.trackIdx = 0; window.submitted.length = 0; g.begin(); g.state = 'play'; T.run(4.3); });
+    const h0 = await page.evaluate(() => RR.game.player.angle);
+    await page.keyboard.down('ArrowLeft'); await page.waitForTimeout(300); await page.keyboard.up('ArrowLeft');
+    assert.deepStrictEqual(await page.evaluate((a) => [Math.abs(RR.game.player.angle - a) > 0.3, RR.game.autoOn(), RR.game.autoShown, !!RR.game.player.pilot], h0),
+      [true, false, null, false], 'flown by hand');
+    await page.evaluate(() => { const g = RR.game; g.player.ai = T.ai(); let k = 0; while (!g.player.finished && k++ < 120 * 200) g.step(1 / 120); });
+    assert.deepStrictEqual(await page.evaluate(() => window.submitted), [['lunar', false]], 'the time says: not the autopilot');
+    await page.evaluate(() => { RR.game.autopilot = true; });
 
     // a fight: LEFT turns the rocket, and no lane panel
     await page.evaluate(() => { const g = RR.game; g.modeIdx = 1; g.arenaIdx = 0; g.startRace(false); g.state = 'play'; T.run(4.3); for (const s of g.ships) if (s !== g.player) s.dead = 1e9; });
@@ -248,6 +268,11 @@ test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HU
     await pf.down(v); await pf.up();
     await pf.page.waitForTimeout(100);
     assert.strictEqual(await pf.page.evaluate(() => RR.input.gasLatch), true, 'a fight: GAS is there, and a tap keeps it on');
+    // a Grand Prix with the hangar's AUTOPILOT off: GAS is back
+    await pf.page.evaluate(() => { const g = RR.game; RR.input.gasLatch = false; g.autopilot = false; g.modeIdx = 0; g.begin(); for (let i = 0; i < 120 * 4.3; i++) g.step(1 / 120); });
+    await pf.down(v); await pf.up();
+    await pf.page.waitForTimeout(100);
+    assert.deepStrictEqual(await pf.page.evaluate(() => [RR.game.autoOn(), RR.input.gasLatch]), [false, true], 'autopilot off: GAS in a race too');
     assert.deepStrictEqual(pf.errors, []);
   } finally { await pf.ctx.close(); }
 });
@@ -572,10 +597,16 @@ test('powerup upgrades: events pay credits, credits buy upgrade points, and poin
     assert.deepStrictEqual(await state(), ['power', 150, 0, { shield: 2 }]);
     assert.deepStrictEqual(await page.evaluate(() => RR.game.powerShown.find((x) => x[0] === 'shield')), ['shield', 2], 'the page shows level 2');
     await click('SHIP');
-    // the keyboard: rows run on from the stats into the upgrades; down past FIREPOWER to BUY, then on to EMP
+    // the keyboard: rows run on from the stats into the upgrades; down past FIREPOWER and AUTOPILOT to BUY, then on to EMP
     const press = async (key, n) => { for (let i = 0; i < (n || 1); i++) { await page.keyboard.press(key); await page.waitForTimeout(60); } };
     await press('ArrowDown', 6);
-    assert.strictEqual((await state())[0], 'power', 'past the stats, the page turns to powerups');
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.hangarPage, RR.game.hangarRow, RR.game.autopilot]), ['ship', 6, true], 'AUTOPILOT, after the stats');
+    await press('ArrowRight'); // (switches it)
+    assert.strictEqual(await page.evaluate(() => RR.game.autopilot), false);
+    await press('ArrowLeft');
+    assert.strictEqual(await page.evaluate(() => RR.game.autopilot), true);
+    await press('ArrowDown');
+    assert.strictEqual((await state())[0], 'power', 'past the ship page, the page turns to powerups');
     await press('ArrowRight'); // BUY
     assert.deepStrictEqual(await state(), ['power', 0, 1, { shield: 2 }]);
     await press('ArrowDown', 7); // NITRO SHIELD REPAIR BLASTER MISSILE MINE EMP

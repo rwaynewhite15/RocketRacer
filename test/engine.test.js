@@ -204,6 +204,11 @@ test('engine: in a Grand Prix the autopilot flies the player round any course - 
   assert.strictEqual(s.pilot.lane, -1, 'three pushes left: as far as the inside lane, no further');
   const braking = G.autopilotInput(s, { turn: 0, thrust: 1, brake: 1 }, STEP);
   assert.deepStrictEqual([braking.thrust, braking.brake], [0, 1]);
+  // switched off (the hangar's AUTOPILOT): a Grand Prix is flown by hand, the controls untouched
+  G.autopilot = false;
+  const mine = { turn: -0.6, thrust: 1, brake: 0, fire: false };
+  assert.strictEqual(G.autopilotInput(s, mine, STEP), mine);
+  G.autopilot = true;
   // a fight has no course to follow: the controls are the player's own, turning and all
   const own = { turn: 0.3, thrust: 0.7, brake: 0, fire: false };
   const f = createEngine();

@@ -1054,11 +1054,12 @@
       text(ctx, fight ? 'WIN EVENTS TO EARN STAT POINTS' : 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, fight ? 'AND UNLOCK BETTER SHIPS' : 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
     } else if (W >= 440) {
-      text(ctx, fight ? 'ARROWS  FLY    A / D  AIM    SPACE  FIRE    E  DEFER GATE    P  PAUSE'
+      const lanes = !fight && g.autopilot; // (a Grand Prix on the autopilot: left and right change lane)
+      text(ctx, !lanes ? 'ARROWS  FLY    A / D  AIM    SPACE  FIRE    E  DEFER GATE    P  PAUSE'
         : 'LEFT / RIGHT  LANE    DOWN  BRAKE    A / D  AIM    SPACE  FIRE    E  DEFER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, (fight ? '' : 'P  PAUSE    ') + 'H  HANGAR    Z' + (fight ? ' OR WHEEL' : '') + '  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
+      text(ctx, (lanes ? 'P  PAUSE    ' : '') + 'H  HANGAR    Z' + (lanes ? '' : ' OR WHEEL') + '  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     } else {
-      text(ctx, fight ? 'ARROWS FLY - A/D AIM - SPACE FIRE' : 'LEFT/RIGHT LANE - A/D AIM - SPACE FIRE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, fight || !g.autopilot ? 'ARROWS FLY - A/D AIM - SPACE FIRE' : 'LEFT/RIGHT LANE - A/D AIM - SPACE FIRE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, 'H HANGAR - Z ZOOM - P PAUSE - M MUTE', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     }
   }
@@ -1485,9 +1486,15 @@
       });
       text(ctx, open ? 'POINTS LEFT FOR THIS SHIP: ' + left : 'WIN RACES AND FIGHTS TO UNLOCK', W / 2, ry + 3,
         open && left > 0 ? PAL.yellow : PAL.steel, 1, 'center');
+
+      /* how a Grand Prix is flown: the autopilot (left / right change lane) or by hand (a tap, or LEFT / RIGHT, switches) */
+      const ay = ry + 16, aon = g.hangarRow === ST.length + 1 && !touch;
+      if (aon) mark(ay - 3, 21);
+      button(g, ctx, g.autopilot ? 'AUTOPILOT ON - CHANGE LANES' : 'AUTOPILOT OFF - STEER YOURSELF', x + 10, ay, pw - 20, 15,
+        function () { g.toggleAutopilot(); }, g.autopilot ? PAL.lime : PAL.steel);
     } else {
       /* powerup upgrades: credits buy points, points raise a powerup's level (1-3) */
-      const buyRow = ST.length + 1, by = y + 60, room = g.powerRoom(), full = pr.upts >= room;
+      const buyRow = ST.length + 2, by = y + 60, room = g.powerRoom(), full = pr.upts >= room;
       if (g.hangarRow === buyRow && !touch) mark(by - 5, 17);
       text(ctx, full ? (room ? 'POINTS FOR EVERY LEVEL LEFT' : 'EVERY POWERUP IS MAXED') : 'UPGRADE POINT', x + 10, by,
         full ? PAL.lime : PAL.silver);
