@@ -182,6 +182,7 @@
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
     humansOnly: false, // online: rooms the player opens or quick-matches into race people only, no bots
     arms: {}, // weapons on (true) or off (false) for each course the player has switched: course id -> bool (see weaponsOn)
+    autopilot: true, // a Grand Prix flown by the autopilot (left / right change lane), or by hand: chosen in the hangar
     hist: null, // the player's history: games played, wins, 1st / 2nd / 3rd places, by event (see records.js)
     inset: { l: 0, t: 0, r: 0, b: 0 }, // notch / rounded-corner margins, in game pixels
     // The world layer can zoom; the HUD layer (W x H) keeps its pixel size.
@@ -214,6 +215,7 @@
       if (s.arena >= 0 && s.arena < RR.ARENAS.length) G.arenaIdx = s.arena;
       G.humansOnly = s.humansOnly === true;
       G.arms = cleanArms(s.arms);
+      if (typeof s.autopilot === 'boolean') G.autopilot = s.autopilot;
       loadProgress(s.prog);
       G.hist = RR.records.cleanHistory(s.hist);
     } catch (e) { /* storage unavailable: play without saved records */ }
@@ -234,7 +236,7 @@
         best: G.best, crt: G.crt, muted: RR.audio.muted, autoFull: G.autoFull, controls: G.controls, diff: G.diffIdx, track: G.trackIdx,
         name: G.name, pid: G.pid, zoom: G.zoomOffset,
         mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog, steerSlide: RR.input.steerSlide, controlsV: CONTROLS_V, hist: G.hist,
-        humansOnly: G.humansOnly, arms: G.arms,
+        humansOnly: G.humansOnly, arms: G.arms, autopilot: G.autopilot,
       }));
     } catch (e) { /* ignore */ }
   }
@@ -366,7 +368,7 @@
   G.hangarTab = function (page) {
     if (this.state !== 'hangar' || this.hangarPage === page) return;
     this.hangarPage = page;
-    this.hangarRow = page === 'ship' ? 0 : STATS.length + 1;
+    this.hangarRow = page === 'ship' ? 0 : STATS.length + 2; // (the powerups page starts at BUY)
     RR.audio.sfx('select');
   };
   /** Look at the next ship; an unlocked one becomes the ship you fly. */
@@ -2890,17 +2892,24 @@
   }
 
   /**
-   * The autopilot: in a Grand Prix it flies the player's ship round the
-   * course, keeping to a lane, so the player can fight. LEFT and RIGHT
-   * change lane rather than steer: a push left or right (arrows, the fly
-   * stick or slider, a drag, the pad) moves it a lane over, once per push;
-   * BRAKE still brakes; firing, aiming and the gate deferral stay the
-   * player's. (Fights, with no course to follow, are flown by hand.) Takes
-   * the controls as read and returns the ones to fly with, marked `auto`
-   * (online the server is told, and a time it flew says so on the tables).
+   * The autopilot, chosen in the hangar (on unless the player turns it off):
+   * in a Grand Prix it flies the player's ship round the course, keeping to a
+   * lane, so the player can fight. LEFT and RIGHT change lane rather than
+   * steer: a push left or right (arrows, the fly stick or slider, a drag, the
+   * pad) moves it a lane over, once per push; BRAKE still brakes; firing,
+   * aiming and the gate deferral stay the player's. Off, a Grand Prix is
+   * flown by hand. (Fights, with no course to follow, always are.) Takes the
+   * controls as read and returns the ones to fly with, marked `auto` (online
+   * the server is told, and a time it flew says so on the tables).
    */
   const LANES = 1; // lanes either side of the middle
-  G.autoOn = function () { return this.mode === 'race' && !this.demo; };
+  G.autoOn = function () { return this.autopilot && this.mode === 'race' && !this.demo; };
+  /** The hangar's AUTOPILOT: on or off (remembered). */
+  G.toggleAutopilot = function () {
+    this.autopilot = !this.autopilot;
+    RR.audio.sfx('select');
+    save();
+  };
   G.autopilotInput = function (s, inp, dt) {
     const g = this;
     if (!g.autoOn() || g.phase !== 'race' || s.dead > 0 || s.finished) return inp;
@@ -3054,8 +3063,8 @@
       else if (hit.hangar) g.openHangar();
       else if (hit.online && RR.mp.available()) RR.mp.open();
     } else if (g.state === 'hangar') {
-      // row 0 is the ship, rows 1.. its stats; then (on the powerups page) BUY, and a row per powerup
-      const buy = STATS.length + 1, rows = buy + 1 + POWER.length;
+      // row 0 is the ship, rows 1.. its stats, then AUTOPILOT; then (on the powerups page) BUY, and a row per powerup
+      const auto = STATS.length + 1, buy = auto + 1, rows = buy + 1 + POWER.length;
       if (hit.up || hit.down) {
         g.hangarRow = (g.hangarRow + (hit.up ? rows - 1 : 1)) % rows;
         g.hangarPage = g.hangarRow < buy ? 'ship' : 'power';
@@ -3064,6 +3073,7 @@
       const d = hit.left ? -1 : hit.right ? 1 : 0, row = g.hangarRow;
       if (d) {
         if (row === 0) g.hangarBrowse(d);
+        else if (row === auto) g.toggleAutopilot();
         else if (row < buy) g.spend(g.hangarShip, row - 1, d);
         else if (row === buy) { if (d > 0) g.buyUpgrade(); else RR.audio.sfx('deny'); }
         else g.powerSpend(POWER[row - buy - 1].id, d);
