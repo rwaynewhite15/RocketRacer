@@ -1103,13 +1103,14 @@
    * more), with a small 2 or 3 beside one they had upgraded. Rows from before
    * setups were recorded get a dash. Returns what it drew, for the tests.
    */
-  function setupStrip(ctx, su, x, y) {
+  function setupStrip(ctx, su, x, y, auto) {
     const hull = su && hullOf(su.ship);
     if (!hull) { text(ctx, '-', x + 2, y, PAL.steel); return null; }
     ctx.drawImage(Art.shipMini(hull.design, 0), x, y - 2);
     const used = usedList(su), shown = used.slice(0, used.length > 3 ? 2 : 3), levels = su.levels || {};
-    const out = { ship: hull.id, icons: [], numbers: [], more: used.length - shown.length };
+    const out = { ship: hull.id, auto: !!auto, icons: [], numbers: [], more: used.length - shown.length };
     let ix = x + 11;
+    if (auto) { ctx.drawImage(Art.icons.auto, ix, y - 1); ix += 12; } // flown on the autopilot: a steering wheel
     shown.forEach(function (u) {
       ctx.drawImage(Art.icons[u[0]], ix, y - 1);
       ix += 10;
@@ -1161,12 +1162,12 @@
     const touch = RR.input.touchMode;
     ctx.fillStyle = 'rgba(7,7,26,0.72)';
     ctx.fillRect(0, 0, W, H);
-    const pw = Math.min(W - 8, 240), ph = fight ? 272 : 232, rowH = 12;
+    const pw = Math.min(W - 8, 256), ph = fight ? 272 : 232, rowH = 12; // (room in SETUP for the autopilot's wheel)
     const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
     const cSetup = x + 94, cPlace = x + pw - 92, cDiff = x + pw - 62, cTime = x + pw - 10;
     panel(ctx, x, y, pw, ph, PAL.pink);
     boardHeader(g, ctx, W, x, y, pw, 'WORLD TOP 10', fight ? REC.NAMES[id] : def.name, PAL.pink, PAL.plum);
-    g.boardShown = { id: id, fight: fight, rows: [], lent: [] }; // (what is on screen, for the tests)
+    g.boardShown = { id: id, fight: fight, rows: [], lent: [], auto: [] }; // (what is on screen, for the tests)
 
     const rows = (g.boardRows = []); // what the arrows can pick, in order
     const row = function (ry, rank, e, col) {
@@ -1180,7 +1181,8 @@
       text(ctx, String(rank), x + 22, ry, col, 1, 'right');
       if (e.lent) { text(ctx, '*', x + 24, ry, PAL.gold); g.boardShown.lent.push(rank); } // in a rocket an invite lent
       text(ctx, e.name, x + 30, ry, col);
-      r.strip = setupStrip(ctx, e.setup, cSetup, ry);
+      r.strip = setupStrip(ctx, e.setup, cSetup, ry, e.auto);
+      if (e.auto) g.boardShown.auto.push(rank);
       r.at = [cSetup, ry];
       // finishing place in that race or fight; older race rows were saved without one
       if (e.place >= 1 && e.place <= 6) text(ctx, ORD[e.place - 1], cPlace, ry, col === PAL.yellow ? col : PLACE_COL[e.place - 1]);
@@ -1231,9 +1233,13 @@
     if (fight) { // how the points are made
       REC.explain(id).forEach(function (ln, k) { text(ctx, ln, W / 2, y + 190 + k * 9, PAL.silver, 1, 'center'); });
     }
-    const KEY = 'R ROOKIE  P PILOT  A ACE', anyLent = g.boardShown.lent.length > 0;
-    text(ctx, KEY + (anyLent ? '  * LENT ROCKET' : ''), W / 2, y + ph - 45, PAL.steel, 1, 'center');
-    if (anyLent) text(ctx, '*', W / 2 - RR.textW(KEY + '  * LENT ROCKET') / 2 + RR.textW(KEY + '  ') + 1, y + ph - 45, PAL.gold); // (the key's star, gold too)
+    // the key: the rivals' levels, and (when any row has one) the lent rocket's star and the autopilot's wheel
+    const KEY = 'R ROOKIE  P PILOT  A ACE', anyLent = g.boardShown.lent.length > 0, anyAuto = g.boardShown.auto.length > 0;
+    const lentPart = anyLent ? '  * LENT' : '', line = KEY + lentPart + (anyAuto ? '     AUTO' : ''); // (the wheel sits in the gap)
+    const lx = Math.round(W / 2 - RR.textW(line) / 2), ky = y + ph - 45;
+    text(ctx, line, lx, ky, PAL.steel);
+    if (anyLent) text(ctx, '*', lx + RR.textW(KEY + '  ') + 1, ky, PAL.gold);
+    if (anyAuto) ctx.drawImage(Art.icons.auto, lx + RR.textW(KEY + lentPart + '  ') + 1, ky);
     const bw = 90;
     button(g, ctx, touch ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
       function () { g.closeBoard(); }, PAL.lime);
@@ -1328,10 +1334,11 @@
       if (e.map && !hull) text(ctx, mapName(e.map), tx, y + 88, PAL.steel);
     } else {
       text(ctx, 'TIME ' + fmt(e.time), tx, y + 58, PAL.white);
+      if (e.auto) text(ctx, 'AUTOPILOT', x + pw - 14, y + 58, PAL.lime, 1, 'right'); // flown on the autopilot
       text(ctx, 'BEST LAP ' + fmt(e.lap), tx, y + 68, PAL.silver);
       text(ctx, vs, tx, y + 78, DIFF_COL[e.diff] || PAL.silver);
     }
-    const shown = { ship: hull ? hull.id : null, lent: !!e.lent, stats: null, items: [], numbers: [] };
+    const shown = { ship: hull ? hull.id : null, lent: !!e.lent, auto: !!e.auto, stats: null, items: [], numbers: [] };
     g.cardShown = shown;
 
     if (!hull) {

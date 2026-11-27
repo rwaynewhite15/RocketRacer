@@ -191,6 +191,7 @@ function validateScore(body) {
   if (body.lap < t.minLap || body.lap > body.time) return 'Lap time out of range';
   if (body.lap * t.laps > body.time + 0.05) return 'Lap and race times disagree';
   if (![0, 1, 2].includes(body.diff)) return 'Bad difficulty';
+  if (body.auto != null && typeof body.auto !== 'boolean') return 'Bad auto'; // flown on the autopilot (optional: older pages)
   // finishing place in that race; optional so a page loaded before this existed can still post
   if (body.place != null && !(Number.isInteger(body.place) && body.place >= 1 && body.place <= RACERS)) return 'Bad place';
   // the rocket and powerups behind the time; optional, as pages from before it existed do not send one
@@ -305,6 +306,7 @@ function makeEntry(body, online) {
     setup: cleanSetup(body.setup),
     online: !!online,
     lent,
+    auto: body.auto === true, // the autopilot flew it (as the page, or online the server, says)
     at: Date.now(),
   };
 }

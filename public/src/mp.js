@@ -392,7 +392,7 @@
     }
     if (stepN % 2 === 0 && ws && ws.readyState === 1) { // 60 a second
       seq = next;
-      ws.send(P.encodeInput({ seq: seq, turn: inp.turn, thrust: inp.thrust, brake: inp.brake, fire: inp.fire, aim: inp.aim, stick: inp.stick, defer: wantDefer }));
+      ws.send(P.encodeInput({ seq: seq, turn: inp.turn, thrust: inp.thrust, brake: inp.brake, fire: inp.fire, aim: inp.aim, stick: inp.stick, defer: wantDefer, auto: !!inp.auto }));
       wantDefer = false;
     }
   }

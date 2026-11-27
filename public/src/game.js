@@ -1969,7 +1969,7 @@
     award(g, s.place); // (saves)
     recordGame(g, 'race', s.place, s.place === 1, false);
     RR.net.submit(id, {
-      name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx, place: s.place,
+      name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx, place: s.place, auto: !!s.autoUsed,
       setup: { ship: s.setup.ship, stats: s.setup.stats.slice(), items: Object.assign({}, s.used), levels: s.setup.levels },
     });
   }
@@ -2896,7 +2896,8 @@
    * stick or slider, a drag, the pad) moves it a lane over, once per push;
    * BRAKE still brakes; firing, aiming and the gate deferral stay the
    * player's. (Fights, with no course to follow, are flown by hand.) Takes
-   * the controls as read and returns the ones to fly with.
+   * the controls as read and returns the ones to fly with, marked `auto`
+   * (online the server is told, and a time it flew says so on the tables).
    */
   const LANES = 1; // lanes either side of the middle
   G.autoOn = function () { return this.mode === 'race' && !this.demo; };
@@ -2909,10 +2910,11 @@
     else if (inp.turn > 0.5 && st.held <= 0) { st.held = 1; if (st.lane < LANES) { st.lane++; RR.audio.sfx('select'); } }
     else if (Math.abs(inp.turn) < 0.3) st.held = 0;
     cruise(s, g, st, dt, st.lane * (g.track.lane ? g.track.lane.gap : 70), false);
+    s.autoUsed = true; // (the high score tables say a time was flown on the autopilot)
     const brake = inp.brake > 0;
     return {
       turn: s.input.turn, thrust: brake ? 0 : s.input.thrust, brake: brake ? 1 : s.input.brake,
-      fire: inp.fire, aim: inp.aim, stick: inp.stick, keyAim: inp.keyAim,
+      fire: inp.fire, aim: inp.aim, stick: inp.stick, keyAim: inp.keyAim, auto: true,
     };
   };
 

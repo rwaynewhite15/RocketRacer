@@ -146,7 +146,7 @@ test('weapons on or off for each course: WEAPONS beside RIVALS on the menu (keys
   } finally { await ctx.close(); }
 });
 
-test('a time set in a lent rocket shows as LENT: a gold star by the name on the top 10 (with a key), and LENT on the pilot\'s card', { skip }, async () => {
+test('the top 10 marks a time set in a lent rocket (a gold star by the name, LENT on the card) and one the autopilot flew (a steering wheel in SETUP, AUTOPILOT on the card), with a key', { skip }, async () => {
   // a server of our own, with a lent time recorded the way the multiplayer server records one
   const store = memoryStore();
   const own = http.createServer(createApp(store));
@@ -154,14 +154,16 @@ test('a time set in a lent rocket shows as LENT: a gold star by the name on the 
   const record = onlineRecorder(store, () => {});
   const maxed = { ship: 'phoenix', stats: [10, 10, 10, 10, 10], items: { nitro: 6, missile: 1 }, levels: { nitro: 3, missile: 3, shield: 3 } };
   await record({ track: 'indy', pid: 'lent-pid-0001', name: 'ZED', time: 60.25, lap: 11.5, diff: 1, place: 1, setup: maxed, lent: true });
-  await record({ track: 'indy', pid: 'own-pid-00002', name: 'OWN', time: 66.5, lap: 12.5, diff: 1, place: 1, setup: { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: {}, levels: {} } });
+  await record({ track: 'indy', pid: 'own-pid-00002', name: 'OWN', time: 66.5, lap: 12.5, diff: 1, place: 1, setup: { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: {}, levels: {} }, auto: true });
   const { page, ctx, errors } = await openGame(null, 'http://127.0.0.1:' + own.address().port);
   try {
     await page.waitForFunction(() => RR.net.online);
     await page.evaluate(() => { const g = RR.game; g.modeIdx = 0; g.trackIdx = RR.TRACKS.findIndex((t) => t.id === 'indy'); g.startRace(true); });
     await page.keyboard.press('KeyT');
     await page.waitForFunction(() => RR.game.boardShown && RR.game.boardShown.id === 'indy' && RR.game.boardShown.rows.length === 2, null, { timeout: 5000 });
-    assert.deepStrictEqual(await page.evaluate(() => [RR.game.boardShown.rows.map((r) => r[1]), RR.game.boardShown.lent]), [['ZED', 'OWN'], [1]], 'ZED\'s row is starred, OWN\'s not');
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.boardShown.rows.map((r) => r[1]), RR.game.boardShown.lent, RR.game.boardShown.auto]), [['ZED', 'OWN'], [1], [2]],
+      'ZED\'s row is starred (lent); OWN\'s has the autopilot\'s wheel');
+    assert.deepStrictEqual(await page.evaluate(() => RR.game.boardRows.map((r) => r.strip.auto)), [false, true]);
     // ZED's card: LENT by the rocket, and the stats LENT, MAXED OUT (one key a frame, as a person presses them)
     const press = async (k) => { await page.keyboard.press(k); await page.waitForTimeout(100); };
     await press('ArrowDown');
@@ -172,7 +174,7 @@ test('a time set in a lent rocket shows as LENT: a gold star by the name on the 
     await press('ArrowDown');
     await press('Enter');
     await page.waitForFunction(() => RR.game.boardCard && RR.game.boardCard.e.name === 'OWN', null, { timeout: 5000 });
-    assert.strictEqual(await page.evaluate(() => RR.game.cardShown.lent), false);
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.cardShown.lent, RR.game.cardShown.auto]), [false, true], 'OWN\'s card: the autopilot flew it');
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); own.close(); }
 });
@@ -200,7 +202,7 @@ test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HU
     await page.keyboard.press('KeyG'); // (nothing: there is no switch any more)
     await page.waitForTimeout(80);
     assert.strictEqual(await page.evaluate(() => RR.game.toast), null);
-    await page.evaluate(() => { window.submitted = []; RR.net.submit = function (id) { window.submitted.push(id); }; });
+    await page.evaluate(() => { window.submitted = []; RR.net.submit = function (id, body) { window.submitted.push([id, body.auto]); }; });
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => RR.game.state === 'play');
     await page.evaluate(() => T.run(5));
@@ -214,7 +216,7 @@ test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HU
     assert.deepStrictEqual(await lane('ArrowLeft'), [0, 0, 0]);
     assert.deepStrictEqual(await lane('ArrowLeft'), [-1, -1, -1], 'inside lane');
     await page.evaluate(() => { let k = 0; while (!RR.game.player.finished && k++ < 120 * 200) RR.game.step(1 / 120); });
-    assert.deepStrictEqual(await page.evaluate(() => [RR.game.player.finished, window.submitted]), [true, ['indy']], 'the time goes to the world table');
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.player.finished, window.submitted]), [true, [['indy', true]]], 'the time goes to the world table, saying the autopilot flew it');
 
     // a fight: LEFT turns the rocket, and no lane panel
     await page.evaluate(() => { const g = RR.game; g.modeIdx = 1; g.arenaIdx = 0; g.startRace(false); g.state = 'play'; T.run(4.3); for (const s of g.ships) if (s !== g.player) s.dead = 1e9; });
@@ -453,9 +455,9 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     // each row: the rocket, then the powerups most used first (two and a "+" when there are more than three)
     const strips = await page.evaluate(() => RR.game.boardRows.map((r) => r.strip));
     assert.deepStrictEqual(strips, [
-      { ship: 'phoenix', icons: ['nitro', 'missile'], numbers: [], more: 2 },
-      { ship: 'dart', icons: ['nitro'], numbers: [], more: 0 },
-      { ship: 'sparrow', icons: [], numbers: [], more: 0 },
+      { ship: 'phoenix', auto: false, icons: ['nitro', 'missile'], numbers: [], more: 2 },
+      { ship: 'dart', auto: false, icons: ['nitro'], numbers: [], more: 0 },
+      { ship: 'sparrow', auto: false, icons: [], numbers: [], more: 0 },
       null,
     ]);
 
@@ -471,7 +473,7 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     await click('PILOT 1');
     let s = await state();
     assert.deepStrictEqual(s.card, { rank: 1, name: 'COMET', shown: {
-      ship: 'phoenix', lent: false, stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['defer', 1]], numbers: [],
+      ship: 'phoenix', lent: false, auto: false, stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['defer', 1]], numbers: [],
     } });
     await click('BACK (ENTER)');
     s = await state();
@@ -485,13 +487,13 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     assert.strictEqual((await state()).sel, 3, 'up from the top wraps to the bottom');
     await key('Enter');
     s = await state();
-    assert.deepStrictEqual(s.card, { rank: 4, name: 'OLDIE', shown: { ship: null, lent: false, stats: null, items: [], numbers: [] } }, 'an old row: no setup on record');
+    assert.deepStrictEqual(s.card, { rank: 4, name: 'OLDIE', shown: { ship: null, lent: false, auto: false, stats: null, items: [], numbers: [] } }, 'an old row: no setup on record');
     await key('Escape');
     assert.deepStrictEqual([(await state()).state, (await state()).card], ['board', null]);
     await key('ArrowUp');
     await key('Enter');
     s = await state();
-    assert.deepStrictEqual(s.card, { rank: 3, name: 'ROCKY', shown: { ship: 'sparrow', lent: false, stats: [3, 3, 3, 3, 3], items: [], numbers: [] } }, 'a clean run');
+    assert.deepStrictEqual(s.card, { rank: 3, name: 'ROCKY', shown: { ship: 'sparrow', lent: false, auto: false, stats: [3, 3, 3, 3, 3], items: [], numbers: [] } }, 'a clean run');
     await key('Enter');
     assert.strictEqual((await state()).card, null, 'Enter closes the card too');
     await key('Escape');
@@ -639,8 +641,8 @@ test('powerup upgrades: an upgraded pick-up is stronger, rivals stay at level 1,
     await page.waitForFunction(() => RR.game.boardRows && RR.game.boardRows.length === 2);
     const strips = await page.evaluate(() => RR.game.boardRows.map((x) => x.strip));
     assert.deepStrictEqual(strips, [
-      { ship: 'phoenix', icons: ['missile', 'nitro'], numbers: [['missile', 3]], more: 0 },
-      { ship: 'dart', icons: ['nitro'], numbers: [], more: 0 },
+      { ship: 'phoenix', auto: false, icons: ['missile', 'nitro'], numbers: [['missile', 3]], more: 0 },
+      { ship: 'dart', auto: false, icons: ['nitro'], numbers: [], more: 0 },
     ]);
     // no underline: the line of pixels just below the row icons has no gold in it
     const gold = await page.evaluate(() => {

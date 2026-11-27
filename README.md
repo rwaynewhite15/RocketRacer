@@ -45,8 +45,11 @@ and a second runs online multiplayer over WebSockets.
   touch stick is labelled LANE, and a panel by the hull bar shows AUTOPILOT and which lane it is in.
   It flies every course: on the walled oval it follows the lane; elsewhere it flies gate to gate the
   way the rivals do and eases back to each gate's middle as it comes, so it never misses one.
-  Everyone races this way, so times go to the world tables as before. Online the player's own screen
-  flies it, ahead of the server, like a player. The fights (Dogfight, Battle Royale, Capture the
+  Everyone races this way, so times go to the world tables as before, marked as flown on the
+  autopilot: a small steering wheel after the rocket in the SETUP column (the key under the table
+  says AUTO), and AUTOPILOT beside the time on the pilot's card. Times set before the autopilot
+  have no wheel. Online the player's own screen flies it, ahead of the server, like a player, and
+  its inputs say so, so the server's record says so too. The fights (Dogfight, Battle Royale, Capture the
   Flag) have no course to follow and are flown by hand, as below.
 - **Weapons on or off, for each course**: in a Grand Prix, WEAPONS sits beside RIVALS on the menu
   (UP / DOWN to it, LEFT / RIGHT, or tap ON / OFF). Off, the course's weapon crates stay away, so
@@ -421,12 +424,14 @@ The next pipeline run (or `./deploy.sh`) moves traffic back to the newest revisi
 | `GET /api/config` | `{ mp }`: where online play is (`MP_URL`, or `/ws` with `MP=embedded`), or `null` |
 | online-play service: `GET /api/health`, WebSocket `/ws` | `mp-server.js` (see Online multiplayer). Online times are stored with `online: true` |
 | `GET /api/scores?track=lunar` | a high score table's top 10: a course's race times (`lunar`, `eight`, `gauntlet`, `indy`), or a fight mode's scores (`dogfight`, `royale`, `ctf`). With an `X-Pilot-Id` header it also returns `me`: that player's own row and world rank |
-| `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff, place, setup }`, or a fight: `{ track: mode, pid, name, diff, map, result, setup }` (the server works out the points) |
+| `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff, place, setup, auto }`, or a fight: `{ track: mode, pid, name, diff, map, result, setup }` (the server works out the points) |
 | `GET /api/history?mode=all` | the 10 pilots with the most wins in all events (or one: `race`, `dogfight`, `royale`, `ctf`); with `X-Pilot-Id`, `me`: that player's whole history and rank |
 | `POST /api/history` | one finished game for the player's history: `{ pid, name, mode, place, win }` (no closer than 5 seconds after their last) |
 
 Leaderboard rows live in Firestore at `rocketracer/{track}/scores/{pid}`. A row made in a rocket an
-invite link lent has `lent: true` (set only by the multiplayer server). Each player has an
+invite link lent has `lent: true` (set only by the multiplayer server); a race time the autopilot flew
+has `auto: true` (posted by the page, or online by the multiplayer server from the player's inputs;
+rows from before it existed read false). Each player has an
 anonymous id generated in their browser and keeps one row per course, replaced only by a
 faster time. A row records the time, best lap, rival level, `place` (where the pilot finished
 in that race, 1 to 6) and `setup`: `{ ship, stats, items, levels }`, the rocket flown, its

@@ -272,6 +272,22 @@ test('rows made in a lent rocket are marked lent - only when the multiplayer ser
   } finally { server.close(); }
 });
 
+test('a race time says whether the autopilot flew it', async () => {
+  assert.strictEqual(validateScore(run({ auto: true })), null);
+  assert.strictEqual(validateScore(run({ auto: 'yes' })), 'Bad auto');
+  const { server, base } = await start();
+  try {
+    assert.strictEqual((await post(base, run({ track: 'indy', pid: 'pilot-auto0001', name: 'AUTO', time: 70.5, lap: 13.5, auto: true }))).status, 200);
+    assert.strictEqual((await post(base, run({ track: 'indy', pid: 'pilot-hand0002', name: 'HAND', time: 72.5, lap: 13.9 }))).status, 200); // (a page from before)
+    const rows = (await (await fetch(base + '/api/scores?track=indy')).json()).scores;
+    assert.deepStrictEqual(rows.map((e) => [e.name, e.auto]), [['AUTO', true], ['HAND', false]]);
+  } finally { server.close(); }
+  // and online, as the multiplayer server says
+  const store = memoryStore();
+  await onlineRecorder(store, () => {})({ track: 'lunar', pid: 'pilot-auto0003', name: 'ON', time: 75.5, lap: 24.2, diff: 1, place: 1, auto: true });
+  assert.strictEqual((await store.top('lunar', 10))[0].auto, true);
+});
+
 test('the leaderboard knows every course the game has, with the same number of laps', () => {
   const { TRACKS } = require('../server');
   const { RR } = require('../lib/engine').createEngine();

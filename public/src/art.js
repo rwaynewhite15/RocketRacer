@@ -210,6 +210,15 @@
   /* ---------------------------------------------------- icons and pickups */
 
   const ICONS = {
+    auto: [ // the autopilot flew: a steering wheel (on the high score tables)
+      '..lllll..',
+      '.l.....l.',
+      'l.......l',
+      'llllwllll',
+      'l...l...l',
+      '.l..l..l.',
+      '..lllll..',
+    ],
     nitro: [
       '.....wy..',
       '....wyy..',
