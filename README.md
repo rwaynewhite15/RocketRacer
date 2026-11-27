@@ -47,7 +47,8 @@ and a second runs online multiplayer over WebSockets.
   to the lane under your thumb, and stays there when you let go. On keys or a pad, LEFT and RIGHT move
   it a lane over per push, and on across the lanes while held. BRAKE (DOWN) still brakes; firing,
   aiming (A / D) and the gate deferral stay yours. There is no GAS in a race (the autopilot runs the
-  engine), and a panel by the hull bar shows AUTO and which of the seven lanes it is in.
+  engine). On keys or a pad a panel above the hull bar shows AUTO and which of the seven lanes it is
+  in; on a touch screen the lane slider shows it, so there is no panel.
   It flies every course: on the walled oval it follows the lane; elsewhere it flies gate to gate the
   way the rivals do and eases back to each gate's middle as it comes, so it never misses one.
   Times go to the world tables either way, those the autopilot flew marked: a small steering wheel after the rocket in the SETUP column (the key under the table

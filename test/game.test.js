@@ -280,7 +280,8 @@ test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HU
     const travel = sl.w / 2 - sl.k / 2, mid = sl.x + sl.w / 2;
     const slideTo = async (f) => { await ph.down([Math.round(mid), sl.y]); await ph.move([Math.round(mid + f * travel), sl.y]); await ph.page.waitForTimeout(150); };
     await slideTo(1);
-    assert.deepStrictEqual(await ph.page.evaluate(() => [RR.game.player.pilot.lane, RR.game.laneSlider.lane]), [3, 3], 'to the right end: the outermost lane');
+    assert.deepStrictEqual(await ph.page.evaluate(() => [RR.game.player.pilot.lane, RR.game.laneSlider.lane, RR.game.autoShown]), [3, 3, null],
+      'to the right end: the outermost lane, shown on the slider (no AUTO panel by the hull bar on a touch screen)');
     await ph.move([Math.round(mid - 0.34 * travel), sl.y]); await ph.page.waitForTimeout(150);
     assert.strictEqual(await ph.page.evaluate(() => RR.game.player.pilot.lane), -1, 'a third of the way left: one lane in');
     await ph.up(); await ph.page.waitForTimeout(150);
