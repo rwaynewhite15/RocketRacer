@@ -673,7 +673,7 @@
         if (touch) {
           text(ctx, 'FLY STICK LEFT / RIGHT: CHANGE LANE', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
           text(ctx, 'FIRE STICK: SHOOT THAT WAY', W / 2, hy2 + 20, PAL.cyan, 1, 'center', PAL.ink);
-        } else text(ctx, 'LEFT / RIGHT: CHANGE LANE - SPACE: FIRE - G: FLY IT YOURSELF', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
+        } else text(ctx, 'LEFT / RIGHT: CHANGE LANE - DOWN: BRAKE - SPACE: FIRE', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
       } else if (touch) {
         text(ctx, 'DRAG ANYWHERE: FLY THAT WAY', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
         text(ctx, 'DRAG FARTHER: MORE POWER', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
@@ -699,7 +699,6 @@
       const by = narrow ? cy + 40 : Tp + mm.h + 8;
       button(g, ctx, 'II', Rr - 26, by, 26, 18, function () { g.pause(); });
       button(g, ctx, 'ZOOM', Rr - 64, by, 34, 18, function () { g.zoomCycle(); }, PAL.cyan);
-      if (!g.combat) button(g, ctx, 'AUTO', Rr - 102, by, 34, 18, function () { g.toggleAutopilot(); }, g.autopilot ? PAL.lime : PAL.steel);
     }
   }
 
@@ -798,8 +797,9 @@
       if (on) { ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2); }
     };
 
-    /* steering: the stick bottom left (a tap swaps it for a turning slider), or a drag from anywhere else */
-    const slideMode = RR.input.steerSlide;
+    /* steering: the stick bottom left (a tap swaps it for a turning slider), or a drag from anywhere else;
+     * in a Grand Prix the autopilot flies, and they change lane */
+    const slideMode = RR.input.steerSlide, auto = g.autoOn();
     if (slideMode) {
       const r = L.slide, mid = r.x + r.w / 2, on = !!t.slide, kx = on ? t.slide.x : mid;
       panel(ctx, r.x, r.y, r.w, r.h, on ? PAL.white : PAL.steel);
@@ -814,18 +814,18 @@
       for (let k = -1; k <= 1; k++) ctx.fillRect(Math.round(kx) + k * 4, kyT + 8, 1, kh - 16); // grip lines
       panel(ctx, L.tab.x, L.tab.y, L.tab.w, L.tab.h, PAL.steel);
       text(ctx, 'STICK', L.tab.x + L.tab.w / 2, L.tab.y + 5, PAL.silver, 1, 'center');
-      stickLabel(ctx, { x: L.steer.x, y: L.steer.y, r: r.h / 2 + 4 }, 'SLIDE TO TURN', on ? PAL.white : PAL.silver, H, ins);
+      stickLabel(ctx, { x: L.steer.x, y: L.steer.y, r: r.h / 2 + 4 }, auto ? 'SLIDE: LANE' : 'SLIDE TO TURN', on ? PAL.white : PAL.silver, H, ins);
     } else {
       const steering = t.drag && t.drag.stick ? t.drag : null;
       drawStick(ctx, L.steer, steering && steering.stick, PAL.lime, PAL.steel);
-      stickLabel(ctx, L.steer, 'FLY', steering ? PAL.white : PAL.silver, H, ins);
+      stickLabel(ctx, L.steer, auto ? 'LANE' : 'FLY', steering ? PAL.white : PAL.silver, H, ins);
     }
-    g.meter = t.drag ? drawDrag(ctx, t.gas ? Object.assign({}, t.drag, { power: 1 }) : t.drag, W, H, ins, g.t) : null; // (GAS: full power)
+    // the power a drag asks for (a Grand Prix: none, the autopilot runs the engine)
+    g.meter = t.drag && !auto ? drawDrag(ctx, t.gas ? Object.assign({}, t.drag, { power: 1 }) : t.drag, W, H, ins, g.t) : null; // (GAS: full power)
     if (t.drag || t.slide || t.gas) {
       if (!t.drag || t.drag.power > 0) p.dragged = true;
     } else if (!p.dragged && g.phase === 'race' && Math.floor(g.t * 2) & 1) {
       const hy = (slideMode ? L.tab.y - 6 : L.steer.y - L.steer.r) - 24;
-      const auto = g.autoOn(); // (the autopilot flies: the stick only changes lane)
       text(ctx, auto ? 'LEFT / RIGHT' : slideMode ? 'SLIDE TO TURN' : 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, auto ? 'CHANGES LANE' : slideMode ? 'AND GAS TO GO' : 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
     }
@@ -841,7 +841,7 @@
 
     key(L.brake, t.brake, PAL.steel);
     text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.silver, 1, 'center');
-    if (RR.input.gasLatch) { // tapped on: lit green until tapped again
+    if (auto) { /* a Grand Prix: no GAS (the autopilot runs the engine) */ } else if (RR.input.gasLatch) { // tapped on: lit green until tapped again
       panel(ctx, L.gas.x, L.gas.y, L.gas.w, L.gas.h, PAL.lime);
       ctx.fillStyle = 'rgba(99,199,77,0.35)'; ctx.fillRect(L.gas.x + 1, L.gas.y + 1, L.gas.w - 2, L.gas.h - 2);
       text(ctx, 'GAS', L.gas.x + L.gas.w / 2, L.gas.y + 13, PAL.white, 1, 'center');
@@ -1054,11 +1054,12 @@
       text(ctx, fight ? 'WIN EVENTS TO EARN STAT POINTS' : 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, fight ? 'AND UNLOCK BETTER SHIPS' : 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
     } else if (W >= 440) {
-      text(ctx, 'ARROWS  FLY    A / D  AIM    SPACE  FIRE    E  DEFER GATE    G  AUTOPILOT', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, 'P  PAUSE    H  HANGAR    Z  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
+      text(ctx, fight ? 'ARROWS  FLY    A / D  AIM    SPACE  FIRE    E  DEFER GATE    P  PAUSE'
+        : 'LEFT / RIGHT  LANE    DOWN  BRAKE    A / D  AIM    SPACE  FIRE    E  DEFER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, (fight ? '' : 'P  PAUSE    ') + 'H  HANGAR    Z' + (fight ? ' OR WHEEL' : '') + '  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     } else {
-      text(ctx, 'ARROWS FLY - A/D AIM - SPACE FIRE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, 'H HANGAR - Z ZOOM - P PAUSE - M MUTE - G AUTO', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
+      text(ctx, fight ? 'ARROWS FLY - A/D AIM - SPACE FIRE' : 'LEFT/RIGHT LANE - A/D AIM - SPACE FIRE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'H HANGAR - Z ZOOM - P PAUSE - M MUTE', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     }
   }
 

@@ -37,16 +37,17 @@ and a second runs online multiplayer over WebSockets.
   defer. The start/finish line can't be deferred: every lap is still flown over the line (with
   the line next, the button dims, and pressing it says FLY THE LINE). Rivals can't use it.
 - **Weapons** (red crates, one slot): Blaster, homing Missile, Mine, EMP shockwave.
-- **Autopilot**, a control method for the Grand Prix, so the fight can have your full attention:
-  G (or a click of either gamepad stick, or AUTO on a touch screen, beside ZOOM) switches it on or
-  off, at any time, and it is remembered. It flies the ship round the course, flat out, and keeps
-  to a lane: a push left or right (arrows, the FLY stick or slider, the pad) moves it one lane
-  over, however long it is held; BRAKE still brakes; firing, aiming and the gate deferral stay
-  yours. A panel above the hull bar shows AUTOPILOT and which of the three lanes it is in. It
-  flies every course: on the walled oval it follows the lane; elsewhere it flies gate to gate the
-  way the rivals do and eases back to each gate's middle as it comes, so it never misses one. A
-  race the autopilot flew (any of it) still pays and counts in your history, but its time goes in
-  no world table (online too: the player's screen flies it, and its inputs tell the server).
+- **A Grand Prix is flown by the autopilot**, so the fight has your full attention. It flies the
+  ship round the course, flat out, and keeps to one of three lanes; LEFT and RIGHT change lane
+  instead of steering: a push left or right (arrows, the FLY stick or its slider, a drag, the pad)
+  moves it one lane over, however long it is held. BRAKE (DOWN) still brakes; firing, aiming (A / D)
+  and the gate deferral stay yours. There is no GAS in a race (the autopilot runs the engine), the
+  touch stick is labelled LANE, and a panel by the hull bar shows AUTOPILOT and which lane it is in.
+  It flies every course: on the walled oval it follows the lane; elsewhere it flies gate to gate the
+  way the rivals do and eases back to each gate's middle as it comes, so it never misses one.
+  Everyone races this way, so times go to the world tables as before. Online the player's own screen
+  flies it, ahead of the server, like a player. The fights (Dogfight, Battle Royale, Capture the
+  Flag) have no course to follow and are flown by hand, as below.
 - **Weapons on or off, for each course**: in a Grand Prix, WEAPONS sits beside RIVALS on the menu
   (UP / DOWN to it, LEFT / RIGHT, or tap ON / OFF). Off, the course's weapon crates stay away, so
   nobody (you or a rival) has anything to fire; the power-ups stay. Each course keeps its own
@@ -170,12 +171,12 @@ and a second runs online multiplayer over WebSockets.
 
 | | Keyboard | Phone / tablet |
 |---|---|---|
-| Fly | Arrow keys (turn, thrust, brake/reverse); W and S also thrust and brake | The FLY stick, bottom left (the fire stick's mirror image): the rocket heads the way you push it, and the farther you push, the more engine power (full at the rim). A quick tap on the stick (no push) swaps it for a slider: drag its knob left or right and the rocket turns that way, gently near the middle and harder towards the ends (a full turn only at the very end), and it springs back to the middle when you let go (use GAS to go); the STICK tab above it swaps back, and the choice is remembered. Or touch anywhere else and drag: the rocket heads the way you drag, and the farther you drag from where you started, the more power. A power meter shows the power (above the stick, or by your thumb) and fills to MAX; ease back to throttle down, lift to coast |
+| Grand Prix | LEFT / RIGHT change lane (the autopilot flies); DOWN or S brakes | Push the LANE stick (or slider, or drag) left or right to change lane; BRAKE brakes |
+| Fly (fights) | Arrow keys (turn, thrust, brake/reverse); W and S also thrust and brake | The FLY stick, bottom left (the fire stick's mirror image): the rocket heads the way you push it, and the farther you push, the more engine power (full at the rim). A quick tap on the stick (no push) swaps it for a slider: drag its knob left or right and the rocket turns that way, gently near the middle and harder towards the ends (a full turn only at the very end), and it springs back to the middle when you let go (use GAS to go); the STICK tab above it swaps back, and the choice is remembered. Or touch anywhere else and drag: the rocket heads the way you drag, and the farther you drag from where you started, the more power. A power meter shows the power (above the stick, or by your thumb) and fills to MAX; ease back to throttle down, lift to coast |
 | Fire weapon | Space (or X / J): fires the way the guns point; hold it for the blaster's automatic fire. Hold A or D to swing the guns (blaster, cannon and missiles) left or right, starting from straight ahead, with a dashed line showing the aim; while you hold it the guns keep pointing the same way in space however the rocket turns; let go and they point straight ahead again and the line goes. In the menus A and D still mean left and right | Fire stick. Blaster: automatic, firing all the time you hold the stick, straight ahead until you drag it, then the way you drag. Missiles: hold the stick, drag the way to fire (a faint dashed line shows the aim and corner marks show the rival it will lock onto), and let go to launch; a quick tap launches straight ahead. Mines drop behind and EMP spreads all round as soon as you touch the stick |
 | Brake | Down / S | BRAKE button, to the left of GAS |
-| Gas | Up / W | GAS button, just above the fire stick: full engine power, the way the rocket points (or is being steered), so it speeds up steadily to its top speed. Hold it for gas until you let go, or tap it to keep it on (lit GAS ON) until you tap it again; a hold also turns a tapped-on GAS off. Every race starts with it off |
+| Gas (fights) | Up / W | GAS button, just above the fire stick (not in a Grand Prix, where the autopilot runs the engine): full engine power, the way the rocket points (or is being steered), so it speeds up steadily to its top speed. Hold it for gas until you let go, or tap it to keep it on (lit GAS ON) until you tap it again; a hold also turns a tapped-on GAS off. Every race starts with it off |
 | Gate deferral | E or Shift | DEFER button (appears while you hold one) |
-| Autopilot (Grand Prix) | G switches it on or off; then LEFT / RIGHT change lane, DOWN brakes, Space fires | AUTO button, beside ZOOM; then push the FLY stick left or right to change lane |
 | Zoom | Z cycles normal / wide / close; + and - or the mouse wheel step through every level | ZOOM button |
 | Pause | P or Esc | II button |
 | Move the controls | | Pause > MOVE CONTROLS: drag the FLY and fire sticks and the buttons where you like (kept separately for sideways and upright; RESET restores them). GAS, BRAKE and DEFER follow the fire stick wherever it goes, unless you move them yourself |

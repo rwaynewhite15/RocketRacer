@@ -19,7 +19,7 @@
     VERSION: 6, // 2: the gate deferral replaced the do-over; 3: capture the flag; 4: two or three teams;
     // 5: a fourth course (rooms name courses by number), rooms for humans only, and a course's weapons
     // on or off (every screen must build the same pickups: snapshots name them by number);
-    // 6: the Indy-Galactic 500 rebuilt round a walled lane (its gates and pickups), and inputs say when the autopilot flew
+    // 6: the Indy-Galactic 500 rebuilt round a walled lane (its gates and pickups)
     INPUT: 1, SNAP: 2, // first byte of a binary message
     WEAPONS: [null, 'blaster', 'missile', 'mine', 'emp'],
     ITEMS: ['nitro', 'shield', 'repair', 'defer', 'blaster', 'missile', 'mine', 'emp', 'reflag'],
@@ -29,7 +29,7 @@
 
   /* ------------------------------------------------------------- input */
 
-  /** { seq, turn -1..1, thrust 0..1, brake, fire, stick, aim (radians) | null, defer, auto } -> 8 bytes */
+  /** { seq, turn -1..1, thrust 0..1, brake, fire, stick, aim (radians) | null, defer } -> 8 bytes */
   P.encodeInput = function (i) {
     const b = new ArrayBuffer(8), v = new DataView(b);
     v.setUint8(0, P.INPUT);
@@ -37,7 +37,7 @@
     v.setInt8(3, Math.round(clampN(i.turn, -1, 1) * 127));
     v.setUint8(4, Math.round(clampN(i.thrust, 0, 1) * 255));
     const aim = i.aim == null || !isFinite(i.aim) ? null : Math.atan2(Math.sin(i.aim), Math.cos(i.aim));
-    v.setUint8(5, (i.brake ? 1 : 0) | (i.fire ? 2 : 0) | (i.stick ? 4 : 0) | (aim != null ? 8 : 0) | (i.defer ? 16 : 0) | (i.auto ? 32 : 0));
+    v.setUint8(5, (i.brake ? 1 : 0) | (i.fire ? 2 : 0) | (i.stick ? 4 : 0) | (aim != null ? 8 : 0) | (i.defer ? 16 : 0));
     v.setInt16(6, aim == null ? 0 : Math.round((aim / PI) * 32767), true);
     return b;
   };
@@ -53,7 +53,6 @@
       brake: f & 1 ? 1 : 0, fire: !!(f & 2), stick: !!(f & 4),
       aim: f & 8 ? (v.getInt16(6, true) / 32767) * PI : null,
       defer: !!(f & 16), // spend a gate deferral
-      auto: !!(f & 32), // the autopilot flew this step (see G.autopilotInput)
     };
   };
 

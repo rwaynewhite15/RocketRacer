@@ -181,7 +181,6 @@
     controls: {},
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
     humansOnly: false, // online: rooms the player opens or quick-matches into race people only, no bots
-    autopilot: false, // the autopilot control method: in a Grand Prix the ship flies itself, the player changes lanes and fights
     arms: {}, // weapons on (true) or off (false) for each course the player has switched: course id -> bool (see weaponsOn)
     hist: null, // the player's history: games played, wins, 1st / 2nd / 3rd places, by event (see records.js)
     inset: { l: 0, t: 0, r: 0, b: 0 }, // notch / rounded-corner margins, in game pixels
@@ -214,7 +213,6 @@
       if (s.mode >= 0 && s.mode < MODES.length) G.modeIdx = s.mode;
       if (s.arena >= 0 && s.arena < RR.ARENAS.length) G.arenaIdx = s.arena;
       G.humansOnly = s.humansOnly === true;
-      G.autopilot = s.autopilot === true;
       G.arms = cleanArms(s.arms);
       loadProgress(s.prog);
       G.hist = RR.records.cleanHistory(s.hist);
@@ -236,7 +234,7 @@
         best: G.best, crt: G.crt, muted: RR.audio.muted, autoFull: G.autoFull, controls: G.controls, diff: G.diffIdx, track: G.trackIdx,
         name: G.name, pid: G.pid, zoom: G.zoomOffset,
         mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog, steerSlide: RR.input.steerSlide, controlsV: CONTROLS_V, hist: G.hist,
-        humansOnly: G.humansOnly, arms: G.arms, autopilot: G.autopilot,
+        humansOnly: G.humansOnly, arms: G.arms,
       }));
     } catch (e) { /* ignore */ }
   }
@@ -1970,7 +1968,6 @@
     g.best[id] = rec;
     award(g, s.place); // (saves)
     recordGame(g, 'race', s.place, s.place === 1, false);
-    if (s.autoUsed) return; // the autopilot flew it: no world table for this one
     RR.net.submit(id, {
       name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx, place: s.place,
       setup: { ship: s.setup.ship, stats: s.setup.stats.slice(), items: Object.assign({}, s.used), levels: s.setup.levels },
@@ -2893,16 +2890,16 @@
   }
 
   /**
-   * The autopilot, a control method (G, the pad's stick buttons, or AUTO on a
-   * touch screen; remembered): in a Grand Prix it flies the player's ship
-   * round the course, keeping to a lane, so the player can fight. A push left
-   * or right (arrows, the fly stick or slider, the pad) moves it a lane over,
-   * once per push; BRAKE still brakes; firing, aiming and the gate deferral
-   * stay the player's. Takes the controls as read and returns the ones to fly
-   * with, marked `auto` (a race flown so goes in no world table).
+   * The autopilot: in a Grand Prix it flies the player's ship round the
+   * course, keeping to a lane, so the player can fight. LEFT and RIGHT
+   * change lane rather than steer: a push left or right (arrows, the fly
+   * stick or slider, a drag, the pad) moves it a lane over, once per push;
+   * BRAKE still brakes; firing, aiming and the gate deferral stay the
+   * player's. (Fights, with no course to follow, are flown by hand.) Takes
+   * the controls as read and returns the ones to fly with.
    */
   const LANES = 1; // lanes either side of the middle
-  G.autoOn = function () { return this.autopilot && this.mode === 'race' && !this.demo; };
+  G.autoOn = function () { return this.mode === 'race' && !this.demo; };
   G.autopilotInput = function (s, inp, dt) {
     const g = this;
     if (!g.autoOn() || g.phase !== 'race' || s.dead > 0 || s.finished) return inp;
@@ -2912,19 +2909,11 @@
     else if (inp.turn > 0.5 && st.held <= 0) { st.held = 1; if (st.lane < LANES) { st.lane++; RR.audio.sfx('select'); } }
     else if (Math.abs(inp.turn) < 0.3) st.held = 0;
     cruise(s, g, st, dt, st.lane * (g.track.lane ? g.track.lane.gap : 70), false);
-    s.autoUsed = true;
     const brake = inp.brake > 0;
     return {
       turn: s.input.turn, thrust: brake ? 0 : s.input.thrust, brake: brake ? 1 : s.input.brake,
-      fire: inp.fire, aim: inp.aim, stick: inp.stick, keyAim: inp.keyAim, auto: true,
+      fire: inp.fire, aim: inp.aim, stick: inp.stick, keyAim: inp.keyAim,
     };
-  };
-  /** AUTOPILOT on or off (remembered). */
-  G.toggleAutopilot = function () {
-    this.autopilot = !this.autopilot;
-    toast(this, this.autopilot ? 'AUTOPILOT ON' : 'AUTOPILOT OFF');
-    RR.audio.sfx('select');
-    save();
   };
 
   /* --------------------------------------------------------- fx + camera */
@@ -2970,7 +2959,8 @@
       if (s.ai) think(s, g, dt);
       else if (s.remote) continue; // online: another player's ship, drawn from the server's snapshots
       else {
-        const inp = s.netInput || g.autopilotInput(s, RR.input.read(s), dt); // (online, a player's screen has done that)
+        const own = !s.netInput && RR.input.read(s); // (online, a player's screen has flown the autopilot already)
+        const inp = s.netInput || (s === g.player ? g.autopilotInput(s, own, dt) : own);
         s.input.turn = inp.turn; s.input.thrust = inp.thrust; s.input.brake = inp.brake; s.input.fire = inp.fire;
         s.input.aim = inp.aim; s.input.stick = inp.stick; s.input.keyAim = !!inp.keyAim;
       }
@@ -3035,7 +3025,6 @@
     const I = RR.input, hit = I.hit;
     if (g.state !== 'play') { if (hit.aimL) hit.left = true; if (hit.aimR) hit.right = true; } // A / D aim in a race; elsewhere, left / right
     if (hit.mute) g.toggleSound();
-    if (hit.auto && !(g.state === 'play' && g.combat)) g.toggleAutopilot(); // (a Grand Prix's: a fight has no course to fly)
     if (hit.crt) { g.crt = !g.crt; applyCrt(); save(); }
     if (hit.zoomIn) g.zoomBy(1);
     if (hit.zoomOut) g.zoomBy(-1);
@@ -3117,7 +3106,9 @@
   /** Called once per animation frame with the real elapsed time. */
   G.frame = function (dt) {
     const g = this, I = RR.input;
-    I.updateTouch(g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null, g.ui);
+    const TL = g.state === 'play' && I.touchMode ? RR.touchLayout(g.W, g.H, g.inset) : null;
+    if (TL && g.autoOn()) TL.noGas = true; // (a Grand Prix: the autopilot runs the engine, so no GAS)
+    I.updateTouch(TL, g.ui);
     if (g.state === 'play') I.updateAim(dt, g.player);
     if (g.state === 'layout') dragControls(g);
     if (!I.typing) { I.pollPad(); handleUI(g); }

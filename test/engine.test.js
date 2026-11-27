@@ -155,12 +155,11 @@ test('engine: the Indy-Galactic 500 is a walled oval - three giant donuts (the f
   assert.deepStrictEqual([fast.wrecks, fast.stuck], [0, 0], 'nobody wrecked or stuck on the oval');
 });
 
-test('engine: the autopilot flies the player round any course, a lane over for each push left or right, while they fire and brake', () => {
+test('engine: in a Grand Prix the autopilot flies the player round any course - left and right change lane, one per push - while they fire and brake; a fight is flown by hand', () => {
   const human = { name: 'P', team: 0, design: 0, hull: 'sparrow', human: true, stats: [3, 3, 3, 3, 3], levels: {} };
   const race = (id, lanes) => {
     const { G, RR } = createEngine();
     G.startOnline({ server: true, mode: 'race', track: RR.TRACKS.findIndex((t) => t.id === id), diff: 1, seats: [human] });
-    G.autopilot = true;
     const s = G.ships[0], L = G.track.lane, seen = [];
     let k = 0, push = 0, touched = 0;
     while (!s.finished && k++ < 120 * 300) {
@@ -169,7 +168,7 @@ test('engine: the autopilot flies the player round any course, a lane over for e
       push = s.pilot && s.pilot.lane !== want && (k % 60) < 20 ? Math.sign(want - s.pilot.lane) : 0;
       const inp = G.autopilotInput(s, { turn: push, thrust: 0, brake: 0, fire: true, aim: 1.25, stick: false }, STEP);
       if (G.phase === 'race' && !s.finished) {
-        assert.ok(inp.auto && inp.fire && inp.aim === 1.25, 'firing and aiming stay the player\'s');
+        assert.ok(inp.fire && inp.aim === 1.25, 'firing and aiming stay the player\'s');
         if (s.pilot) seen.push(s.pilot.lane);
       }
       s.netInput = inp;
@@ -183,15 +182,13 @@ test('engine: the autopilot flies the player round any course, a lane over for e
   assert.ok(indy.s.finished, 'finished');
   assert.deepStrictEqual([...new Set(indy.seen)].sort(), [-1, 0, 1], 'every lane flown');
   assert.strictEqual(indy.touched, 0, 'never touched a wall');
-  assert.ok(indy.s.autoUsed, 'marked: the autopilot flew');
   // a course of gates: lanes too, and every gate still taken (it eases back to each gate's middle)
   const lunar = race('lunar', [1, -1]);
   assert.ok(lunar.s.finished, 'round Lunar Loop as well');
 
-  // one lane per push, however long it is held; brake still brakes; switched off, the controls are the player's
+  // one lane per push, however long it is held; brake still brakes
   const { G, RR } = createEngine();
   G.startOnline({ server: true, mode: 'race', track: RR.TRACKS.findIndex((t) => t.id === 'indy'), diff: 1, seats: [human] });
-  G.autopilot = true;
   run(G, 4.2);
   const s = G.ships[0];
   for (let k = 0; k < 30; k++) G.autopilotInput(s, { turn: 1, thrust: 0, brake: 0 }, STEP);
@@ -207,13 +204,10 @@ test('engine: the autopilot flies the player round any course, a lane over for e
   assert.strictEqual(s.pilot.lane, -1, 'three pushes left: as far as the inside lane, no further');
   const braking = G.autopilotInput(s, { turn: 0, thrust: 1, brake: 1 }, STEP);
   assert.deepStrictEqual([braking.thrust, braking.brake], [0, 1]);
-  G.autopilot = false;
+  // a fight has no course to follow: the controls are the player's own, turning and all
   const own = { turn: 0.3, thrust: 0.7, brake: 0, fire: false };
-  assert.strictEqual(G.autopilotInput(s, own, STEP), own, 'off: untouched');
-  // a fight has no course to fly
   const f = createEngine();
   f.G.startOnline({ server: true, mode: 'dogfight', track: 0, diff: 1, seats: [human] });
-  f.G.autopilot = true;
   run(f.G, 4.2);
   assert.strictEqual(f.G.autopilotInput(f.G.ships[0], own, STEP), own);
 });

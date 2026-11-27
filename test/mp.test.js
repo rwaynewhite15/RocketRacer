@@ -234,34 +234,6 @@ test('mp: what a pilot does in a lent rocket is marked LENT - in the results and
   } finally { b.ws.close(); s.close(); }
 });
 
-test('mp: a race flown on the autopilot online - the inputs say so, and its time goes in no world table', async () => {
-  // the flag travels in the input's spare bit
-  assert.strictEqual(P.decodeInput(P.encodeInput({ seq: 1, turn: 0.2, thrust: 1, auto: true })).auto, true);
-  assert.strictEqual(P.decodeInput(P.encodeInput({ seq: 1, turn: 0.2, thrust: 1 })).auto, false);
-  const posted = [];
-  const s = await serve({ speed: 40, resultsMs: 400, post: (body) => posted.push(body) });
-  const a = player(s.url, 'ALICE'), b = player(s.url, 'BOB');
-  try {
-    await a.hello('alice-pid-1'); await b.hello('bob-pid-22');
-    a.send({ t: 'create', mode: 'race', track: 0, diff: 1, setup });
-    const ra = await a.wait(isRoom());
-    b.send({ t: 'join', code: ra.room.code, setup });
-    await b.wait(isRoom((m) => m.room.humans.length === 2));
-    a.send({ t: 'ready', on: true }); b.send({ t: 'ready', on: true });
-    await a.wait((m) => m.t === 'start');
-    const G = [...s.hub.rooms][0].engine.G;
-    while (G.phase !== 'race') await sleep(20);
-    a.input({ seq: 1, thrust: 1, auto: true }); // Alice's screen: the autopilot flew this step
-    b.input({ seq: 1, thrust: 1 });
-    await sleep(60);
-    assert.deepStrictEqual([G.ships[0].autoUsed, !!G.ships[1].autoUsed], [true, false]);
-    // both get an autopilot's brain on their controls to finish (a stand-in for flying; neither counts as a bot's)
-    for (const k of [0, 1]) { G.botTakeover(G.ships[k], true); G.ships[k].botFlown = false; }
-    await a.wait((m) => m.t === 'results', 20000);
-    assert.deepStrictEqual(posted.map((p) => p.name), ['BOB'], 'only Bob, who flew himself, is posted');
-  } finally { a.ws.close(); b.ws.close(); s.close(); }
-});
-
 test('mp: a race room keeps its opener\'s weapons choice; everyone\'s race is built with it', async () => {
   const s = await serve();
   const a = player(s.url, 'ALICE'), b = player(s.url, 'BOB'), c = player(s.url, 'CAROL');

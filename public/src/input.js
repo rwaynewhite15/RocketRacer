@@ -75,7 +75,6 @@
     Escape: 'pause', KeyP: 'pause',
     KeyM: 'mute', KeyC: 'crt', KeyR: 'restart', KeyQ: 'quit',
     KeyN: 'name', KeyT: 'board', KeyY: 'history', KeyF: 'full', KeyH: 'hangar', KeyO: 'online', KeyL: 'link',
-    KeyG: 'auto', // the autopilot on or off
     KeyE: 'defer', ShiftLeft: 'defer', ShiftRight: 'defer', // gate deferral
     KeyZ: 'zoom', Equal: 'zoomIn', NumpadAdd: 'zoomIn', Minus: 'zoomOut', NumpadSubtract: 'zoomOut',
   };
@@ -300,7 +299,7 @@
   /** What a finger that lands at x, y works: a control's name, 'none' (an on-screen button) or 'steer' (a drag). */
   function classify(x, y, L, buttons) {
     if (inside(x, y, L.brake, 6)) return 'brake';
-    if (inside(x, y, L.gas, 6)) return 'gas';
+    if (!L.noGas && inside(x, y, L.gas, 6)) return 'gas'; // (no GAS in a Grand Prix: the autopilot runs the engine)
     if (near(x, y, L.fire)) return 'fire';
     if (I.steerSlide) {
       if (inside(x, y, L.tab, 4)) return 'tab';
@@ -362,7 +361,7 @@
   function btn(p, i) { return !!(p.buttons[i] && p.buttons[i].pressed); }
 
   /** Gamepad buttons that act once per press, folded into the same `hit` flags as keys. */
-  const PAD_ACTIONS = { defer: [3, 4], zoom: [8], pause: [9], auto: [10, 11] }; // (auto: a click of either stick)
+  const PAD_ACTIONS = { defer: [3, 4], zoom: [8], pause: [9] };
   const padWas = {};
   I.pollPad = function () {
     const p = pad();
