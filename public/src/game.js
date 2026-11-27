@@ -181,6 +181,7 @@
     controls: {},
     name: '', pid: '', // pilot name + anonymous id for the online leaderboard
     humansOnly: false, // online: rooms the player opens or quick-matches into race people only, no bots
+    autopilot: false, // the autopilot control method: in a Grand Prix the ship flies itself, the player changes lanes and fights
     arms: {}, // weapons on (true) or off (false) for each course the player has switched: course id -> bool (see weaponsOn)
     hist: null, // the player's history: games played, wins, 1st / 2nd / 3rd places, by event (see records.js)
     inset: { l: 0, t: 0, r: 0, b: 0 }, // notch / rounded-corner margins, in game pixels
@@ -213,6 +214,7 @@
       if (s.mode >= 0 && s.mode < MODES.length) G.modeIdx = s.mode;
       if (s.arena >= 0 && s.arena < RR.ARENAS.length) G.arenaIdx = s.arena;
       G.humansOnly = s.humansOnly === true;
+      G.autopilot = s.autopilot === true;
       G.arms = cleanArms(s.arms);
       loadProgress(s.prog);
       G.hist = RR.records.cleanHistory(s.hist);
@@ -234,7 +236,7 @@
         best: G.best, crt: G.crt, muted: RR.audio.muted, autoFull: G.autoFull, controls: G.controls, diff: G.diffIdx, track: G.trackIdx,
         name: G.name, pid: G.pid, zoom: G.zoomOffset,
         mode: G.modeIdx, arena: G.arenaIdx, prog: G.prog, steerSlide: RR.input.steerSlide, controlsV: CONTROLS_V, hist: G.hist,
-        humansOnly: G.humansOnly, arms: G.arms,
+        humansOnly: G.humansOnly, arms: G.arms, autopilot: G.autopilot,
       }));
     } catch (e) { /* ignore */ }
   }
@@ -412,6 +414,7 @@
       aggro: diff.aggro, rubber: diff.rubber, margin: Math.random() * 14,
       ox: 0, oy: 0, cpFor: -1, pick: null, pickT: 0,
       stuck: 0, stuckN: 0, rev: 0, revTurn: 1, fireT: 1.5 + Math.random() * 2,
+      lane: Math.floor(Math.random() * 3) - 1, laneT: 0, // a walled lane: the lane it keeps to (see pickLane)
       tgt: null, tgtT: 0, wobble: (1.02 - diff.speed) * 0.8, // combat: who to chase, how shaky the aim
     };
   }
@@ -655,9 +658,7 @@
     // a hit flashes a ship white for a moment: snapshots start the flash, this ends it (every ship, own included)
     for (const s of g.ships) if (s.hitFlash > 0) s.hitFlash -= dt;
     if (!g.combat && g.phase === 'race' && p.dead <= 0 && !p.finished) { // "wrong way"
-      const cp = g.track.cps[p.nextCp], dx = cp.x - p.x, dy = cp.y - p.y;
-      const sp = Math.hypot(p.vx, p.vy), d = Math.hypot(dx, dy) || 1;
-      if (sp > 90 && (p.vx * dx + p.vy * dy) / (sp * d) < -0.45) p.wrong += dt;
+      if (Math.hypot(p.vx, p.vy) > 90 && headingOn(g, p) < -0.45) p.wrong += dt;
       else p.wrong = Math.max(0, p.wrong - dt * 3);
     }
     if (p.gone && (!g.spec || g.spec.gone)) g.spec = g.order.find(function (s) { return !s.gone; }) || null;
@@ -1171,6 +1172,9 @@
     if (g.combat) {
       const sp = arenaSpawn(s, g);
       s.x = sp.x; s.y = sp.y; s.angle = sp.a;
+    } else if (g.track.lane && s.cpCount > 0) { // a walled lane: back on it where the wreck was, facing the way round
+      const L = g.track.lane, a = L.at(s.x, s.y), p = L.point(a.s, clamp(a.d, -L.gap, L.gap));
+      s.x = p.x; s.y = p.y; s.angle = Math.atan2(p.ty, p.tx);
     } else if (s.cpCount > 0) {
       const c = cps[(s.nextCp + N - 1) % N], n = cps[s.nextCp];
       s.x = c.x; s.y = c.y; s.angle = Math.atan2(n.y - c.y, n.x - c.x);
@@ -1531,11 +1535,11 @@
   }
 
   function updateShots(g, dt) {
-    const shots = g.shots, planets = g.track.planets;
+    const shots = g.shots, planets = g.track.planets, lane = g.track.lane;
     for (let i = shots.length - 1; i >= 0; i--) {
       const b = shots[i];
       b.life -= dt;
-      let dead = b.life <= 0, hitShip = null, hitRock = null;
+      let dead = b.life <= 0, hitShip = null, hitRock = null, hitWall = false;
 
       if (b.type === 'missile') {
         if (b.target && b.target.dead > 0) b.target = null;
@@ -1562,6 +1566,7 @@
           if (dx * dx + dy * dy < p.r * p.r) { dead = true; break; }
         }
       }
+      if (!dead && lane && Math.abs(lane.at(b.x, b.y).d) > lane.w / 2) { dead = true; hitWall = true; } // a lane's walls stop shots
       if (!dead) {
         for (const a of g.rocks) {
           if (a.dead) continue;
@@ -1595,6 +1600,7 @@
       } else if (b.life > 0) {
         if (hitShip) { zap(hitShip, g, b.dmg, 0, b.vx * 0.1, b.vy * 0.1, b.owner); snd(g, 'hit', b.x, b.y); }
         else if (hitRock) damageRock(g, hitRock, 1);
+        else if (hitWall) { burst(g, b.x, b.y, 5, 90, FX.rock, 0.35); snd(g, 'rock', b.x, b.y, 0.4); }
         burst(g, b.x, b.y, 6, 110, FX.spark, 0.3);
       }
     }
@@ -1845,6 +1851,27 @@
       else if (s.y > b.y1) { s.vy -= (s.y - b.y1) * 5 * dt; s.out = true; }
     }
 
+    // a walled lane (see tracks.js): its walls are its edges, exactly; a ship that reaches one bounces off it
+    const lane = g.track.lane;
+    if (lane) {
+      const at = lane.at(s.x, s.y), lim = lane.w / 2 - C.SHIP_R;
+      if (Math.abs(at.d) > lim) {
+        const side = at.d > 0 ? 1 : -1, wx = at.nx * side, wy = at.ny * side; // (into the wall)
+        const over = Math.abs(at.d) - lim, vn = s.vx * wx + s.vy * wy;
+        s.x -= wx * over; s.y -= wy * over;
+        if (vn > 0) {
+          s.vx -= 1.4 * vn * wx; s.vy -= 1.4 * vn * wy;
+          s.vx *= 0.96; s.vy *= 0.96;
+          if (vn > 60) { // a scrape is free; a hard knock dents the hull
+            if (vn > 110) hurt(s, g, (vn - 110) * 0.08);
+            burst(g, s.x + wx * C.SHIP_R, s.y + wy * C.SHIP_R, 8, 110, FX.rock, 0.4);
+            snd(g, 'bump', s.x, s.y, clamp(vn / 260, 0.25, 1));
+            if (s === g.player && !g.demo) { g.shake = Math.max(g.shake, clamp(vn / 50, 1, 6)); RR.input.buzz(25); }
+          }
+        }
+      }
+    }
+
     // planets are solid
     for (const p of planets) {
       const dx = s.x - p.x, dy = s.y - p.y, min = p.r + C.SHIP_R, d2 = dx * dx + dy * dy;
@@ -1943,6 +1970,7 @@
     g.best[id] = rec;
     award(g, s.place); // (saves)
     recordGame(g, 'race', s.place, s.place === 1, false);
+    if (s.autoUsed) return; // the autopilot flew it: no world table for this one
     RR.net.submit(id, {
       name: g.name, pid: g.pid, time: s.finishTime, lap: s.bestLap, diff: g.diffIdx, place: s.place,
       setup: { ship: s.setup.ship, stats: s.setup.stats.slice(), items: Object.assign({}, s.used), levels: s.setup.levels },
@@ -1991,9 +2019,14 @@
   }
 
   function rank(g) {
-    const cps = g.track.cps;
+    const cps = g.track.cps, lane = g.track.lane;
     for (const s of g.ships) {
       const cp = cps[s.nextCp];
+      if (lane) { // a walled lane: how far along it from the last gate to the next (its gates are far apart)
+        const from = cps[(s.nextCp + cps.length - 1) % cps.length].s, wrap = function (v) { return ((v % lane.lap) + lane.lap) % lane.lap; };
+        s.progress = s.cpCount + clamp(wrap(lane.at(s.x, s.y).s - from) / (wrap(cp.s - from) || lane.lap), 0, 1) * 0.999;
+        continue;
+      }
       const seg = s.cpCount === 0 ? 420 : cp.segLen;
       s.progress = s.cpCount + (1 - clamp(Math.hypot(cp.x - s.x, cp.y - s.y) / seg, 0, 1)) * 0.999;
     }
@@ -2749,7 +2782,7 @@
   }
 
   function think(s, g, dt) {
-    const ai = s.ai, inp = s.input, tr = g.track, cps = tr.cps, N = cps.length;
+    const ai = s.ai, inp = s.input, tr = g.track;
     inp.turn = 0; inp.thrust = 0; inp.brake = 0; inp.fire = false; inp.aim = null;
     if (g.phase !== 'race' || s.dead > 0) return;
     if (g.ctf) { thinkCTF(s, g, dt); return; }
@@ -2761,54 +2794,138 @@
       s.speedMult = ai.skill * (1 - ai.rubber * clamp((s.progress - ref.progress) / 1.5, -1, 1));
     } else s.speedMult = ai.skill;
 
-    const cp = cps[s.nextCp];
-    if (ai.cpFor !== s.cpCount) {
-      ai.cpFor = s.cpCount;
-      const a = Math.random() * TAU, m = Math.random() * 18;
-      ai.ox = Math.cos(a) * m; ai.oy = Math.sin(a) * m;
-    }
-    const cdx = cp.x + ai.ox - s.x, cdy = cp.y + ai.oy - s.y, cdist = Math.hypot(cdx, cdy) || 1;
-    let dx = cdx, dy = cdy, dist = cdist;
+    if (tr.lane) { // a walled lane: keep to a lane, moving over for a pickup or round a slower ship
+      ai.laneT = (ai.laneT || 0) - dt; // (a brain made elsewhere may have no lane yet: the middle)
+      if (ai.laneT <= 0) { ai.laneT = 0.25; ai.lane = pickLane(s, g, ai); }
+      cruise(s, g, ai, dt, ai.lane * tr.lane.gap, false);
+    } else cruise(s, g, ai, dt, 0, true);
+    if (s.dead > 0) return; // (towed)
 
-    // detour for a pickup that is nearly on the racing line
-    ai.pickT -= dt;
-    if (ai.pickT <= 0) {
-      ai.pickT = 0.2;
-      ai.pick = choosePickup(s, g, cdx / cdist, cdy / cdist, cdist);
-    }
-    if (ai.pick && ai.pick.on) {
-      dx = ai.pick.x - s.x; dy = ai.pick.y - s.y; dist = Math.hypot(dx, dy) || 1;
-    }
-    let ux = dx / dist, uy = dy / dist;
+    aiFire(s, g, dt);
+  }
+
+  /**
+   * Fly ship s round the course, setting its turn, thrust and brake: the
+   * rivals' driving, and the player's autopilot. `st` keeps its state between
+   * steps (a rival's brain, or the autopilot's); `off` is how far right of the
+   * racing line to keep (a lane), `detour` whether to swing over for a pickup
+   * nearly on the way. On a walled lane it follows the lane round; elsewhere
+   * it flies gate to gate, easing back to each gate's middle as it comes, so
+   * it never misses one.
+   */
+  function cruise(s, g, st, dt, off, detour) {
+    const inp = s.input, tr = g.track, cps = tr.cps, N = cps.length, cp = cps[s.nextCp];
     const speed = Math.hypot(s.vx, s.vy);
-
-    dodge(s, g, ux, uy, dist, ai.margin);
-    ux = steer.x; uy = steer.y;
+    let dx, dy, gx = 0, gy = 0, gdist = 1;
+    if (tr.lane) {
+      const here = tr.lane.at(s.x, s.y), ahead = tr.lane.point(here.s + 90 + speed * 0.22, off); // (not so far ahead that it cuts the ends)
+      dx = ahead.x - s.x; dy = ahead.y - s.y;
+    } else {
+      if (st.cpFor !== s.cpCount) { // a rival aims a little off each gate's middle, as a person would
+        st.cpFor = s.cpCount;
+        const a = Math.random() * TAU, m = s.ai ? Math.random() * 18 : 0;
+        st.ox = Math.cos(a) * m; st.oy = Math.sin(a) * m;
+      }
+      gx = cp.x + st.ox - s.x; gy = cp.y + st.oy - s.y; gdist = Math.hypot(gx, gy) || 1;
+      const k = off * clamp((gdist - 110) / 260, 0, 1); // a lane: to the right of the way there, back to the middle by the gate
+      dx = gx - (gy / gdist) * k; dy = gy + (gx / gdist) * k;
+      // detour for a pickup that is nearly on the racing line
+      if (detour) {
+        st.pickT -= dt;
+        if (st.pickT <= 0) { st.pickT = 0.2; st.pick = choosePickup(s, g, gx / gdist, gy / gdist, gdist); }
+        if (st.pick && st.pick.on) { dx = st.pick.x - s.x; dy = st.pick.y - s.y; }
+      }
+    }
+    const dist = Math.hypot(dx, dy) || 1;
+    dodge(s, g, dx / dist, dy / dist, dist, st.margin);
+    const ux = steer.x, uy = steer.y;
 
     // aim a little against our own sideways drift, then turn towards that
     const want = Math.atan2(uy * 330 - s.vy * 0.45, ux * 330 - s.vx * 0.45);
     const diff = angDiff(want, s.angle), ad = Math.abs(diff);
     inp.turn = clamp(diff * 6, -1, 1);
     inp.thrust = ad > 1.7 ? 0 : ad > 1 ? 0.45 : 1;
+    inp.brake = 0;
 
-    // brake for sharp corners
-    const nx = cps[(s.nextCp + 1) % N];
-    const corner = Math.abs(angDiff(Math.atan2(nx.y - cp.y, nx.x - cp.x), Math.atan2(cdy, cdx)));
-    if (corner > 0.9 && cdist < 70 + speed * 0.7) {
-      const target = 300 - 130 * clamp((corner - 0.9) / 1.6, 0, 1);
-      if (speed > target) { inp.thrust = 0; if (speed > target + 45) inp.brake = 1; }
+    // brake for sharp corners (a walled lane has none)
+    if (!tr.lane) {
+      const nx = cps[(s.nextCp + 1) % N];
+      const corner = Math.abs(angDiff(Math.atan2(nx.y - cp.y, nx.x - cp.x), Math.atan2(gy, gx)));
+      if (corner > 0.9 && gdist < 70 + speed * 0.7) {
+        const target = 300 - 130 * clamp((corner - 0.9) / 1.6, 0, 1);
+        if (speed > target) { inp.thrust = 0; if (speed > target + 45) inp.brake = 1; }
+      }
     }
 
-    // unstick: back off, and if that keeps failing, call for a tow
-    if (speed < 24 && s.stun <= 0) ai.stuck += dt; else ai.stuck = Math.max(0, ai.stuck - dt * 2);
-    if (ai.stuck > 1.2) {
-      ai.stuck = 0; ai.rev = 0.7; ai.revTurn = Math.random() < 0.5 ? -1 : 1;
-      if (++ai.stuckN > 4) { destroy(s, g); return; }
+    // unstick: back off, and (a rival) if that keeps failing, call for a tow
+    if (speed < 24 && s.stun <= 0) st.stuck += dt; else st.stuck = Math.max(0, st.stuck - dt * 2);
+    if (st.stuck > 1.2) {
+      st.stuck = 0; st.rev = 0.7; st.revTurn = Math.random() < 0.5 ? -1 : 1;
+      if (++st.stuckN > 4 && s.ai) { destroy(s, g); return; }
     }
-    if (ai.rev > 0) { ai.rev -= dt; inp.thrust = 0; inp.brake = 1; inp.turn = ai.revTurn; }
-
-    aiFire(s, g, dt);
+    if (st.rev > 0) { st.rev -= dt; inp.thrust = 0; inp.brake = 1; inp.turn = st.revTurn; }
   }
+
+  /**
+   * A rival on a walled lane: which lane to keep to. Over to a pickup it
+   * wants a little way ahead; round a slower ship just ahead in its lane; now
+   * and then over for no reason; otherwise where it is.
+   */
+  function pickLane(s, g, ai) {
+    const L = g.track.lane, here = L.at(s.x, s.y), wrap = function (v) { return ((v % L.lap) + L.lap) % L.lap; };
+    const now = ai.lane || 0;
+    const speed = Math.hypot(s.vx, s.vy);
+    let best = null;
+    for (const p of g.pickups) {
+      if (!p.on || (p.kind === 'W' ? !!s.weapon : p.type === 'defer' || (p.type === 'repair' && s.hp > 80) || (p.type === 'shield' && s.shield > 0))) continue;
+      const a = L.at(p.x, p.y), ahead = wrap(a.s - here.s);
+      if (ahead > 120 && ahead < 650 && (!best || ahead < best.ahead)) best = { ahead: ahead, lane: clamp(Math.round(a.d / L.gap), -1, 1) };
+    }
+    if (best) return best.lane;
+    for (const o of g.ships) {
+      if (o === s || o.dead > 0 || o.gone) continue;
+      const a = L.at(o.x, o.y), ahead = wrap(a.s - here.s);
+      if (ahead > 20 && ahead < 170 && Math.abs(a.d - now * L.gap) < 40 && Math.hypot(o.vx, o.vy) < speed) {
+        return now === 0 ? (Math.random() < 0.5 ? -1 : 1) : 0;
+      }
+    }
+    return Math.random() < 0.01 ? Math.floor(Math.random() * 3) - 1 : now;
+  }
+
+  /**
+   * The autopilot, a control method (G, the pad's stick buttons, or AUTO on a
+   * touch screen; remembered): in a Grand Prix it flies the player's ship
+   * round the course, keeping to a lane, so the player can fight. A push left
+   * or right (arrows, the fly stick or slider, the pad) moves it a lane over,
+   * once per push; BRAKE still brakes; firing, aiming and the gate deferral
+   * stay the player's. Takes the controls as read and returns the ones to fly
+   * with, marked `auto` (a race flown so goes in no world table).
+   */
+  const LANES = 1; // lanes either side of the middle
+  G.autoOn = function () { return this.autopilot && this.mode === 'race' && !this.demo; };
+  G.autopilotInput = function (s, inp, dt) {
+    const g = this;
+    if (!g.autoOn() || g.phase !== 'race' || s.dead > 0 || s.finished) return inp;
+    const st = s.pilot || (s.pilot = { lane: 0, held: 0, margin: 6, stuck: 0, stuckN: 0, rev: 0, revTurn: 1, cpFor: -1, ox: 0, oy: 0 });
+    // a push left or right: one lane over, until let go
+    if (inp.turn < -0.5 && st.held >= 0) { st.held = -1; if (st.lane > -LANES) { st.lane--; RR.audio.sfx('select'); } }
+    else if (inp.turn > 0.5 && st.held <= 0) { st.held = 1; if (st.lane < LANES) { st.lane++; RR.audio.sfx('select'); } }
+    else if (Math.abs(inp.turn) < 0.3) st.held = 0;
+    cruise(s, g, st, dt, st.lane * (g.track.lane ? g.track.lane.gap : 70), false);
+    s.autoUsed = true;
+    const brake = inp.brake > 0;
+    return {
+      turn: s.input.turn, thrust: brake ? 0 : s.input.thrust, brake: brake ? 1 : s.input.brake,
+      fire: inp.fire, aim: inp.aim, stick: inp.stick, keyAim: inp.keyAim, auto: true,
+    };
+  };
+  /** AUTOPILOT on or off (remembered). */
+  G.toggleAutopilot = function () {
+    this.autopilot = !this.autopilot;
+    toast(this, this.autopilot ? 'AUTOPILOT ON' : 'AUTOPILOT OFF');
+    RR.audio.sfx('select');
+    save();
+  };
 
   /* --------------------------------------------------------- fx + camera */
 
@@ -2853,7 +2970,7 @@
       if (s.ai) think(s, g, dt);
       else if (s.remote) continue; // online: another player's ship, drawn from the server's snapshots
       else {
-        const inp = s.netInput || RR.input.read(s);
+        const inp = s.netInput || g.autopilotInput(s, RR.input.read(s), dt); // (online, a player's screen has done that)
         s.input.turn = inp.turn; s.input.thrust = inp.thrust; s.input.brake = inp.brake; s.input.fire = inp.fire;
         s.input.aim = inp.aim; s.input.stick = inp.stick; s.input.keyAim = !!inp.keyAim;
       }
@@ -2875,12 +2992,18 @@
     // "wrong way" when the player keeps flying away from the next gate
     const p = g.player;
     if (!g.demo && !g.combat && racing && p.dead <= 0) {
-      const cp = g.track.cps[p.nextCp], dx = cp.x - p.x, dy = cp.y - p.y;
-      const sp = Math.hypot(p.vx, p.vy), d = Math.hypot(dx, dy) || 1;
-      if (sp > 90 && (p.vx * dx + p.vy * dy) / (sp * d) < -0.45) p.wrong += dt;
+      if (Math.hypot(p.vx, p.vy) > 90 && headingOn(g, p) < -0.45) p.wrong += dt;
       else p.wrong = Math.max(0, p.wrong - dt * 3);
     }
     updateCamera(g, dt);
+  }
+
+  /** How much ship p is flying the right way (1: straight on, -1: straight back): at its next gate, or round a walled lane. */
+  function headingOn(g, p) {
+    const sp = Math.hypot(p.vx, p.vy) || 1, lane = g.track.lane;
+    if (lane) { const a = lane.at(p.x, p.y); return (p.vx * a.tx + p.vy * a.ty) / sp; }
+    const cp = g.track.cps[p.nextCp], dx = cp.x - p.x, dy = cp.y - p.y;
+    return (p.vx * dx + p.vy * dy) / (sp * (Math.hypot(dx, dy) || 1));
   }
 
   /** One fixed simulation step. */
@@ -2912,6 +3035,7 @@
     const I = RR.input, hit = I.hit;
     if (g.state !== 'play') { if (hit.aimL) hit.left = true; if (hit.aimR) hit.right = true; } // A / D aim in a race; elsewhere, left / right
     if (hit.mute) g.toggleSound();
+    if (hit.auto && !(g.state === 'play' && g.combat)) g.toggleAutopilot(); // (a Grand Prix's: a fight has no course to fly)
     if (hit.crt) { g.crt = !g.crt; applyCrt(); save(); }
     if (hit.zoomIn) g.zoomBy(1);
     if (hit.zoomOut) g.zoomBy(-1);

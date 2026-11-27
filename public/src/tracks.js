@@ -26,28 +26,56 @@
    * weapons  false: a course made without weapons, so its weapon crates ('W'
    *          rows) are only out once the player switches weapons on. Every
    *          course can be switched either way on the menu (G.weaponsOn).
+   * lane     a walled lane round an oval { cx, cy, len, r, w, gap } (see
+   *          makeLane): rock walls `w / 2` either side of the racing line keep
+   *          every ship in (and stop shots), and the lanes `gap` apart are the
+   *          ones the autopilot and the rivals keep to. Its pickups are rows
+   *          across the lane { s, lanes, kind }: `s` how far round the lap
+   *          from the line, `lanes` which of the lanes (-1 inside, 0 middle,
+   *          1 outside) hold one.
    */
 
   /**
-   * Gates round an oval centred on (cx, cy): two straights `len` long joined
-   * by half circles of radius `r`, flown anticlockwise on screen (east along
-   * the bottom straight first). The line is in the middle of the bottom
-   * straight, the back straight has a gate in its middle too, and each end
-   * has a gate every `step` degrees, so every corner between gates is gentle.
+   * A walled lane round an oval: the racing line is two straights `len` long
+   * joined by half circles of radius `r` round (cx - len/2, cy) and
+   * (cx + len/2, cy), flown anticlockwise on screen (east along the bottom
+   * straight first), and the walls run `w / 2` either side of it.
+   *   at(x, y)    -> { s, d, nx, ny, tx, ty }: how far round the lap from the
+   *                  line (s, the middle of the bottom straight), how far out
+   *                  from the racing line (d: + outside, - inside), the
+   *                  outward normal there and the way round
+   *   point(s, d) -> { x, y, nx, ny, tx, ty }: the point s round the lap, d out
+   * The way round (t) is the outward normal turned a quarter: going round,
+   * the outside is always on the right, so a lane to the right is further out.
    */
-  const oval = function (cx, cy, len, r, step) {
-    const h = len / 2, out = [[cx, cy + r]];
-    const end = function (ex, from, to) { // round one end, from one straight to the other
-      for (let deg = from; deg >= to; deg -= step) {
-        const a = (deg * Math.PI) / 180;
-        out.push([Math.round(ex + Math.cos(a) * r), Math.round(cy + Math.sin(a) * r)]);
-      }
+  function makeLane(L) {
+    const h = L.len / 2, r = L.r, arc = Math.PI * r, lap = 4 * h + 2 * arc, cx = L.cx, cy = L.cy;
+    const wrap = function (s) { return ((s % lap) + lap) % lap; };
+    const out = function (x, y, nx, ny, s, d) { return { x: x, y: y, nx: nx, ny: ny, tx: ny, ty: -nx, s: s, d: d }; };
+    return {
+      cx: cx, cy: cy, len: L.len, r: r, w: L.w, gap: L.gap, lap: lap,
+      at: function (x, y) {
+        const qx = Math.max(cx - h, Math.min(cx + h, x)), dx = x - qx, dy = y - cy, dist = Math.hypot(dx, dy) || 1e-6;
+        const nx = dx / dist, ny = dy / dist, d = dist - r;
+        let s;
+        if (x >= cx - h && x <= cx + h) s = dy >= 0 ? wrap(x - cx) : h + arc + (cx + h - x); // beside a straight
+        else if (x > cx) s = h + (Math.PI / 2 - Math.atan2(dy, dx)) * r; // round the east end
+        else { const a = Math.atan2(dy, dx); s = 3 * h + arc + (1.5 * Math.PI - (a < 0 ? a + 2 * Math.PI : a)) * r; } // the west end
+        return out(x, y, nx, ny, s, d);
+      },
+      point: function (s, d) {
+        s = wrap(s); d = d || 0;
+        if (s < h) return out(cx + s, cy + r + d, 0, 1, s, d);
+        if (s < h + arc) { const a = Math.PI / 2 - (s - h) / r, c = Math.cos(a), n = Math.sin(a); return out(cx + h + c * (r + d), cy + n * (r + d), c, n, s, d); }
+        if (s < 3 * h + arc) return out(cx + h - (s - h - arc), cy - r - d, 0, -1, s, d);
+        if (s < 3 * h + 2 * arc) { const a = 1.5 * Math.PI - (s - 3 * h - arc) / r, c = Math.cos(a), n = Math.sin(a); return out(cx - h + c * (r + d), cy + n * (r + d), c, n, s, d); }
+        return out(cx - h + (s - 3 * h - 2 * arc), cy + r + d, 0, 1, s, d);
+      },
     };
-    end(cx + h, 90, -90);
-    out.push([cx, cy - r]);
-    end(cx - h, -90, -270);
-    return out;
-  };
+  }
+
+  // the Indy-Galactic 500's oval: how far round the lap its straights and ends are (for its gates and pickups)
+  const IH = 700, IR = 420, IARC = Math.PI * IR;
 
   const TRACKS = (RR.TRACKS = [
     {
@@ -132,29 +160,31 @@
       ],
     },
     {
-      // the easiest and fastest course: a big oval flown flat out, nitro on both straights, no rocks, no
-      // weapons unless they are switched on, and giant donuts (two and a half times the usual) that count
-      // anywhere on them: round the ends they nearly touch, a tunnel to follow. The infield's worlds sit
-      // well clear of the line and pull only lightly
-      id: 'indy', name: 'INDY-GALACTIC 500', blurb: 'FLAT OUT ROUND THE NITRO OVAL', laps: 5, seed: 43, donut: 2.5, weapons: false,
+      // the easiest and fastest course: a big oval flown flat out between rock walls that keep everyone in (and
+      // stop shots), three lanes to keep to, nitro on both straights, no weapons unless they are switched on,
+      // and just three giant donuts (two and a half times the usual, counting anywhere on them, as wide as the
+      // lane): the line, and one on the far side of each end's world. The infield's worlds pull only lightly
+      id: 'indy', name: 'INDY-GALACTIC 500', blurb: 'FLAT OUT ROUND THE WALLED OVAL', laps: 5, seed: 43, donut: 2.5, weapons: false,
       nebula: ['#26100a', '#3c1a0e', '#542612', '#0e1a3a', '#142a5a', '#1a3a72'],
-      cps: oval(2000, 1300, 1400, 420, 45),
+      lane: { cx: 2000, cy: 1300, len: 2 * IH, r: IR, w: 280, gap: 85 },
+      cps: [[2000, 1300 + IR], [2000 + IH + IR, 1300], [2000 - IH - IR, 1300]],
       planets: [
         { x: 2000, y: 1300, r: 150, type: 'gas', seed: 44, ring: true, g: 150 },
-        { x: 2700, y: 1300, r: 66, type: 'moon', seed: 45 },
-        { x: 1300, y: 1300, r: 66, type: 'ice', seed: 46 },
+        { x: 2000 + IH, y: 1300, r: 66, type: 'moon', seed: 45 },
+        { x: 2000 - IH, y: 1300, r: 66, type: 'ice', seed: 46 },
       ],
-      // a nitro strip on each half of both straights (one boost runs into the next, and the last carries you
-      // round the end), power-ups going into each end, and (weapons on) crates coming out of it
+      // nitro across the lane on each half of both straights (one boost runs into the next, and the last carries
+      // you round the end); power-ups in the outer lanes going into each end, and (weapons on) crates in every
+      // lane coming out of it
       pickups: [
-        { seg: 0, t: 0.5, n: 3, kind: 'N' },
-        { seg: 2, t: 0.5, n: 2, kind: 'P' },
-        { seg: 3, t: 0.5, n: 3, kind: 'W' },
-        { seg: 5, t: 0.5, n: 3, kind: 'N' },
-        { seg: 6, t: 0.5, n: 3, kind: 'N' },
-        { seg: 8, t: 0.5, n: 2, kind: 'P' },
-        { seg: 9, t: 0.5, n: 3, kind: 'W' },
-        { seg: 11, t: 0.5, n: 3, kind: 'N' },
+        { s: IH / 2, lanes: [-1, 0, 1], kind: 'N' },
+        { s: IH + IARC * 0.22, lanes: [-1, 1], kind: 'P' },
+        { s: IH + IARC * 0.78, lanes: [-1, 0, 1], kind: 'W' },
+        { s: IH + IARC + IH / 2, lanes: [-1, 0, 1], kind: 'N' },
+        { s: IH + IARC + IH * 1.5, lanes: [-1, 0, 1], kind: 'N' },
+        { s: 3 * IH + IARC * 1.22, lanes: [-1, 1], kind: 'P' },
+        { s: 3 * IH + IARC * 1.78, lanes: [-1, 0, 1], kind: 'W' },
+        { s: 3 * IH + 2 * IARC + IH / 2, lanes: [-1, 0, 1], kind: 'N' },
       ],
     },
   ]);
@@ -360,9 +390,11 @@
     // the donuts' size: their tube's centre-line and outer edge, and how near a gate's middle counts as through it
     const big = def.donut || 1, donutR = Art.DONUT_RC * big, outer = (Art.DONUT_RC + Art.DONUT_RT) * big;
     const cpR = def.donut ? Math.round(outer) + 3 : 0; // (a course of bigger donuts: anywhere on one; else the hole)
+    const lane = def.lane ? makeLane(def.lane) : null;
 
     /* checkpoints ------------------------------------------------------- */
     const cps = (def.cps || []).map(function (p, i) { return { i: i, x: p[0], y: p[1], finish: i === 0 }; });
+    if (lane) cps.forEach(function (c) { c.s = lane.at(c.x, c.y).s; }); // (how far round the lane each gate is)
     cps.forEach(function (c, i) {
       const prev = cps[(i + N - 1) % N];
       c.segLen = Math.hypot(c.x - prev.x, c.y - prev.y); // length of the leg arriving here
@@ -418,9 +450,12 @@
       }
     } else {
       c0 = cps[0];
-      const cl = cps[N - 1];
-      const gl = Math.hypot(c0.x - cl.x, c0.y - cl.y);
-      ux = (c0.x - cl.x) / gl; uy = (c0.y - cl.y) / gl;
+      if (lane) { const t0 = lane.at(c0.x, c0.y); ux = t0.tx; uy = t0.ty; } // (a walled lane: lined up along it)
+      else {
+        const cl = cps[N - 1];
+        const gl = Math.hypot(c0.x - cl.x, c0.y - cl.y);
+        ux = (c0.x - cl.x) / gl; uy = (c0.y - cl.y) / gl;
+      }
       const front = Math.round(outer) + 57; // the front row, well clear of the start donut (112 behind the usual one)
       for (let i = 0; i < 6; i++) {
         const back = front + (i >> 1) * 46 + (i & 1) * 18, side = i & 1 ? 1 : -1;
@@ -432,6 +467,10 @@
     /* pickups ----------------------------------------------------------- */
     const pickups = [];
     (def.pickups || []).forEach(function (row) {
+      if (lane && row.s != null) { // a walled lane: one in each of the row's lanes
+        row.lanes.forEach(function (l) { const pt = lane.point(row.s, l * lane.gap); pickups.push({ x: pt.x, y: pt.y, kind: row.kind }); });
+        return;
+      }
       const a = cps[row.seg], b = cps[(row.seg + 1) % N];
       const dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1;
       const mx = a.x + dx * row.t, my = a.y + dy * row.t, gap = row.gap || 36;
@@ -498,8 +537,31 @@
       }
     });
 
+    /* a walled lane: rocks along both walls, with a looser row behind (scenery: the walls themselves are the
+     * lane's edges, exactly, in game.js; these stay put, so online they are never sent) ------------------ */
+    const walls = [];
+    if (lane) {
+      const wr = RR.rng(def.seed * 7919 + 3), hl = lane.len / 2, arc = Math.PI * lane.r;
+      const onEnd = function (s) { return (s >= hl && s < hl + arc) || (s >= 3 * hl + arc && s < 3 * hl + 2 * arc); };
+      [-1, 1].forEach(function (side) {
+        [0, 1].forEach(function (back) { // the wall's face, then rubble behind it
+          for (let s = wr() * 20; s < lane.lap;) {
+            const size = back ? 1 + Math.floor(wr() * 3) : 2 + Math.floor(wr() * 3), r = Art.ROCK_SIZES[size];
+            const d = side * (lane.w / 2 + r * 0.75 + (back ? 26 + wr() * 22 : 0)), p = lane.point(s, d);
+            walls.push({ x: p.x, y: p.y, r: r, size: size, variant: Math.floor(wr() * 4), rot: Math.round(wr() * 40) / 6.4 });
+            const step = r * (back ? 2.6 : 1.25) * (0.85 + wr() * 0.3); // (round an end, step the wall's own length)
+            s += onEnd(s) ? (step * lane.r) / Math.max(40, lane.r + d) : step;
+          }
+        });
+      });
+    }
+
     /* bounds + minimap --------------------------------------------------- */
     let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    if (lane) { // the whole lane and its walls
+      const ex = lane.len / 2 + lane.r + lane.w / 2 + 60, ey = lane.r + lane.w / 2 + 60;
+      x0 = lane.cx - ex; x1 = lane.cx + ex; y0 = lane.cy - ey; y1 = lane.cy + ey;
+    }
     cps.forEach(function (c) {
       x0 = Math.min(x0, c.x - 80); y0 = Math.min(y0, c.y - 80);
       x1 = Math.max(x1, c.x + 80); y1 = Math.max(y1, c.y + 80);
@@ -519,9 +581,18 @@
     const ms = Math.min((MW - pad * 2) / (x1 - x0), (MH - pad * 2) / (y1 - y0));
     const mox = (MW - (x1 - x0) * ms) / 2 - x0 * ms, moy = (MH - (y1 - y0) * ms) / 2 - y0 * ms;
     const mini = RR.canvas(MW, MH);
-    for (let i = 0; i < N; i++) {
-      const a = cps[i], b = cps[(i + 1) % N];
-      RR.line(mini.g, a.x * ms + mox, a.y * ms + moy, b.x * ms + mox, b.y * ms + moy, PAL.steel, 2);
+    if (lane) { // a walled lane: its two walls
+      [-1, 1].forEach(function (side) {
+        for (let k = 0; k < 96; k++) {
+          const a = lane.point((k / 96) * lane.lap, (side * lane.w) / 2), b = lane.point(((k + 1) / 96) * lane.lap, (side * lane.w) / 2);
+          RR.line(mini.g, a.x * ms + mox, a.y * ms + moy, b.x * ms + mox, b.y * ms + moy, PAL.steel, 1);
+        }
+      });
+    } else {
+      for (let i = 0; i < N; i++) {
+        const a = cps[i], b = cps[(i + 1) % N];
+        RR.line(mini.g, a.x * ms + mox, a.y * ms + moy, b.x * ms + mox, b.y * ms + moy, PAL.steel, 2);
+      }
     }
     planets.forEach(function (p) {
       RR.disc(mini.g, p.x * ms + mox, p.y * ms + moy, Math.max(1, p.r * ms), p.map);
@@ -530,7 +601,7 @@
 
     return {
       def: def, name: def.name, laps: def.laps,
-      cps: cps, cpR: cpR, donut: big, donutR: donutR, donuts: donuts, planets: planets, grid: grid, pickups: pickups, rocks: rocks,
+      cps: cps, cpR: cpR, donut: big, donutR: donutR, donuts: donuts, lane: lane, walls: walls, planets: planets, grid: grid, pickups: pickups, rocks: rocks,
       bounds: bounds, arena: arena,
       center: arena ? { x: def.cx, y: def.cy } : null, radius: arena ? def.radius || Math.max(def.w, def.h) : 0,
       bases: def.bases ? def.bases.map(function (b) { return { x: b.x, y: b.y }; }) : null, flags: !!def.flags,

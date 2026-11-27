@@ -193,6 +193,54 @@ test('the Indy-Galactic 500\'s giant donuts are drawn pixel for pixel at their s
   } finally { await ctx.close(); }
 });
 
+test('autopilot: G switches it (remembered); in a race it flies, RIGHT and LEFT change lanes and the HUD shows which; a race it flew goes in no world table; on a touch screen, AUTO', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  try {
+    await page.evaluate(() => { const g = RR.game; g.modeIdx = 0; g.trackIdx = RR.TRACKS.findIndex((t) => t.id === 'indy'); g.startRace(true); });
+    await page.keyboard.press('KeyG');
+    await page.waitForTimeout(80);
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.autopilot, RR.game.toast && RR.game.toast.text, JSON.parse(localStorage.getItem('rocketracer.v1')).autopilot]),
+      [true, 'AUTOPILOT ON', true]);
+    // a race: the autopilot flies; nothing it flies is submitted to the world table
+    await page.evaluate(() => { window.submitted = []; RR.net.submit = function (id) { window.submitted.push(id); }; });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => RR.game.state === 'play');
+    await page.evaluate(() => T.run(5));
+    assert.ok(await page.evaluate(() => Math.hypot(RR.game.player.vx, RR.game.player.vy) > 200), 'flying itself');
+    const lane = async (key) => {
+      await page.keyboard.down(key); await page.waitForTimeout(120); await page.keyboard.up(key); await page.waitForTimeout(60);
+      await page.evaluate(() => T.run(2.5));
+      return page.evaluate(() => { const g = RR.game, p = g.player; return [p.pilot.lane, g.autoShown, Math.round(g.track.lane.at(p.x, p.y).d / 85) + 0]; }); // (+ 0: no -0)
+    };
+    assert.deepStrictEqual(await lane('ArrowRight'), [1, 1, 1], 'outside lane: the HUD shows it, and the ship is in it');
+    assert.deepStrictEqual(await lane('ArrowLeft'), [0, 0, 0]);
+    assert.deepStrictEqual(await lane('ArrowLeft'), [-1, -1, -1], 'inside lane');
+    await page.evaluate(() => { let k = 0; while (!RR.game.player.finished && k++ < 120 * 200) RR.game.step(1 / 120); });
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.player.finished, RR.game.player.autoUsed, window.submitted]), [true, true, []]);
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+
+  // a touch screen: AUTO beside ZOOM in a Grand Prix (not in a fight)
+  const tctx = await browser.newContext({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true });
+  const tp = await tctx.newPage();
+  try {
+    await tp.goto(base + '/');
+    await tp.waitForFunction(() => window.RR && RR.game && RR.game.state === 'title');
+    await tp.touchscreen.tap(400, 200); // (now a touch screen)
+    await tp.evaluate(() => { const g = RR.game; g.autoFull = false; g.wantFull = false; g.modeIdx = 0; g.trackIdx = 0; g.begin(); });
+    await tp.waitForTimeout(300);
+    const u = await tp.evaluate(() => RR.game.ui.find((b) => b.label === 'AUTO') || null);
+    assert.ok(u, 'an AUTO button');
+    const box = await tp.locator('#hud').boundingBox(), k = box.width / await tp.evaluate(() => RR.game.W);
+    await tp.touchscreen.tap(box.x + (u.x + u.w / 2) * k, box.y + (u.y + u.h / 2) * k);
+    await tp.waitForTimeout(150);
+    assert.strictEqual(await tp.evaluate(() => RR.game.autopilot), true);
+    await tp.evaluate(() => { const g = RR.game; g.modeIdx = 1; g.begin(); });
+    await tp.waitForTimeout(200);
+    assert.ok(!(await tp.evaluate(() => RR.game.ui.some((b) => b.label === 'AUTO'))), 'no AUTO in a fight');
+  } finally { await tctx.close(); }
+});
+
 test('zoom changes the world scale but not the HUD, and is remembered', { skip }, async () => {
   const { page, ctx, errors } = await openGame({ width: 1280, height: 720 });
   try {

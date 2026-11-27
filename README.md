@@ -12,14 +12,20 @@ and a second runs online multiplayer over WebSockets.
 
 - **Four courses**: Lunar Loop (easy oval), Donut Drift (figure-eight through an asteroid
   belt), Gravity Gauntlet (planet slalom, orbiting rocks, long asteroid wall) and the
-  **Indy-Galactic 500**, the easiest and fastest: five laps of a big oval flown flat out. Every
-  corner between gates is gentle (an eighth of a turn at most), there are no rocks, no weapon crates
-  until you switch weapons on, its worlds sit in the infield well clear of the line, a nitro strip lies across each half
-  of both straights (one boost runs into the next, and the last carries you round the end), and
-  its donuts are giants, two and a half times the usual size (275 pixels across), that count
-  anywhere on them, tube and all: round each end they nearly touch, a tunnel to follow, so a
-  beginner can hardly miss one. The same rivals average about a third faster here than on Lunar
-  Loop.
+  **Indy-Galactic 500**, the easiest and fastest: five laps of a big oval flown flat out between
+  rock walls.
+  - **The walls** run along the inside and outside of a lane 280 pixels wide and keep everyone in:
+    a ship that reaches one bounces off (a scrape is free, a hard knock dents the hull), and shots
+    stop there. The walls are the lane's edges, exactly, so there are no gaps to slip through; the
+    rocks along them are fixed scenery (online they are never sent, so they cost nothing).
+  - **Just three donuts**: the start/finish line, and one on the far side of each end's world (the
+    moon and the ice world in the infield). They are giants, two and a half times the usual size,
+    as wide as the lane, and count anywhere on them, so any lane goes through.
+  - **Three lanes** (inside, middle, outside), 85 pixels apart, which the rivals and the autopilot
+    keep to. Rivals move over for a pickup they want or round a slower ship.
+  - Nitro across all three lanes on each half of both straights, power-ups in the outer lanes going
+    into each end, and (weapons on) crates in every lane coming out of it. A wreck comes back on
+    the lane where it happened, facing the way round. The edge arrow leads along the lane.
 - **Donut checkpoints**: fly through every donut in order. The next one glows and an arrow
   at the screen edge points to it. The checkered donut is start/finish. Three laps (five on the
   Indy-Galactic 500).
@@ -31,6 +37,16 @@ and a second runs online multiplayer over WebSockets.
   defer. The start/finish line can't be deferred: every lap is still flown over the line (with
   the line next, the button dims, and pressing it says FLY THE LINE). Rivals can't use it.
 - **Weapons** (red crates, one slot): Blaster, homing Missile, Mine, EMP shockwave.
+- **Autopilot**, a control method for the Grand Prix, so the fight can have your full attention:
+  G (or a click of either gamepad stick, or AUTO on a touch screen, beside ZOOM) switches it on or
+  off, at any time, and it is remembered. It flies the ship round the course, flat out, and keeps
+  to a lane: a push left or right (arrows, the FLY stick or slider, the pad) moves it one lane
+  over, however long it is held; BRAKE still brakes; firing, aiming and the gate deferral stay
+  yours. A panel above the hull bar shows AUTOPILOT and which of the three lanes it is in. It
+  flies every course: on the walled oval it follows the lane; elsewhere it flies gate to gate the
+  way the rivals do and eases back to each gate's middle as it comes, so it never misses one. A
+  race the autopilot flew (any of it) still pays and counts in your history, but its time goes in
+  no world table (online too: the player's screen flies it, and its inputs tell the server).
 - **Weapons on or off, for each course**: in a Grand Prix, WEAPONS sits beside RIVALS on the menu
   (UP / DOWN to it, LEFT / RIGHT, or tap ON / OFF). Off, the course's weapon crates stay away, so
   nobody (you or a rival) has anything to fire; the power-ups stay. Each course keeps its own
@@ -159,6 +175,7 @@ and a second runs online multiplayer over WebSockets.
 | Brake | Down / S | BRAKE button, to the left of GAS |
 | Gas | Up / W | GAS button, just above the fire stick: full engine power, the way the rocket points (or is being steered), so it speeds up steadily to its top speed. Hold it for gas until you let go, or tap it to keep it on (lit GAS ON) until you tap it again; a hold also turns a tapped-on GAS off. Every race starts with it off |
 | Gate deferral | E or Shift | DEFER button (appears while you hold one) |
+| Autopilot (Grand Prix) | G switches it on or off; then LEFT / RIGHT change lane, DOWN brakes, Space fires | AUTO button, beside ZOOM; then push the FLY stick left or right to change lane |
 | Zoom | Z cycles normal / wide / close; + and - or the mouse wheel step through every level | ZOOM button |
 | Pause | P or Esc | II button |
 | Move the controls | | Pause > MOVE CONTROLS: drag the FLY and fire sticks and the buttons where you like (kept separately for sideways and upright; RESET restores them). GAS, BRAKE and DEFER follow the fire stick wherever it goes, unless you move them yourself |

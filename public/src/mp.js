@@ -382,7 +382,7 @@
     G.onlineStep(STEP);
     const me = G.ships[M.me];
     if (!me || G.state !== 'play') return;
-    const inp = G.mpMenu ? ZERO : RR.input.read(me);
+    const inp = G.mpMenu ? ZERO : G.autopilotInput(me, RR.input.read(me), STEP); // (the autopilot flies here, ahead of the server, like a player)
     stepN++;
     const next = (seq + 1) & 0xffff;
     if (predictable(G, me)) {
@@ -392,7 +392,7 @@
     }
     if (stepN % 2 === 0 && ws && ws.readyState === 1) { // 60 a second
       seq = next;
-      ws.send(P.encodeInput({ seq: seq, turn: inp.turn, thrust: inp.thrust, brake: inp.brake, fire: inp.fire, aim: inp.aim, stick: inp.stick, defer: wantDefer }));
+      ws.send(P.encodeInput({ seq: seq, turn: inp.turn, thrust: inp.thrust, brake: inp.brake, fire: inp.fire, aim: inp.aim, stick: inp.stick, defer: wantDefer, auto: !!inp.auto }));
       wantDefer = false;
     }
   }

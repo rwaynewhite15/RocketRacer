@@ -41,7 +41,7 @@ const TRACKS = {
   lunar: { laps: 3, minLap: 13, minRace: 42 },
   eight: { laps: 3, minLap: 16, minRace: 50 },
   gauntlet: { laps: 3, minLap: 25, minRace: 78 },
-  indy: { laps: 5, minLap: 8, minRace: 42 },
+  indy: { laps: 5, minLap: 6.5, minRace: 34 }, // (its inside lane, hugged in a maxed Phoenix: about 8.9 s a lap)
 };
 const MAX_RACE = 3600;
 

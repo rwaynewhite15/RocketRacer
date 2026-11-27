@@ -382,6 +382,20 @@ test('online: humans only - the switch on the ONLINE screen (RIGHT, or a tap) is
     assert.ok(want.pickups.includes('W'), 'weapon crates out on the server');
     assert.deepStrictEqual(await look(A), want, 'just the two of them, on the oval');
     assert.deepStrictEqual(await look(B), want);
+
+    // Alice flies on the autopilot (G), into the outside lane (RIGHT): her own screen flies it ahead of the
+    // server and agrees with it, between the walls; the server knows the autopilot flew (no world table)
+    await A.page.waitForFunction(() => RR.game.phase === 'race', null, { timeout: 8000 });
+    await A.page.keyboard.press('KeyG');
+    await A.page.waitForTimeout(400);
+    await A.page.keyboard.down('ArrowRight'); await A.page.waitForTimeout(150); await A.page.keyboard.up('ArrowRight');
+    await A.page.waitForTimeout(3000);
+    const mine = await A.page.evaluate(() => { const p = RR.game.player, L = RR.game.track.lane; return { x: p.x, y: p.y, v: Math.hypot(p.vx, p.vy), d: L.at(p.x, p.y).d, lane: p.pilot.lane }; });
+    const srv2 = [...s.hub.rooms][0].engine.G, ship = srv2.ships[0];
+    assert.ok(mine.v > 200 && mine.lane === 1, 'flying itself, in the outside lane: ' + JSON.stringify(mine));
+    assert.ok(Math.abs(mine.d) < 140, 'between the walls');
+    assert.ok(Math.hypot(mine.x - ship.x, mine.y - ship.y) < 40, 'her screen agrees with the server');
+    assert.strictEqual(ship.autoUsed, true);
     assert.deepStrictEqual([A.errors, B.errors], [[], []]);
   } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
 });

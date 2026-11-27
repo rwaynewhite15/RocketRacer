@@ -303,6 +303,14 @@
       ctx.drawImage(Art.mine[on ? 1 : 0], sx - 4, sy - 4);
     }
 
+    /* a walled lane's rocks (they never move: the walls are the lane's edges, see tracks.js) */
+    if (tr.walls) {
+      for (const w of tr.walls) {
+        const sx = w.x - cx, sy = w.y - cy;
+        if (vis(sx, sy, w.r + 4)) RR.drawRot(ctx, Art.rocks[w.size][w.variant], sx, sy, w.rot);
+      }
+    }
+
     /* asteroids (rotation snapped to steps so pixels don't crawl) */
     for (const a of g.rocks) {
       if (a.dead) continue;
@@ -408,7 +416,10 @@
     /* edge arrow towards the next gate when it is off-screen; in a fight it
      * points at the nearest rival, or back into the zone when you are outside it */
     let aim = null, hostile = false;
-    if (!g.playerDone && !g.combat) aim = tr.cps[p.nextCp];
+    if (!g.playerDone && !g.combat && tr.lane) { // a walled lane: along it, never across the infield (the gate once it is near)
+      const L = tr.lane, here = L.at(p.x, p.y), to = ((tr.cps[p.nextCp].s - here.s) % L.lap + L.lap) % L.lap;
+      aim = to < 500 ? tr.cps[p.nextCp] : L.point(here.s + 500, 0);
+    } else if (!g.playerDone && !g.combat) aim = tr.cps[p.nextCp];
     else if (!g.playerDone && p.dead <= 0 && g.ctf && g.flags) {
       // capture the flag: home with a flag; after whoever has ours; to a teammate with one; else to a flag to raid
       const goal = g.flagGoal(p);
@@ -568,6 +579,19 @@
     text(ctx, 'SPD', hx + 6, hy + 16, PAL.silver);
     bar(ctx, hx + 33, hy + 16, 13, Math.hypot(p.vx, p.vy) / 500, p.nitro > 0 ? PAL.yellow : PAL.cyan);
 
+    /* the autopilot: on, and which lane it keeps to (inside, middle, outside, as the ship goes) */
+    if (g.autoOn() && !p.finished) {
+      const ay = touch ? hy + 31 : hy - 21, lane = p.pilot ? p.pilot.lane : 0;
+      panel(ctx, hx, ay, 104, 18, PAL.lime);
+      text(ctx, 'AUTOPILOT', hx + 6, ay + 6, PAL.lime);
+      for (let k = -1; k <= 1; k++) {
+        const bx = hx + 70 + (k + 1) * 10;
+        ctx.fillStyle = k === lane ? PAL.lime : PAL.dusk;
+        ctx.fillRect(bx, ay + 5, 7, 8);
+      }
+      g.autoShown = lane; // (for the tests)
+    } else g.autoShown = null;
+
     /* who wrecked whom */
     if (g.combat) {
       let fy = touch ? Tp + 98 : Tp + 40;
@@ -624,7 +648,7 @@
     }
 
     /* active power-up timers */
-    let ey = touch ? hy + 33 : B - 58;
+    let ey = touch ? hy + (g.autoOn() && !p.finished ? 53 : 33) : B - 58; // (touch: under the hull bar, and the AUTOPILOT panel when it shows)
     const ex = touch ? L + 2 : Rr - 100;
     if (p.shield > 0) {
       ctx.drawImage(Art.icons.shield, ex, ey - 1);
@@ -644,7 +668,13 @@
       else text(ctx, String(n), W / 2, my - 6, [PAL.lime, PAL.lime, PAL.yellow, PAL.alarm][n], 8, 'center', PAL.ink);
       // how-to-fly reminder while the lights count down
       const hy2 = Math.round(H * (touch ? 0.56 : 0.62));
-      if (touch) {
+      if (g.autoOn()) { // the autopilot flies: the player changes lanes and fights
+        text(ctx, 'AUTOPILOT: IT FLIES, YOU FIGHT', W / 2, hy2, PAL.lime, 1, 'center', PAL.ink);
+        if (touch) {
+          text(ctx, 'FLY STICK LEFT / RIGHT: CHANGE LANE', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
+          text(ctx, 'FIRE STICK: SHOOT THAT WAY', W / 2, hy2 + 20, PAL.cyan, 1, 'center', PAL.ink);
+        } else text(ctx, 'LEFT / RIGHT: CHANGE LANE - SPACE: FIRE - G: FLY IT YOURSELF', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
+      } else if (touch) {
         text(ctx, 'DRAG ANYWHERE: FLY THAT WAY', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
         text(ctx, 'DRAG FARTHER: MORE POWER', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
         text(ctx, 'FIRE STICK: SHOOT THAT WAY', W / 2, hy2 + 20, PAL.cyan, 1, 'center', PAL.ink);
@@ -652,7 +682,7 @@
         text(ctx, 'ARROWS TO FLY - A / D TO AIM - SPACE TO FIRE', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
       }
       text(ctx, g.ctf ? 'BRING ' + (g.caps.length > 2 ? 'ANY' : 'THEIR') + ' FLAG TO YOUR BASE - FIRST TO ' + C.CTF_CAPS : g.royale ? 'LAST SHIP FLYING WINS' : g.combat ? 'WRECK THEM - FIRST TO ' + C.KILL_TARGET + ' KILLS' : 'FLY THROUGH THE GLOWING DONUT',
-        W / 2, hy2 + (touch ? 34 : 12), PAL.pink, 1, 'center', PAL.ink);
+        W / 2, hy2 + (touch ? 34 : g.autoOn() ? 22 : 12), PAL.pink, 1, 'center', PAL.ink);
     } else if (g.msg) {
       const m = g.msg;
       const sc = Math.max(1, Math.min(m.scale, Math.floor((W - 12) / (m.text.length * 6))));
@@ -669,6 +699,7 @@
       const by = narrow ? cy + 40 : Tp + mm.h + 8;
       button(g, ctx, 'II', Rr - 26, by, 26, 18, function () { g.pause(); });
       button(g, ctx, 'ZOOM', Rr - 64, by, 34, 18, function () { g.zoomCycle(); }, PAL.cyan);
+      if (!g.combat) button(g, ctx, 'AUTO', Rr - 102, by, 34, 18, function () { g.toggleAutopilot(); }, g.autopilot ? PAL.lime : PAL.steel);
     }
   }
 
@@ -794,8 +825,9 @@
       if (!t.drag || t.drag.power > 0) p.dragged = true;
     } else if (!p.dragged && g.phase === 'race' && Math.floor(g.t * 2) & 1) {
       const hy = (slideMode ? L.tab.y - 6 : L.steer.y - L.steer.r) - 24;
-      text(ctx, slideMode ? 'SLIDE TO TURN' : 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, slideMode ? 'AND GAS TO GO' : 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
+      const auto = g.autoOn(); // (the autopilot flies: the stick only changes lane)
+      text(ctx, auto ? 'LEFT / RIGHT' : slideMode ? 'SLIDE TO TURN' : 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, auto ? 'CHANGES LANE' : slideMode ? 'AND GAS TO GO' : 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
     }
 
     /* fire stick: the blaster fires while held (ahead, or the way it is pushed); missiles go on letting go */
@@ -1022,11 +1054,11 @@
       text(ctx, fight ? 'WIN EVENTS TO EARN STAT POINTS' : 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, fight ? 'AND UNLOCK BETTER SHIPS' : 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
     } else if (W >= 440) {
-      text(ctx, 'ARROWS  FLY    A / D  AIM    SPACE  FIRE    E  DEFER GATE    P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, 'H  HANGAR    Z OR WHEEL  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
+      text(ctx, 'ARROWS  FLY    A / D  AIM    SPACE  FIRE    E  DEFER GATE    G  AUTOPILOT', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, 'P  PAUSE    H  HANGAR    Z  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     } else {
       text(ctx, 'ARROWS FLY - A/D AIM - SPACE FIRE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, 'H HANGAR - Z ZOOM - P PAUSE - M MUTE', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
+      text(ctx, 'H HANGAR - Z ZOOM - P PAUSE - M MUTE - G AUTO', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     }
   }
 
