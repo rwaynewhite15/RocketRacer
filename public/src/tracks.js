@@ -29,10 +29,10 @@
    * lane     a walled lane round an oval { cx, cy, len, r, w, gap } (see
    *          makeLane): rock walls `w / 2` either side of the racing line keep
    *          every ship in (and stop shots), and the lanes `gap` apart are the
-   *          ones the autopilot and the rivals keep to. Its pickups are rows
+   *          seven the autopilot and the rivals keep to. Its pickups are rows
    *          across the lane { s, lanes, kind }: `s` how far round the lap
-   *          from the line, `lanes` which of the lanes (-1 inside, 0 middle,
-   *          1 outside) hold one.
+   *          from the line, `lanes` which of the lanes (-3 innermost .. 0
+   *          middle .. 3 outermost) hold one.
    */
 
   /**
@@ -161,30 +161,30 @@
     },
     {
       // the easiest and fastest course: a big oval flown flat out between rock walls that keep everyone in (and
-      // stop shots), three lanes to keep to, nitro on both straights, no weapons unless they are switched on,
+      // stop shots), seven lanes to keep to, nitro on both straights, no weapons unless they are switched on,
       // and just three giant donuts (two and a half times the usual, counting anywhere on them, as wide as the
       // lane): the line, and one on the far side of each end's world. The infield's worlds pull only lightly
       id: 'indy', name: 'INDY-GALACTIC 500', blurb: 'FLAT OUT ROUND THE WALLED OVAL', laps: 5, seed: 43, donut: 2.5, weapons: false,
       nebula: ['#26100a', '#3c1a0e', '#542612', '#0e1a3a', '#142a5a', '#1a3a72'],
-      lane: { cx: 2000, cy: 1300, len: 2 * IH, r: IR, w: 280, gap: 85 },
+      lane: { cx: 2000, cy: 1300, len: 2 * IH, r: IR, w: 280, gap: 38 }, // (seven lanes, -3 .. 3: the outer ones 114 out)
       cps: [[2000, 1300 + IR], [2000 + IH + IR, 1300], [2000 - IH - IR, 1300]],
       planets: [
         { x: 2000, y: 1300, r: 150, type: 'gas', seed: 44, ring: true, g: 150 },
         { x: 2000 + IH, y: 1300, r: 66, type: 'moon', seed: 45 },
         { x: 2000 - IH, y: 1300, r: 66, type: 'ice', seed: 46 },
       ],
-      // nitro across the lane on each half of both straights (one boost runs into the next, and the last carries
-      // you round the end); power-ups in the outer lanes going into each end, and (weapons on) crates in every
-      // lane coming out of it
+      // spread over the seven lanes, so the lane matters: nitro in every other lane on each half of both straights
+      // (alternately the even and the odd ones), power-ups in the outermost lanes going into each end, and
+      // (weapons on) crates out of each end in the middle and the two lanes either side but one
       pickups: [
-        { s: IH / 2, lanes: [-1, 0, 1], kind: 'N' },
-        { s: IH + IARC * 0.22, lanes: [-1, 1], kind: 'P' },
-        { s: IH + IARC * 0.78, lanes: [-1, 0, 1], kind: 'W' },
-        { s: IH + IARC + IH / 2, lanes: [-1, 0, 1], kind: 'N' },
-        { s: IH + IARC + IH * 1.5, lanes: [-1, 0, 1], kind: 'N' },
-        { s: 3 * IH + IARC * 1.22, lanes: [-1, 1], kind: 'P' },
-        { s: 3 * IH + IARC * 1.78, lanes: [-1, 0, 1], kind: 'W' },
-        { s: 3 * IH + 2 * IARC + IH / 2, lanes: [-1, 0, 1], kind: 'N' },
+        { s: IH / 2, lanes: [-3, -1, 1, 3], kind: 'N' },
+        { s: IH + IARC * 0.22, lanes: [-3, 3], kind: 'P' },
+        { s: IH + IARC * 0.78, lanes: [-2, 0, 2], kind: 'W' },
+        { s: IH + IARC + IH / 2, lanes: [-2, 0, 2], kind: 'N' },
+        { s: IH + IARC + IH * 1.5, lanes: [-3, -1, 1, 3], kind: 'N' },
+        { s: 3 * IH + IARC * 1.22, lanes: [-3, 3], kind: 'P' },
+        { s: 3 * IH + IARC * 1.78, lanes: [-2, 0, 2], kind: 'W' },
+        { s: 3 * IH + 2 * IARC + IH / 2, lanes: [-2, 0, 2], kind: 'N' },
       ],
     },
   ]);

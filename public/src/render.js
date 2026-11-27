@@ -579,15 +579,14 @@
     text(ctx, 'SPD', hx + 6, hy + 16, PAL.silver);
     bar(ctx, hx + 33, hy + 16, 13, Math.hypot(p.vx, p.vy) / 500, p.nitro > 0 ? PAL.yellow : PAL.cyan);
 
-    /* the autopilot: on, and which lane it keeps to (inside, middle, outside, as the ship goes) */
+    /* the autopilot: on, and which of its seven lanes it keeps to (inside to outside, as the ship goes) */
     if (g.autoOn() && !p.finished) {
       const ay = touch ? hy + 31 : hy - 21, lane = p.pilot ? p.pilot.lane : 0;
       panel(ctx, hx, ay, 104, 18, PAL.lime);
-      text(ctx, 'AUTOPILOT', hx + 6, ay + 6, PAL.lime);
-      for (let k = -1; k <= 1; k++) {
-        const bx = hx + 70 + (k + 1) * 10;
+      text(ctx, 'AUTO', hx + 6, ay + 6, PAL.lime);
+      for (let k = -g.LANES; k <= g.LANES; k++) { // the seven lanes, the one flown lit
         ctx.fillStyle = k === lane ? PAL.lime : PAL.dusk;
-        ctx.fillRect(bx, ay + 5, 7, 8);
+        ctx.fillRect(hx + 36 + (k + g.LANES) * 9, ay + 5, 7, 8);
       }
       g.autoShown = lane; // (for the tests)
     } else g.autoShown = null;
@@ -671,9 +670,9 @@
       if (g.autoOn()) { // the autopilot flies: the player changes lanes and fights
         text(ctx, 'AUTOPILOT: IT FLIES, YOU FIGHT', W / 2, hy2, PAL.lime, 1, 'center', PAL.ink);
         if (touch) {
-          text(ctx, 'FLY STICK LEFT / RIGHT: CHANGE LANE', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
+          text(ctx, 'LANE SLIDER: PICK YOUR LANE', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
           text(ctx, 'FIRE STICK: SHOOT THAT WAY', W / 2, hy2 + 20, PAL.cyan, 1, 'center', PAL.ink);
-        } else text(ctx, 'LEFT / RIGHT: CHANGE LANE - DOWN: BRAKE - SPACE: FIRE', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
+        } else text(ctx, 'LEFT / RIGHT: CHANGE LANE (HOLD TO SWEEP) - SPACE: FIRE', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
       } else if (touch) {
         text(ctx, 'DRAG ANYWHERE: FLY THAT WAY', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
         text(ctx, 'DRAG FARTHER: MORE POWER', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
@@ -800,7 +799,23 @@
     /* steering: the stick bottom left (a tap swaps it for a turning slider), or a drag from anywhere else;
      * in a Grand Prix the autopilot flies, and they change lane */
     const slideMode = RR.input.steerSlide, auto = g.autoOn();
-    if (slideMode) {
+    if (auto) { // the autopilot: the lane slider, the only control; a tick for each lane, the knob on the lane flown (or under the thumb)
+      const r = L.slide, mid = r.x + r.w / 2, on = !!t.slide, N = g.LANES, lane = p.pilot ? p.pilot.lane : 0;
+      const travel = r.w / 2 - RR.input.SLIDE_KNOB / 2, kx = on ? t.slide.x : mid + (lane / N) * travel;
+      panel(ctx, r.x, r.y, r.w, r.h, on ? PAL.white : PAL.lime);
+      ctx.fillStyle = PAL.slate; ctx.fillRect(r.x + 6, r.y + r.h / 2 - 1, r.w - 12, 2); // the groove
+      for (let k = -N; k <= N; k++) {
+        ctx.fillStyle = k === lane ? PAL.lime : PAL.steel;
+        ctx.fillRect(Math.round(mid + (k / N) * travel), r.y + 5, 1, r.h - 10);
+      }
+      const kw = 22, kh = r.h + 6, kxL = Math.round(kx - kw / 2), kyT = r.y - 3;
+      ctx.fillStyle = on ? PAL.lime : '#2a6b3a';
+      ctx.fillRect(kxL, kyT, kw, kh);
+      ctx.fillStyle = on ? PAL.white : PAL.lime;
+      for (let k = -1; k <= 1; k++) ctx.fillRect(Math.round(kx) + k * 4, kyT + 8, 1, kh - 16); // grip lines
+      stickLabel(ctx, { x: L.steer.x, y: L.steer.y, r: r.h / 2 + 4 }, 'LANE', on ? PAL.white : PAL.silver, H, ins);
+      g.laneSlider = { lane: lane, knob: Math.round(kx) }; // (for the tests)
+    } else if (slideMode) {
       const r = L.slide, mid = r.x + r.w / 2, on = !!t.slide, kx = on ? t.slide.x : mid;
       panel(ctx, r.x, r.y, r.w, r.h, on ? PAL.white : PAL.steel);
       ctx.fillStyle = PAL.slate; ctx.fillRect(r.x + 6, r.y + r.h / 2 - 1, r.w - 12, 2); // the groove
@@ -825,9 +840,9 @@
     if (t.drag || t.slide || t.gas) {
       if (!t.drag || t.drag.power > 0) p.dragged = true;
     } else if (!p.dragged && g.phase === 'race' && Math.floor(g.t * 2) & 1) {
-      const hy = (slideMode ? L.tab.y - 6 : L.steer.y - L.steer.r) - 24;
-      text(ctx, auto ? 'LEFT / RIGHT' : slideMode ? 'SLIDE TO TURN' : 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, auto ? 'CHANGES LANE' : slideMode ? 'AND GAS TO GO' : 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
+      const hy = (auto ? L.slide.y - 6 : slideMode ? L.tab.y - 6 : L.steer.y - L.steer.r) - 24;
+      text(ctx, auto ? 'SLIDE TO PICK' : slideMode ? 'SLIDE TO TURN' : 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, auto ? 'YOUR LANE' : slideMode ? 'AND GAS TO GO' : 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
     }
 
     /* fire stick: the blaster fires while held (ahead, or the way it is pushed); missiles go on letting go */

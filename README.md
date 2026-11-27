@@ -21,10 +21,11 @@ and a second runs online multiplayer over WebSockets.
   - **Just three donuts**: the start/finish line, and one on the far side of each end's world (the
     moon and the ice world in the infield). They are giants, two and a half times the usual size,
     as wide as the lane, and count anywhere on them, so any lane goes through.
-  - **Three lanes** (inside, middle, outside), 85 pixels apart, which the rivals and the autopilot
-    keep to. Rivals move over for a pickup they want or round a slower ship.
-  - Nitro across all three lanes on each half of both straights, power-ups in the outer lanes going
-    into each end, and (weapons on) crates in every lane coming out of it. A wreck comes back on
+  - **Seven lanes**, 38 pixels apart, which the rivals and the autopilot keep to. Rivals move over
+    for a pickup they want, or two lanes over round a slower ship.
+  - The pickups are spread over the lanes, so the lane matters: nitro in every other lane on each half
+    of both straights, power-ups in the two outermost lanes going into each end, and (weapons on)
+    crates in three of the lanes coming out of it. A wreck comes back on
     the lane where it happened, facing the way round. The edge arrow leads along the lane.
 - **Donut checkpoints**: fly through every donut in order. The next one glows and an arrow
   at the screen edge points to it. The checkered donut is start/finish. Three laps (five on the
@@ -40,11 +41,12 @@ and a second runs online multiplayer over WebSockets.
 - **A Grand Prix is flown by the autopilot** (unless you switch it off in the hangar: the ship page's
   AUTOPILOT, on to start with and remembered; off, a Grand Prix is flown by hand, GAS and all), so the
   fight has your full attention. It flies the ship round the course, flat out, and keeps to one of
-  three lanes; LEFT and RIGHT change lane
-  instead of steering: a push left or right (arrows, the FLY stick or its slider, a drag, the pad)
-  moves it one lane over, however long it is held. BRAKE (DOWN) still brakes; firing, aiming (A / D)
-  and the gate deferral stay yours. There is no GAS in a race (the autopilot runs the engine), the
-  touch stick is labelled LANE, and a panel by the hull bar shows AUTOPILOT and which lane it is in.
+  seven lanes, which you choose. On a touch screen the **lane slider** is the only control (no stick,
+  no drag-to-steer): a tick for each lane, the knob on the lane you are in; drag it and the ship moves
+  to the lane under your thumb, and stays there when you let go. On keys or a pad, LEFT and RIGHT move
+  it a lane over per push, and on across the lanes while held. BRAKE (DOWN) still brakes; firing,
+  aiming (A / D) and the gate deferral stay yours. There is no GAS in a race (the autopilot runs the
+  engine), and a panel by the hull bar shows AUTO and which of the seven lanes it is in.
   It flies every course: on the walled oval it follows the lane; elsewhere it flies gate to gate the
   way the rivals do and eases back to each gate's middle as it comes, so it never misses one.
   Times go to the world tables either way, those the autopilot flew marked: a small steering wheel after the rocket in the SETUP column (the key under the table
@@ -175,7 +177,7 @@ and a second runs online multiplayer over WebSockets.
 
 | | Keyboard | Phone / tablet |
 |---|---|---|
-| Grand Prix (autopilot on) | LEFT / RIGHT change lane (the autopilot flies); DOWN or S brakes | Push the LANE stick (or slider, or drag) left or right to change lane; BRAKE brakes |
+| Grand Prix (autopilot on) | LEFT / RIGHT change lane, one per push, sweeping on while held (the autopilot flies); DOWN or S brakes | The LANE slider, bottom left: the ship flies in the lane under your thumb, and stays there when you let go; BRAKE brakes |
 | Fly (fights, and a Grand Prix with the autopilot off) | Arrow keys (turn, thrust, brake/reverse); W and S also thrust and brake | The FLY stick, bottom left (the fire stick's mirror image): the rocket heads the way you push it, and the farther you push, the more engine power (full at the rim). A quick tap on the stick (no push) swaps it for a slider: drag its knob left or right and the rocket turns that way, gently near the middle and harder towards the ends (a full turn only at the very end), and it springs back to the middle when you let go (use GAS to go); the STICK tab above it swaps back, and the choice is remembered. Or touch anywhere else and drag: the rocket heads the way you drag, and the farther you drag from where you started, the more power. A power meter shows the power (above the stick, or by your thumb) and fills to MAX; ease back to throttle down, lift to coast |
 | Fire weapon | Space (or X / J): fires the way the guns point; hold it for the blaster's automatic fire. Hold A or D to swing the guns (blaster, cannon and missiles) left or right, starting from straight ahead, with a dashed line showing the aim; while you hold it the guns keep pointing the same way in space however the rocket turns; let go and they point straight ahead again and the line goes. In the menus A and D still mean left and right | Fire stick. Blaster: automatic, firing all the time you hold the stick, straight ahead until you drag it, then the way you drag. Missiles: hold the stick, drag the way to fire (a faint dashed line shows the aim and corner marks show the rival it will lock onto), and let go to launch; a quick tap launches straight ahead. Mines drop behind and EMP spreads all round as soon as you touch the stick |
 | Brake | Down / S | BRAKE button, to the left of GAS |

@@ -210,7 +210,7 @@ test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HU
     const lane = async (key) => {
       await page.keyboard.down(key); await page.waitForTimeout(120); await page.keyboard.up(key); await page.waitForTimeout(60);
       await page.evaluate(() => T.run(2.5));
-      return page.evaluate(() => { const g = RR.game, p = g.player; return [p.pilot.lane, g.autoShown, Math.round(g.track.lane.at(p.x, p.y).d / 85) + 0]; }); // (+ 0: no -0)
+      return page.evaluate(() => { const g = RR.game, p = g.player; return [p.pilot.lane, g.autoShown, Math.round(g.track.lane.at(p.x, p.y).d / g.track.lane.gap) + 0]; }); // (+ 0: no -0)
     };
     assert.deepStrictEqual(await lane('ArrowRight'), [1, 1, 1], 'outside lane: the HUD shows it, and the ship is in it');
     assert.deepStrictEqual(await lane('ArrowLeft'), [0, 0, 0]);
@@ -259,6 +259,24 @@ test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HU
     await ph.down(v.gas); await ph.up();
     await ph.page.waitForTimeout(100);
     assert.strictEqual((await look()).latch, false, 'no GAS to tap on');
+    // the lane slider is the only control: the lane under the thumb, kept when it lifts; a drag elsewhere steers nothing,
+    // and the stick's spot is no stick (it is the slider's middle: a tap there does not swap anything)
+    const sl = await ph.page.evaluate(() => { const g = RR.game, L = RR.touchLayout(g.W, g.H, g.inset); return { x: L.slide.x, y: L.slide.y + L.slide.h / 2, w: L.slide.w, k: RR.input.SLIDE_KNOB, steer: [L.steer.x, L.steer.y] }; });
+    const travel = sl.w / 2 - sl.k / 2, mid = sl.x + sl.w / 2;
+    const slideTo = async (f) => { await ph.down([Math.round(mid), sl.y]); await ph.move([Math.round(mid + f * travel), sl.y]); await ph.page.waitForTimeout(150); };
+    await slideTo(1);
+    assert.deepStrictEqual(await ph.page.evaluate(() => [RR.game.player.pilot.lane, RR.game.laneSlider.lane]), [3, 3], 'to the right end: the outermost lane');
+    await ph.move([Math.round(mid - 0.34 * travel), sl.y]); await ph.page.waitForTimeout(150);
+    assert.strictEqual(await ph.page.evaluate(() => RR.game.player.pilot.lane), -1, 'a third of the way left: one lane in');
+    await ph.up(); await ph.page.waitForTimeout(150);
+    assert.deepStrictEqual(await ph.page.evaluate(() => [RR.game.player.pilot.lane, RR.input.touch.slide]), [-1, null], 'let go: the lane stays');
+    const before = await ph.page.evaluate(() => [RR.input.steerSlide, RR.game.player.pilot.lane]);
+    await ph.down([Math.round(v.gas[0] - 160), 40]); await ph.move([Math.round(v.gas[0] - 100), 40]); await ph.page.waitForTimeout(150);
+    assert.strictEqual(await ph.page.evaluate(() => RR.input.touch.drag), null, 'a drag elsewhere is no steering');
+    await ph.up();
+    await ph.down(sl.steer); await ph.up(); await ph.page.waitForTimeout(150);
+    assert.deepStrictEqual(await ph.page.evaluate(() => [RR.input.steerSlide, RR.game.player.pilot.lane]), [before[0], 0],
+      'the stick\'s spot is the slider\'s middle: a tap there is the middle lane, and swaps nothing');
     assert.strictEqual(await ph.page.evaluate(() => RR.game.autoOn()), true, 'the autopilot flies it');
     assert.deepStrictEqual(ph.errors, []);
   } finally { await ph.ctx.close(); }

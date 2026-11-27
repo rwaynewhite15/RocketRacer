@@ -226,7 +226,7 @@
   const TAP_MS = 250, TAP_MOVE = 8; // a tap: let go this soon, having moved less than this (game pixels)
   const SLIDE_KNOB = 22, SLIDE_DEAD = 0.15; // the slider's knob width; its middle 15% either way does not turn
   const SLIDE_CURVE = 2; // the turn grows as the square of the slide past the dead zone: fine control near the middle
-  I.SLIDE_DEAD = SLIDE_DEAD; I.SLIDE_CURVE = SLIDE_CURVE;
+  I.SLIDE_DEAD = SLIDE_DEAD; I.SLIDE_CURVE = SLIDE_CURVE; I.SLIDE_KNOB = SLIDE_KNOB;
 
   /** The turning slider under a finger: where its knob sits (`x`), and the turn, -1 (left) to 1 (right). */
   function slideState(p, r) {
@@ -301,6 +301,8 @@
     if (inside(x, y, L.brake, 6)) return 'brake';
     if (!L.noGas && inside(x, y, L.gas, 6)) return 'gas'; // (no GAS in a Grand Prix: the autopilot runs the engine)
     if (near(x, y, L.fire)) return 'fire';
+    // a Grand Prix on the autopilot: the lane slider is the only way to fly (no stick, no drag-to-steer)
+    if (L.laneSlide) return inside(x, y, L.slide, 8) ? 'slide' : 'none';
     if (I.steerSlide) {
       if (inside(x, y, L.tab, 4)) return 'tab';
       if (inside(x, y, L.slide, 8)) return 'slide';
@@ -406,7 +408,9 @@
     // stick: a thumb is on the touch fire stick (aimed weapons fire as it lets go); keyAim: aimed with A / D
     let aim = t.aim, keyAim = false;
     if (aim == null && I.aimDir != null && ship) { aim = I.aimDir; keyAim = true; }
-    return { turn: RR.clamp(turn, -1, 1), thrust: thrust, brake: brake, fire: fire, aim: aim, stick: !!t.aimStick, keyAim: keyAim };
+    // slideAt: where the slider's knob is (-1 left .. 1 right) while a thumb is on it: the autopilot's lane
+    return { turn: RR.clamp(turn, -1, 1), thrust: thrust, brake: brake, fire: fire, aim: aim, stick: !!t.aimStick, keyAim: keyAim,
+      slideAt: t.slide ? t.slide.f : null };
   };
 
   /** Short haptic tick on phones that support it. */
