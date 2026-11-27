@@ -21,7 +21,8 @@ and a second runs online multiplayer over WebSockets.
   - **Just three donuts**: the start/finish line, and one on the far side of each end's world (the
     moon and the ice world in the infield). They are giants, two and a half times the usual size,
     as wide as the lane, and count anywhere on them, so any lane goes through.
-  - **Seven lanes**, 38 pixels apart, which the rivals and the autopilot keep to. Rivals move over
+  - **Seven lanes**, 38 pixels apart, which the rivals and the autopilot keep to, round the ends as
+    well as down the straights (so a pickup in a lane is picked up by keeping to it). Rivals move over
     for a pickup they want, or two lanes over round a slower ship.
   - The pickups are spread over the lanes, so the lane matters: nitro in every other lane on each half
     of both straights, power-ups in the two outermost lanes going into each end, and (weapons on)

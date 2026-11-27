@@ -2817,7 +2817,10 @@
     const speed = Math.hypot(s.vx, s.vy);
     let dx, dy, gx = 0, gy = 0, gdist = 1;
     if (tr.lane) {
-      const here = tr.lane.at(s.x, s.y), ahead = tr.lane.point(here.s + 90 + speed * 0.22, off); // (not so far ahead that it cuts the ends)
+      // a point in the lane ahead (not so far ahead that it cuts the ends); aiming ahead cuts inside a turn, so aim
+      // that much further out again, by how far off the lane the ship is, to keep to it (and its pickups) all the way round
+      const here = tr.lane.at(s.x, s.y), back = clamp((off - here.d) * LANE_PULL, -LANE_PULL_MAX, LANE_PULL_MAX);
+      const ahead = tr.lane.point(here.s + 90 + speed * 0.22, off + back);
       dx = ahead.x - s.x; dy = ahead.y - s.y;
     } else {
       if (st.cpFor !== s.cpCount) { // a rival aims a little off each gate's middle, as a person would
@@ -2905,6 +2908,7 @@
    * is told, and a time it flew says so on the tables).
    */
   const LANES = 3, GATE_GAP = 30; // lanes either side of the middle (seven in all); their spacing on a course of gates
+  const LANE_PULL = 1.5, LANE_PULL_MAX = 30; // on a walled lane: how much further out to aim per pixel off the lane, and at most
   const LANE_REPEAT = 0.3, LANE_EVERY = 0.14; // a held key: one lane at once, then on after this long, one lane every so often
   G.LANES = LANES;
   G.autoOn = function () { return this.autopilot && this.mode === 'race' && !this.demo; };
