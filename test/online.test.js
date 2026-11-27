@@ -83,6 +83,8 @@ test('online: two players find each other through a room code, race, and each se
   const s = await serve();
   const A = await player(s.url, 'ALICE'), B = await player(s.url, 'BOB');
   try {
+    // both fly by hand (the hangar's autopilot is on by default)
+    for (const P of [A, B]) await P.page.evaluate(() => { RR.game.autopilot = false; });
     const { code, lobby } = await intoRace(A, B);
     assert.match(code, /^[A-Z]{4}$/);
     assert.deepStrictEqual(lobby, [['ALICE', '...'], ['BOB', '...']], 'the room lists both pilots, not ready yet');
@@ -116,6 +118,7 @@ test('online: on a slow network (150 ms each way) the player\'s own ship still a
   const s = await serve({ lag: 150 });
   const A = await player(s.url, 'ALICE'), B = await player(s.url, 'BOB');
   try {
+    for (const P of [A, B]) await P.page.evaluate(() => { RR.game.autopilot = false; }); // both fly by hand
     await intoRace(A, B);
     await A.page.waitForFunction(() => RR.game.phase === 'race', null, { timeout: 8000 });
     await B.page.keyboard.down('ArrowUp');
