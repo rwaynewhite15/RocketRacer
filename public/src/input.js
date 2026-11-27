@@ -299,7 +299,7 @@
   /** What a finger that lands at x, y works: a control's name, 'none' (an on-screen button) or 'steer' (a drag). */
   function classify(x, y, L, buttons) {
     if (inside(x, y, L.brake, 6)) return 'brake';
-    if (inside(x, y, L.gas, 6)) return 'gas';
+    if (!L.noGas && inside(x, y, L.gas, 6)) return 'gas'; // (no GAS in a Grand Prix: the autopilot runs the engine)
     if (near(x, y, L.fire)) return 'fire';
     if (I.steerSlide) {
       if (inside(x, y, L.tab, 4)) return 'tab';

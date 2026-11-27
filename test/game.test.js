@@ -146,7 +146,7 @@ test('weapons on or off for each course: WEAPONS beside RIVALS on the menu (keys
   } finally { await ctx.close(); }
 });
 
-test('a time set in a lent rocket shows as LENT: a gold star by the name on the top 10 (with a key), and LENT on the pilot\'s card', { skip }, async () => {
+test('the top 10 marks a time set in a lent rocket (a gold star by the name, LENT on the card) and one the autopilot flew (a steering wheel in SETUP, AUTOPILOT on the card), with a key', { skip }, async () => {
   // a server of our own, with a lent time recorded the way the multiplayer server records one
   const store = memoryStore();
   const own = http.createServer(createApp(store));
@@ -154,14 +154,16 @@ test('a time set in a lent rocket shows as LENT: a gold star by the name on the 
   const record = onlineRecorder(store, () => {});
   const maxed = { ship: 'phoenix', stats: [10, 10, 10, 10, 10], items: { nitro: 6, missile: 1 }, levels: { nitro: 3, missile: 3, shield: 3 } };
   await record({ track: 'indy', pid: 'lent-pid-0001', name: 'ZED', time: 60.25, lap: 11.5, diff: 1, place: 1, setup: maxed, lent: true });
-  await record({ track: 'indy', pid: 'own-pid-00002', name: 'OWN', time: 66.5, lap: 12.5, diff: 1, place: 1, setup: { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: {}, levels: {} } });
+  await record({ track: 'indy', pid: 'own-pid-00002', name: 'OWN', time: 66.5, lap: 12.5, diff: 1, place: 1, setup: { ship: 'sparrow', stats: [3, 3, 3, 3, 3], items: {}, levels: {} }, auto: true });
   const { page, ctx, errors } = await openGame(null, 'http://127.0.0.1:' + own.address().port);
   try {
     await page.waitForFunction(() => RR.net.online);
     await page.evaluate(() => { const g = RR.game; g.modeIdx = 0; g.trackIdx = RR.TRACKS.findIndex((t) => t.id === 'indy'); g.startRace(true); });
     await page.keyboard.press('KeyT');
     await page.waitForFunction(() => RR.game.boardShown && RR.game.boardShown.id === 'indy' && RR.game.boardShown.rows.length === 2, null, { timeout: 5000 });
-    assert.deepStrictEqual(await page.evaluate(() => [RR.game.boardShown.rows.map((r) => r[1]), RR.game.boardShown.lent]), [['ZED', 'OWN'], [1]], 'ZED\'s row is starred, OWN\'s not');
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.boardShown.rows.map((r) => r[1]), RR.game.boardShown.lent, RR.game.boardShown.auto]), [['ZED', 'OWN'], [1], [2]],
+      'ZED\'s row is starred (lent); OWN\'s has the autopilot\'s wheel');
+    assert.deepStrictEqual(await page.evaluate(() => RR.game.boardRows.map((r) => r.strip.auto)), [false, true]);
     // ZED's card: LENT by the rocket, and the stats LENT, MAXED OUT (one key a frame, as a person presses them)
     const press = async (k) => { await page.keyboard.press(k); await page.waitForTimeout(100); };
     await press('ArrowDown');
@@ -172,7 +174,7 @@ test('a time set in a lent rocket shows as LENT: a gold star by the name on the 
     await press('ArrowDown');
     await press('Enter');
     await page.waitForFunction(() => RR.game.boardCard && RR.game.boardCard.e.name === 'OWN', null, { timeout: 5000 });
-    assert.strictEqual(await page.evaluate(() => RR.game.cardShown.lent), false);
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.cardShown.lent, RR.game.cardShown.auto]), [false, true], 'OWN\'s card: the autopilot flew it');
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); own.close(); }
 });
@@ -191,6 +193,63 @@ test('the Indy-Galactic 500\'s giant donuts are drawn pixel for pixel at their s
     assert.ok(art.same);
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
+});
+
+test('a Grand Prix is flown by the autopilot: RIGHT and LEFT change lane (the HUD shows which), the time goes to the world table; a fight is flown by hand; on a touch screen no GAS in a race', { skip }, async () => {
+  const { page, ctx, errors } = await openGame();
+  try {
+    await page.evaluate(() => { const g = RR.game; g.modeIdx = 0; g.trackIdx = RR.TRACKS.findIndex((t) => t.id === 'indy'); g.startRace(true); });
+    await page.keyboard.press('KeyG'); // (nothing: there is no switch any more)
+    await page.waitForTimeout(80);
+    assert.strictEqual(await page.evaluate(() => RR.game.toast), null);
+    await page.evaluate(() => { window.submitted = []; RR.net.submit = function (id, body) { window.submitted.push([id, body.auto]); }; });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => RR.game.state === 'play');
+    await page.evaluate(() => T.run(5));
+    assert.ok(await page.evaluate(() => Math.hypot(RR.game.player.vx, RR.game.player.vy) > 200), 'flying itself');
+    const lane = async (key) => {
+      await page.keyboard.down(key); await page.waitForTimeout(120); await page.keyboard.up(key); await page.waitForTimeout(60);
+      await page.evaluate(() => T.run(2.5));
+      return page.evaluate(() => { const g = RR.game, p = g.player; return [p.pilot.lane, g.autoShown, Math.round(g.track.lane.at(p.x, p.y).d / 85) + 0]; }); // (+ 0: no -0)
+    };
+    assert.deepStrictEqual(await lane('ArrowRight'), [1, 1, 1], 'outside lane: the HUD shows it, and the ship is in it');
+    assert.deepStrictEqual(await lane('ArrowLeft'), [0, 0, 0]);
+    assert.deepStrictEqual(await lane('ArrowLeft'), [-1, -1, -1], 'inside lane');
+    await page.evaluate(() => { let k = 0; while (!RR.game.player.finished && k++ < 120 * 200) RR.game.step(1 / 120); });
+    assert.deepStrictEqual(await page.evaluate(() => [RR.game.player.finished, window.submitted]), [true, [['indy', true]]], 'the time goes to the world table, saying the autopilot flew it');
+
+    // a fight: LEFT turns the rocket, and no lane panel
+    await page.evaluate(() => { const g = RR.game; g.modeIdx = 1; g.arenaIdx = 0; g.startRace(false); g.state = 'play'; T.run(4.3); for (const s of g.ships) if (s !== g.player) s.dead = 1e9; });
+    const a0 = await page.evaluate(() => RR.game.player.angle);
+    await page.keyboard.down('ArrowLeft'); await page.waitForTimeout(300); await page.keyboard.up('ArrowLeft');
+    const fight = await page.evaluate((a) => ({ turned: Math.abs(RR.game.player.angle - a) > 0.3, panel: RR.game.autoShown, pilot: !!RR.game.player.pilot }), a0);
+    assert.deepStrictEqual(fight, { turned: true, panel: null, pilot: false }, 'flown by hand');
+    assert.deepStrictEqual(errors, []);
+  } finally { await ctx.close(); }
+
+  // a touch screen: in a race no AUTO and no GAS (a tap where it was does nothing); in a fight, GAS
+  const ph = await phoneRace(null, 'race');
+  try {
+    const look = () => ph.page.evaluate(() => {
+      const g = RR.game, L = RR.touchLayout(g.W, g.H, g.inset);
+      return { auto: g.ui.some((b) => b.label === 'AUTO'), latch: RR.input.gasLatch, gas: [L.gas.x + L.gas.w / 2, L.gas.y + L.gas.h / 2] };
+    });
+    let v = await look();
+    assert.strictEqual(v.auto, false);
+    await ph.down(v.gas); await ph.up();
+    await ph.page.waitForTimeout(100);
+    assert.strictEqual((await look()).latch, false, 'no GAS to tap on');
+    assert.strictEqual(await ph.page.evaluate(() => RR.game.autoOn()), true, 'the autopilot flies it');
+    assert.deepStrictEqual(ph.errors, []);
+  } finally { await ph.ctx.close(); }
+  const pf = await phoneRace();
+  try {
+    const v = await pf.page.evaluate(() => { const g = RR.game, L = RR.touchLayout(g.W, g.H, g.inset); return [L.gas.x + L.gas.w / 2, L.gas.y + L.gas.h / 2]; });
+    await pf.down(v); await pf.up();
+    await pf.page.waitForTimeout(100);
+    assert.strictEqual(await pf.page.evaluate(() => RR.input.gasLatch), true, 'a fight: GAS is there, and a tap keeps it on');
+    assert.deepStrictEqual(pf.errors, []);
+  } finally { await pf.ctx.close(); }
 });
 
 test('zoom changes the world scale but not the HUD, and is remembered', { skip }, async () => {
@@ -396,9 +455,9 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     // each row: the rocket, then the powerups most used first (two and a "+" when there are more than three)
     const strips = await page.evaluate(() => RR.game.boardRows.map((r) => r.strip));
     assert.deepStrictEqual(strips, [
-      { ship: 'phoenix', icons: ['nitro', 'missile'], numbers: [], more: 2 },
-      { ship: 'dart', icons: ['nitro'], numbers: [], more: 0 },
-      { ship: 'sparrow', icons: [], numbers: [], more: 0 },
+      { ship: 'phoenix', auto: false, icons: ['nitro', 'missile'], numbers: [], more: 2 },
+      { ship: 'dart', auto: false, icons: ['nitro'], numbers: [], more: 0 },
+      { ship: 'sparrow', auto: false, icons: [], numbers: [], more: 0 },
       null,
     ]);
 
@@ -414,7 +473,7 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     await click('PILOT 1');
     let s = await state();
     assert.deepStrictEqual(s.card, { rank: 1, name: 'COMET', shown: {
-      ship: 'phoenix', lent: false, stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['defer', 1]], numbers: [],
+      ship: 'phoenix', lent: false, auto: false, stats: [8, 9, 7, 6, 5], items: [['nitro', 3], ['missile', 2], ['shield', 1], ['defer', 1]], numbers: [],
     } });
     await click('BACK (ENTER)');
     s = await state();
@@ -428,13 +487,13 @@ test('leaderboard: rows show each pilot\'s rocket and powerups; a click (or the 
     assert.strictEqual((await state()).sel, 3, 'up from the top wraps to the bottom');
     await key('Enter');
     s = await state();
-    assert.deepStrictEqual(s.card, { rank: 4, name: 'OLDIE', shown: { ship: null, lent: false, stats: null, items: [], numbers: [] } }, 'an old row: no setup on record');
+    assert.deepStrictEqual(s.card, { rank: 4, name: 'OLDIE', shown: { ship: null, lent: false, auto: false, stats: null, items: [], numbers: [] } }, 'an old row: no setup on record');
     await key('Escape');
     assert.deepStrictEqual([(await state()).state, (await state()).card], ['board', null]);
     await key('ArrowUp');
     await key('Enter');
     s = await state();
-    assert.deepStrictEqual(s.card, { rank: 3, name: 'ROCKY', shown: { ship: 'sparrow', lent: false, stats: [3, 3, 3, 3, 3], items: [], numbers: [] } }, 'a clean run');
+    assert.deepStrictEqual(s.card, { rank: 3, name: 'ROCKY', shown: { ship: 'sparrow', lent: false, auto: false, stats: [3, 3, 3, 3, 3], items: [], numbers: [] } }, 'a clean run');
     await key('Enter');
     assert.strictEqual((await state()).card, null, 'Enter closes the card too');
     await key('Escape');
@@ -582,8 +641,8 @@ test('powerup upgrades: an upgraded pick-up is stronger, rivals stay at level 1,
     await page.waitForFunction(() => RR.game.boardRows && RR.game.boardRows.length === 2);
     const strips = await page.evaluate(() => RR.game.boardRows.map((x) => x.strip));
     assert.deepStrictEqual(strips, [
-      { ship: 'phoenix', icons: ['missile', 'nitro'], numbers: [['missile', 3]], more: 0 },
-      { ship: 'dart', icons: ['nitro'], numbers: [], more: 0 },
+      { ship: 'phoenix', auto: false, icons: ['missile', 'nitro'], numbers: [['missile', 3]], more: 0 },
+      { ship: 'dart', auto: false, icons: ['nitro'], numbers: [], more: 0 },
     ]);
     // no underline: the line of pixels just below the row icons has no gold in it
     const gold = await page.evaluate(() => {
@@ -662,9 +721,10 @@ test('gate deferral: E (or the DEFER button on a touch screen) spends one; headi
     assert.deepStrictEqual(errors, []);
   } finally { await ctx.close(); }
 
-  // touch
-  const ph = await phoneRace();
+  // touch (a race: the autopilot flies, so the ship is parked away from the gates while the test looks)
+  const ph = await phoneRace(null, 'race');
   try {
+    await ph.page.evaluate(() => { const g = RR.game, p = g.player, c = g.track.cps[5]; p.x = c.x; p.y = c.y; p.vx = p.vy = 0; p.stun = 30; p.spinRate = 0; });
     const btn = () => ph.page.evaluate(() => !!RR.game.ui.find((u) => u.label === 'DEFER'));
     assert.strictEqual(await btn(), false, 'no button without a deferral');
     await ph.page.evaluate(() => { const p = RR.game.player; p.lap = 1; p.nextCp = 1; p.cpCount = 1; p.defer = 1; });
@@ -1219,11 +1279,13 @@ test('keyboard: holding A or D swings the guns from straight ahead and keeps the
     assert.notStrictEqual(await page.evaluate(() => RR.game.modeIdx), mode0, 'D moves along the menu');
     await page.evaluate((m) => { RR.game.modeIdx = m; }, mode0);
 
-    // a race, holding still with the nose up and a blaster; note each shot's way and the aim it was fired at
+    // a fight (flown by hand: a Grand Prix is the autopilot's), the rivals out of the way, holding still with the
+    // nose up and a blaster; note each shot's way and the aim it was fired at
     await page.evaluate(() => {
-      const g = RR.game; g.modeIdx = 0; T.fresh(0);
+      const g = RR.game; g.modeIdx = 1; g.arenaIdx = 0; g.startRace(false); g.state = 'play'; T.run(4.3);
+      for (const s of g.ships) if (s !== g.player) s.dead = 1e9;
       const p = g.player; p.ai = null; p.weapon = 'blaster'; p.ammo = 999;
-      window.hold = (keepAngle) => { p.x = g.track.cps[3].x; p.y = g.track.cps[3].y; p.vx = p.vy = 0; if (!keepAngle) { p.angVel = 0; p.angle = -Math.PI / 2; } };
+      window.hold = (keepAngle) => { p.x = g.track.center.x; p.y = g.track.center.y; p.vx = p.vy = 0; if (!keepAngle) { p.angVel = 0; p.angle = -Math.PI / 2; } };
       window.hold();
       window.fired = [];
       const push = g.shots.push;
@@ -1296,14 +1358,25 @@ test('keyboard: holding A or D swings the guns from straight ahead and keeps the
 /* --------------------------------------------------------- touch sticks */
 
 /** A phone (or a tablet, given its screen size) with a race under way, and helpers to put thumbs on the screen (game-pixel coordinates). */
-async function phoneRace(viewport) {
+/**
+ * A phone in an event, past the countdown. A dogfight unless `event` says otherwise: the touch controls
+ * fly by hand only in a fight (a Grand Prix is flown by the autopilot), and its rivals are taken out of
+ * the way, so only the test moves anything.
+ */
+async function phoneRace(viewport, event) {
   const { ctx, page, errors } = await openPhone(browser, viewport);
-  await page.evaluate(() => {
+  await page.evaluate((ev) => {
     const g = RR.game;
     g.autoFull = false; g.wantFull = false; // keep the page still for these tests
+    g.modeIdx = RR.MODES.findIndex((m) => m.id === ev);
     g.begin();
     for (let i = 0; i < 120 * 4.3; i++) g.step(1 / 120); // past the countdown
-  });
+    if (g.combat) { // the rivals and the loose rocks out of the way, the player in the arena's clear middle
+      for (const s of g.ships) if (s !== g.player) s.dead = 1e9;
+      g.rocks = [];
+      const p = g.player; p.x = g.track.center.x; p.y = g.track.center.y; p.vx = p.vy = 0; p.angle = 0; p.angVel = 0;
+    }
+  }, event || 'dogfight');
   const cdp = await ctx.newCDPSession(page);
   const box = await page.locator('#hud').boundingBox();
   const k = box.width / await page.evaluate(() => RR.game.W);
@@ -1334,7 +1407,7 @@ test('touch: dragging from anywhere steers that way, and the farther the drag th
 
     // two quite different starting points: the open middle of the screen, and up in a corner
     for (const [sx, sy] of [[Math.round(W * 0.4), Math.round(H * 0.5)], [30, 60]]) {
-      await ph.page.evaluate(() => { const p = RR.game.player; p.vx = p.vy = 0; p.angle = 0; p.angVel = 0; });
+      await ph.page.evaluate(() => { const g = RR.game, p = g.player; p.x = g.track.center.x; p.y = g.track.center.y - 200; p.vx = p.vy = 0; p.angle = 0; p.angVel = 0; });
       await ph.down([sx, sy]);
       await ph.page.waitForTimeout(120);
       let d = await drag(), sh = await ship();

@@ -12,14 +12,20 @@ and a second runs online multiplayer over WebSockets.
 
 - **Four courses**: Lunar Loop (easy oval), Donut Drift (figure-eight through an asteroid
   belt), Gravity Gauntlet (planet slalom, orbiting rocks, long asteroid wall) and the
-  **Indy-Galactic 500**, the easiest and fastest: five laps of a big oval flown flat out. Every
-  corner between gates is gentle (an eighth of a turn at most), there are no rocks, no weapon crates
-  until you switch weapons on, its worlds sit in the infield well clear of the line, a nitro strip lies across each half
-  of both straights (one boost runs into the next, and the last carries you round the end), and
-  its donuts are giants, two and a half times the usual size (275 pixels across), that count
-  anywhere on them, tube and all: round each end they nearly touch, a tunnel to follow, so a
-  beginner can hardly miss one. The same rivals average about a third faster here than on Lunar
-  Loop.
+  **Indy-Galactic 500**, the easiest and fastest: five laps of a big oval flown flat out between
+  rock walls.
+  - **The walls** run along the inside and outside of a lane 280 pixels wide and keep everyone in:
+    a ship that reaches one bounces off (a scrape is free, a hard knock dents the hull), and shots
+    stop there. The walls are the lane's edges, exactly, so there are no gaps to slip through; the
+    rocks along them are fixed scenery (online they are never sent, so they cost nothing).
+  - **Just three donuts**: the start/finish line, and one on the far side of each end's world (the
+    moon and the ice world in the infield). They are giants, two and a half times the usual size,
+    as wide as the lane, and count anywhere on them, so any lane goes through.
+  - **Three lanes** (inside, middle, outside), 85 pixels apart, which the rivals and the autopilot
+    keep to. Rivals move over for a pickup they want or round a slower ship.
+  - Nitro across all three lanes on each half of both straights, power-ups in the outer lanes going
+    into each end, and (weapons on) crates in every lane coming out of it. A wreck comes back on
+    the lane where it happened, facing the way round. The edge arrow leads along the lane.
 - **Donut checkpoints**: fly through every donut in order. The next one glows and an arrow
   at the screen edge points to it. The checkered donut is start/finish. Three laps (five on the
   Indy-Galactic 500).
@@ -31,6 +37,20 @@ and a second runs online multiplayer over WebSockets.
   defer. The start/finish line can't be deferred: every lap is still flown over the line (with
   the line next, the button dims, and pressing it says FLY THE LINE). Rivals can't use it.
 - **Weapons** (red crates, one slot): Blaster, homing Missile, Mine, EMP shockwave.
+- **A Grand Prix is flown by the autopilot**, so the fight has your full attention. It flies the
+  ship round the course, flat out, and keeps to one of three lanes; LEFT and RIGHT change lane
+  instead of steering: a push left or right (arrows, the FLY stick or its slider, a drag, the pad)
+  moves it one lane over, however long it is held. BRAKE (DOWN) still brakes; firing, aiming (A / D)
+  and the gate deferral stay yours. There is no GAS in a race (the autopilot runs the engine), the
+  touch stick is labelled LANE, and a panel by the hull bar shows AUTOPILOT and which lane it is in.
+  It flies every course: on the walled oval it follows the lane; elsewhere it flies gate to gate the
+  way the rivals do and eases back to each gate's middle as it comes, so it never misses one.
+  Everyone races this way, so times go to the world tables as before, marked as flown on the
+  autopilot: a small steering wheel after the rocket in the SETUP column (the key under the table
+  says AUTO), and AUTOPILOT beside the time on the pilot's card. Times set before the autopilot
+  have no wheel. Online the player's own screen flies it, ahead of the server, like a player, and
+  its inputs say so, so the server's record says so too. The fights (Dogfight, Battle Royale, Capture the
+  Flag) have no course to follow and are flown by hand, as below.
 - **Weapons on or off, for each course**: in a Grand Prix, WEAPONS sits beside RIVALS on the menu
   (UP / DOWN to it, LEFT / RIGHT, or tap ON / OFF). Off, the course's weapon crates stay away, so
   nobody (you or a rival) has anything to fire; the power-ups stay. Each course keeps its own
@@ -154,10 +174,11 @@ and a second runs online multiplayer over WebSockets.
 
 | | Keyboard | Phone / tablet |
 |---|---|---|
-| Fly | Arrow keys (turn, thrust, brake/reverse); W and S also thrust and brake | The FLY stick, bottom left (the fire stick's mirror image): the rocket heads the way you push it, and the farther you push, the more engine power (full at the rim). A quick tap on the stick (no push) swaps it for a slider: drag its knob left or right and the rocket turns that way, gently near the middle and harder towards the ends (a full turn only at the very end), and it springs back to the middle when you let go (use GAS to go); the STICK tab above it swaps back, and the choice is remembered. Or touch anywhere else and drag: the rocket heads the way you drag, and the farther you drag from where you started, the more power. A power meter shows the power (above the stick, or by your thumb) and fills to MAX; ease back to throttle down, lift to coast |
+| Grand Prix | LEFT / RIGHT change lane (the autopilot flies); DOWN or S brakes | Push the LANE stick (or slider, or drag) left or right to change lane; BRAKE brakes |
+| Fly (fights) | Arrow keys (turn, thrust, brake/reverse); W and S also thrust and brake | The FLY stick, bottom left (the fire stick's mirror image): the rocket heads the way you push it, and the farther you push, the more engine power (full at the rim). A quick tap on the stick (no push) swaps it for a slider: drag its knob left or right and the rocket turns that way, gently near the middle and harder towards the ends (a full turn only at the very end), and it springs back to the middle when you let go (use GAS to go); the STICK tab above it swaps back, and the choice is remembered. Or touch anywhere else and drag: the rocket heads the way you drag, and the farther you drag from where you started, the more power. A power meter shows the power (above the stick, or by your thumb) and fills to MAX; ease back to throttle down, lift to coast |
 | Fire weapon | Space (or X / J): fires the way the guns point; hold it for the blaster's automatic fire. Hold A or D to swing the guns (blaster, cannon and missiles) left or right, starting from straight ahead, with a dashed line showing the aim; while you hold it the guns keep pointing the same way in space however the rocket turns; let go and they point straight ahead again and the line goes. In the menus A and D still mean left and right | Fire stick. Blaster: automatic, firing all the time you hold the stick, straight ahead until you drag it, then the way you drag. Missiles: hold the stick, drag the way to fire (a faint dashed line shows the aim and corner marks show the rival it will lock onto), and let go to launch; a quick tap launches straight ahead. Mines drop behind and EMP spreads all round as soon as you touch the stick |
 | Brake | Down / S | BRAKE button, to the left of GAS |
-| Gas | Up / W | GAS button, just above the fire stick: full engine power, the way the rocket points (or is being steered), so it speeds up steadily to its top speed. Hold it for gas until you let go, or tap it to keep it on (lit GAS ON) until you tap it again; a hold also turns a tapped-on GAS off. Every race starts with it off |
+| Gas (fights) | Up / W | GAS button, just above the fire stick (not in a Grand Prix, where the autopilot runs the engine): full engine power, the way the rocket points (or is being steered), so it speeds up steadily to its top speed. Hold it for gas until you let go, or tap it to keep it on (lit GAS ON) until you tap it again; a hold also turns a tapped-on GAS off. Every race starts with it off |
 | Gate deferral | E or Shift | DEFER button (appears while you hold one) |
 | Zoom | Z cycles normal / wide / close; + and - or the mouse wheel step through every level | ZOOM button |
 | Pause | P or Esc | II button |
@@ -403,12 +424,14 @@ The next pipeline run (or `./deploy.sh`) moves traffic back to the newest revisi
 | `GET /api/config` | `{ mp }`: where online play is (`MP_URL`, or `/ws` with `MP=embedded`), or `null` |
 | online-play service: `GET /api/health`, WebSocket `/ws` | `mp-server.js` (see Online multiplayer). Online times are stored with `online: true` |
 | `GET /api/scores?track=lunar` | a high score table's top 10: a course's race times (`lunar`, `eight`, `gauntlet`, `indy`), or a fight mode's scores (`dogfight`, `royale`, `ctf`). With an `X-Pilot-Id` header it also returns `me`: that player's own row and world rank |
-| `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff, place, setup }`, or a fight: `{ track: mode, pid, name, diff, map, result, setup }` (the server works out the points) |
+| `POST /api/scores` | submit a finished race: `{ track, pid, name, time, lap, diff, place, setup, auto }`, or a fight: `{ track: mode, pid, name, diff, map, result, setup }` (the server works out the points) |
 | `GET /api/history?mode=all` | the 10 pilots with the most wins in all events (or one: `race`, `dogfight`, `royale`, `ctf`); with `X-Pilot-Id`, `me`: that player's whole history and rank |
 | `POST /api/history` | one finished game for the player's history: `{ pid, name, mode, place, win }` (no closer than 5 seconds after their last) |
 
 Leaderboard rows live in Firestore at `rocketracer/{track}/scores/{pid}`. A row made in a rocket an
-invite link lent has `lent: true` (set only by the multiplayer server). Each player has an
+invite link lent has `lent: true` (set only by the multiplayer server); a race time the autopilot flew
+has `auto: true` (posted by the page, or online by the multiplayer server from the player's inputs;
+rows from before it existed read false). Each player has an
 anonymous id generated in their browser and keeps one row per course, replaced only by a
 faster time. A row records the time, best lap, rival level, `place` (where the pilot finished
 in that race, 1 to 6) and `setup`: `{ ship, stats, items, levels }`, the rocket flown, its

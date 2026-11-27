@@ -303,6 +303,14 @@
       ctx.drawImage(Art.mine[on ? 1 : 0], sx - 4, sy - 4);
     }
 
+    /* a walled lane's rocks (they never move: the walls are the lane's edges, see tracks.js) */
+    if (tr.walls) {
+      for (const w of tr.walls) {
+        const sx = w.x - cx, sy = w.y - cy;
+        if (vis(sx, sy, w.r + 4)) RR.drawRot(ctx, Art.rocks[w.size][w.variant], sx, sy, w.rot);
+      }
+    }
+
     /* asteroids (rotation snapped to steps so pixels don't crawl) */
     for (const a of g.rocks) {
       if (a.dead) continue;
@@ -408,7 +416,10 @@
     /* edge arrow towards the next gate when it is off-screen; in a fight it
      * points at the nearest rival, or back into the zone when you are outside it */
     let aim = null, hostile = false;
-    if (!g.playerDone && !g.combat) aim = tr.cps[p.nextCp];
+    if (!g.playerDone && !g.combat && tr.lane) { // a walled lane: along it, never across the infield (the gate once it is near)
+      const L = tr.lane, here = L.at(p.x, p.y), to = ((tr.cps[p.nextCp].s - here.s) % L.lap + L.lap) % L.lap;
+      aim = to < 500 ? tr.cps[p.nextCp] : L.point(here.s + 500, 0);
+    } else if (!g.playerDone && !g.combat) aim = tr.cps[p.nextCp];
     else if (!g.playerDone && p.dead <= 0 && g.ctf && g.flags) {
       // capture the flag: home with a flag; after whoever has ours; to a teammate with one; else to a flag to raid
       const goal = g.flagGoal(p);
@@ -568,6 +579,19 @@
     text(ctx, 'SPD', hx + 6, hy + 16, PAL.silver);
     bar(ctx, hx + 33, hy + 16, 13, Math.hypot(p.vx, p.vy) / 500, p.nitro > 0 ? PAL.yellow : PAL.cyan);
 
+    /* the autopilot: on, and which lane it keeps to (inside, middle, outside, as the ship goes) */
+    if (g.autoOn() && !p.finished) {
+      const ay = touch ? hy + 31 : hy - 21, lane = p.pilot ? p.pilot.lane : 0;
+      panel(ctx, hx, ay, 104, 18, PAL.lime);
+      text(ctx, 'AUTOPILOT', hx + 6, ay + 6, PAL.lime);
+      for (let k = -1; k <= 1; k++) {
+        const bx = hx + 70 + (k + 1) * 10;
+        ctx.fillStyle = k === lane ? PAL.lime : PAL.dusk;
+        ctx.fillRect(bx, ay + 5, 7, 8);
+      }
+      g.autoShown = lane; // (for the tests)
+    } else g.autoShown = null;
+
     /* who wrecked whom */
     if (g.combat) {
       let fy = touch ? Tp + 98 : Tp + 40;
@@ -624,7 +648,7 @@
     }
 
     /* active power-up timers */
-    let ey = touch ? hy + 33 : B - 58;
+    let ey = touch ? hy + (g.autoOn() && !p.finished ? 53 : 33) : B - 58; // (touch: under the hull bar, and the AUTOPILOT panel when it shows)
     const ex = touch ? L + 2 : Rr - 100;
     if (p.shield > 0) {
       ctx.drawImage(Art.icons.shield, ex, ey - 1);
@@ -644,7 +668,13 @@
       else text(ctx, String(n), W / 2, my - 6, [PAL.lime, PAL.lime, PAL.yellow, PAL.alarm][n], 8, 'center', PAL.ink);
       // how-to-fly reminder while the lights count down
       const hy2 = Math.round(H * (touch ? 0.56 : 0.62));
-      if (touch) {
+      if (g.autoOn()) { // the autopilot flies: the player changes lanes and fights
+        text(ctx, 'AUTOPILOT: IT FLIES, YOU FIGHT', W / 2, hy2, PAL.lime, 1, 'center', PAL.ink);
+        if (touch) {
+          text(ctx, 'FLY STICK LEFT / RIGHT: CHANGE LANE', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
+          text(ctx, 'FIRE STICK: SHOOT THAT WAY', W / 2, hy2 + 20, PAL.cyan, 1, 'center', PAL.ink);
+        } else text(ctx, 'LEFT / RIGHT: CHANGE LANE - DOWN: BRAKE - SPACE: FIRE', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
+      } else if (touch) {
         text(ctx, 'DRAG ANYWHERE: FLY THAT WAY', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
         text(ctx, 'DRAG FARTHER: MORE POWER', W / 2, hy2 + 10, PAL.cyan, 1, 'center', PAL.ink);
         text(ctx, 'FIRE STICK: SHOOT THAT WAY', W / 2, hy2 + 20, PAL.cyan, 1, 'center', PAL.ink);
@@ -652,7 +682,7 @@
         text(ctx, 'ARROWS TO FLY - A / D TO AIM - SPACE TO FIRE', W / 2, hy2, PAL.cyan, 1, 'center', PAL.ink);
       }
       text(ctx, g.ctf ? 'BRING ' + (g.caps.length > 2 ? 'ANY' : 'THEIR') + ' FLAG TO YOUR BASE - FIRST TO ' + C.CTF_CAPS : g.royale ? 'LAST SHIP FLYING WINS' : g.combat ? 'WRECK THEM - FIRST TO ' + C.KILL_TARGET + ' KILLS' : 'FLY THROUGH THE GLOWING DONUT',
-        W / 2, hy2 + (touch ? 34 : 12), PAL.pink, 1, 'center', PAL.ink);
+        W / 2, hy2 + (touch ? 34 : g.autoOn() ? 22 : 12), PAL.pink, 1, 'center', PAL.ink);
     } else if (g.msg) {
       const m = g.msg;
       const sc = Math.max(1, Math.min(m.scale, Math.floor((W - 12) / (m.text.length * 6))));
@@ -767,8 +797,9 @@
       if (on) { ctx.fillStyle = 'rgba(255,255,255,0.2)'; ctx.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2); }
     };
 
-    /* steering: the stick bottom left (a tap swaps it for a turning slider), or a drag from anywhere else */
-    const slideMode = RR.input.steerSlide;
+    /* steering: the stick bottom left (a tap swaps it for a turning slider), or a drag from anywhere else;
+     * in a Grand Prix the autopilot flies, and they change lane */
+    const slideMode = RR.input.steerSlide, auto = g.autoOn();
     if (slideMode) {
       const r = L.slide, mid = r.x + r.w / 2, on = !!t.slide, kx = on ? t.slide.x : mid;
       panel(ctx, r.x, r.y, r.w, r.h, on ? PAL.white : PAL.steel);
@@ -783,19 +814,20 @@
       for (let k = -1; k <= 1; k++) ctx.fillRect(Math.round(kx) + k * 4, kyT + 8, 1, kh - 16); // grip lines
       panel(ctx, L.tab.x, L.tab.y, L.tab.w, L.tab.h, PAL.steel);
       text(ctx, 'STICK', L.tab.x + L.tab.w / 2, L.tab.y + 5, PAL.silver, 1, 'center');
-      stickLabel(ctx, { x: L.steer.x, y: L.steer.y, r: r.h / 2 + 4 }, 'SLIDE TO TURN', on ? PAL.white : PAL.silver, H, ins);
+      stickLabel(ctx, { x: L.steer.x, y: L.steer.y, r: r.h / 2 + 4 }, auto ? 'SLIDE: LANE' : 'SLIDE TO TURN', on ? PAL.white : PAL.silver, H, ins);
     } else {
       const steering = t.drag && t.drag.stick ? t.drag : null;
       drawStick(ctx, L.steer, steering && steering.stick, PAL.lime, PAL.steel);
-      stickLabel(ctx, L.steer, 'FLY', steering ? PAL.white : PAL.silver, H, ins);
+      stickLabel(ctx, L.steer, auto ? 'LANE' : 'FLY', steering ? PAL.white : PAL.silver, H, ins);
     }
-    g.meter = t.drag ? drawDrag(ctx, t.gas ? Object.assign({}, t.drag, { power: 1 }) : t.drag, W, H, ins, g.t) : null; // (GAS: full power)
+    // the power a drag asks for (a Grand Prix: none, the autopilot runs the engine)
+    g.meter = t.drag && !auto ? drawDrag(ctx, t.gas ? Object.assign({}, t.drag, { power: 1 }) : t.drag, W, H, ins, g.t) : null; // (GAS: full power)
     if (t.drag || t.slide || t.gas) {
       if (!t.drag || t.drag.power > 0) p.dragged = true;
     } else if (!p.dragged && g.phase === 'race' && Math.floor(g.t * 2) & 1) {
       const hy = (slideMode ? L.tab.y - 6 : L.steer.y - L.steer.r) - 24;
-      text(ctx, slideMode ? 'SLIDE TO TURN' : 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, slideMode ? 'AND GAS TO GO' : 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, auto ? 'LEFT / RIGHT' : slideMode ? 'SLIDE TO TURN' : 'PUSH THE STICK', L.steer.x, hy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, auto ? 'CHANGES LANE' : slideMode ? 'AND GAS TO GO' : 'OR DRAG ANYWHERE', L.steer.x, hy + 10, PAL.silver, 1, 'center', PAL.ink);
     }
 
     /* fire stick: the blaster fires while held (ahead, or the way it is pushed); missiles go on letting go */
@@ -809,7 +841,7 @@
 
     key(L.brake, t.brake, PAL.steel);
     text(ctx, 'BRAKE', L.brake.x + L.brake.w / 2, L.brake.y + 18, PAL.silver, 1, 'center');
-    if (RR.input.gasLatch) { // tapped on: lit green until tapped again
+    if (auto) { /* a Grand Prix: no GAS (the autopilot runs the engine) */ } else if (RR.input.gasLatch) { // tapped on: lit green until tapped again
       panel(ctx, L.gas.x, L.gas.y, L.gas.w, L.gas.h, PAL.lime);
       ctx.fillStyle = 'rgba(99,199,77,0.35)'; ctx.fillRect(L.gas.x + 1, L.gas.y + 1, L.gas.w - 2, L.gas.h - 2);
       text(ctx, 'GAS', L.gas.x + L.gas.w / 2, L.gas.y + 13, PAL.white, 1, 'center');
@@ -1022,10 +1054,11 @@
       text(ctx, fight ? 'WIN EVENTS TO EARN STAT POINTS' : 'FLY THROUGH EVERY DONUT IN ORDER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, fight ? 'AND UNLOCK BETTER SHIPS' : 'GRAB POWER-UPS - BLAST YOUR RIVALS', W / 2, fy + 10, PAL.silver, 1, 'center', PAL.ink);
     } else if (W >= 440) {
-      text(ctx, 'ARROWS  FLY    A / D  AIM    SPACE  FIRE    E  DEFER GATE    P  PAUSE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
-      text(ctx, 'H  HANGAR    Z OR WHEEL  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
+      text(ctx, fight ? 'ARROWS  FLY    A / D  AIM    SPACE  FIRE    E  DEFER GATE    P  PAUSE'
+        : 'LEFT / RIGHT  LANE    DOWN  BRAKE    A / D  AIM    SPACE  FIRE    E  DEFER', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, (fight ? '' : 'P  PAUSE    ') + 'H  HANGAR    Z' + (fight ? ' OR WHEEL' : '') + '  ZOOM    M  MUTE    C  CRT    F  FULLSCREEN', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     } else {
-      text(ctx, 'ARROWS FLY - A/D AIM - SPACE FIRE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
+      text(ctx, fight ? 'ARROWS FLY - A/D AIM - SPACE FIRE' : 'LEFT/RIGHT LANE - A/D AIM - SPACE FIRE', W / 2, fy, PAL.silver, 1, 'center', PAL.ink);
       text(ctx, 'H HANGAR - Z ZOOM - P PAUSE - M MUTE', W / 2, fy + 10, PAL.steel, 1, 'center', PAL.ink);
     }
   }
@@ -1070,13 +1103,14 @@
    * more), with a small 2 or 3 beside one they had upgraded. Rows from before
    * setups were recorded get a dash. Returns what it drew, for the tests.
    */
-  function setupStrip(ctx, su, x, y) {
+  function setupStrip(ctx, su, x, y, auto) {
     const hull = su && hullOf(su.ship);
     if (!hull) { text(ctx, '-', x + 2, y, PAL.steel); return null; }
     ctx.drawImage(Art.shipMini(hull.design, 0), x, y - 2);
     const used = usedList(su), shown = used.slice(0, used.length > 3 ? 2 : 3), levels = su.levels || {};
-    const out = { ship: hull.id, icons: [], numbers: [], more: used.length - shown.length };
+    const out = { ship: hull.id, auto: !!auto, icons: [], numbers: [], more: used.length - shown.length };
     let ix = x + 11;
+    if (auto) { ctx.drawImage(Art.icons.auto, ix, y - 1); ix += 12; } // flown on the autopilot: a steering wheel
     shown.forEach(function (u) {
       ctx.drawImage(Art.icons[u[0]], ix, y - 1);
       ix += 10;
@@ -1128,12 +1162,12 @@
     const touch = RR.input.touchMode;
     ctx.fillStyle = 'rgba(7,7,26,0.72)';
     ctx.fillRect(0, 0, W, H);
-    const pw = Math.min(W - 8, 240), ph = fight ? 272 : 232, rowH = 12;
+    const pw = Math.min(W - 8, 256), ph = fight ? 272 : 232, rowH = 12; // (room in SETUP for the autopilot's wheel)
     const x = Math.round((W - pw) / 2), y = Math.max(2, Math.round((H - ph) / 2));
     const cSetup = x + 94, cPlace = x + pw - 92, cDiff = x + pw - 62, cTime = x + pw - 10;
     panel(ctx, x, y, pw, ph, PAL.pink);
     boardHeader(g, ctx, W, x, y, pw, 'WORLD TOP 10', fight ? REC.NAMES[id] : def.name, PAL.pink, PAL.plum);
-    g.boardShown = { id: id, fight: fight, rows: [], lent: [] }; // (what is on screen, for the tests)
+    g.boardShown = { id: id, fight: fight, rows: [], lent: [], auto: [] }; // (what is on screen, for the tests)
 
     const rows = (g.boardRows = []); // what the arrows can pick, in order
     const row = function (ry, rank, e, col) {
@@ -1147,7 +1181,8 @@
       text(ctx, String(rank), x + 22, ry, col, 1, 'right');
       if (e.lent) { text(ctx, '*', x + 24, ry, PAL.gold); g.boardShown.lent.push(rank); } // in a rocket an invite lent
       text(ctx, e.name, x + 30, ry, col);
-      r.strip = setupStrip(ctx, e.setup, cSetup, ry);
+      r.strip = setupStrip(ctx, e.setup, cSetup, ry, e.auto);
+      if (e.auto) g.boardShown.auto.push(rank);
       r.at = [cSetup, ry];
       // finishing place in that race or fight; older race rows were saved without one
       if (e.place >= 1 && e.place <= 6) text(ctx, ORD[e.place - 1], cPlace, ry, col === PAL.yellow ? col : PLACE_COL[e.place - 1]);
@@ -1198,9 +1233,13 @@
     if (fight) { // how the points are made
       REC.explain(id).forEach(function (ln, k) { text(ctx, ln, W / 2, y + 190 + k * 9, PAL.silver, 1, 'center'); });
     }
-    const KEY = 'R ROOKIE  P PILOT  A ACE', anyLent = g.boardShown.lent.length > 0;
-    text(ctx, KEY + (anyLent ? '  * LENT ROCKET' : ''), W / 2, y + ph - 45, PAL.steel, 1, 'center');
-    if (anyLent) text(ctx, '*', W / 2 - RR.textW(KEY + '  * LENT ROCKET') / 2 + RR.textW(KEY + '  ') + 1, y + ph - 45, PAL.gold); // (the key's star, gold too)
+    // the key: the rivals' levels, and (when any row has one) the lent rocket's star and the autopilot's wheel
+    const KEY = 'R ROOKIE  P PILOT  A ACE', anyLent = g.boardShown.lent.length > 0, anyAuto = g.boardShown.auto.length > 0;
+    const lentPart = anyLent ? '  * LENT' : '', line = KEY + lentPart + (anyAuto ? '     AUTO' : ''); // (the wheel sits in the gap)
+    const lx = Math.round(W / 2 - RR.textW(line) / 2), ky = y + ph - 45;
+    text(ctx, line, lx, ky, PAL.steel);
+    if (anyLent) text(ctx, '*', lx + RR.textW(KEY + '  ') + 1, ky, PAL.gold);
+    if (anyAuto) ctx.drawImage(Art.icons.auto, lx + RR.textW(KEY + lentPart + '  ') + 1, ky);
     const bw = 90;
     button(g, ctx, touch ? 'CLOSE' : 'CLOSE (ENTER)', Math.round(W / 2 - bw / 2), y + ph - 22, bw, 17,
       function () { g.closeBoard(); }, PAL.lime);
@@ -1295,10 +1334,11 @@
       if (e.map && !hull) text(ctx, mapName(e.map), tx, y + 88, PAL.steel);
     } else {
       text(ctx, 'TIME ' + fmt(e.time), tx, y + 58, PAL.white);
+      if (e.auto) text(ctx, 'AUTOPILOT', x + pw - 14, y + 58, PAL.lime, 1, 'right'); // flown on the autopilot
       text(ctx, 'BEST LAP ' + fmt(e.lap), tx, y + 68, PAL.silver);
       text(ctx, vs, tx, y + 78, DIFF_COL[e.diff] || PAL.silver);
     }
-    const shown = { ship: hull ? hull.id : null, lent: !!e.lent, stats: null, items: [], numbers: [] };
+    const shown = { ship: hull ? hull.id : null, lent: !!e.lent, auto: !!e.auto, stats: null, items: [], numbers: [] };
     g.cardShown = shown;
 
     if (!hull) {

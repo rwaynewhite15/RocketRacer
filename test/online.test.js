@@ -292,13 +292,18 @@ test('online: a hit flashes a ship white only for a moment; human pilots are nam
     assert.ok(flash.most > 0, 'the flash shows');
     assert.ok(flash.after <= 0, 'and ends (it used to stay white for good): ' + flash.after);
 
-    // a gate deferral: Alice presses E, the server takes it, and her screen and Bob's show it
+    // a gate deferral: Alice presses E, the server takes it, and her screen and Bob's show it (her autopilot flies a
+    // Grand Prix, so she is parked well away from the gates, braking, while it happens)
+    const far = G.track.cps[6];
+    alice.x = far.x; alice.y = far.y; alice.vx = alice.vy = 0;
+    await A.page.keyboard.down('ArrowDown');
     alice.lap = 1; alice.nextCp = 1; alice.cpCount = 1; alice.defer = 1;
     await A.page.waitForFunction(() => RR.game.player.defer === 1 && RR.game.player.nextCp === 1);
     await A.page.keyboard.press('KeyE');
     await A.page.waitForFunction(() => RR.game.player.nextCp === 2 && RR.game.player.defer === 0 && RR.game.msg && RR.game.msg.text === 'GATE DEFERRED!', null, { timeout: 3000 });
     assert.deepStrictEqual([alice.nextCp, alice.cpCount, alice.defer, alice.used.defer], [2, 2, 0, 1], 'on the server');
     await B.page.waitForFunction(() => RR.game.texts.some((t) => t.text === 'DEFERRED'), null, { timeout: 3000 });
+    await A.page.keyboard.up('ArrowDown');
     assert.deepStrictEqual([A.errors, B.errors], [[], []]);
   } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
 });
@@ -382,6 +387,18 @@ test('online: humans only - the switch on the ONLINE screen (RIGHT, or a tap) is
     assert.ok(want.pickups.includes('W'), 'weapon crates out on the server');
     assert.deepStrictEqual(await look(A), want, 'just the two of them, on the oval');
     assert.deepStrictEqual(await look(B), want);
+
+    // Alice's autopilot flies her round, into the outside lane (RIGHT): her own screen flies it ahead of the
+    // server and agrees with it, between the walls
+    await A.page.waitForFunction(() => RR.game.phase === 'race', null, { timeout: 8000 });
+    await A.page.waitForTimeout(400);
+    await A.page.keyboard.down('ArrowRight'); await A.page.waitForTimeout(150); await A.page.keyboard.up('ArrowRight');
+    await A.page.waitForTimeout(3000);
+    const mine = await A.page.evaluate(() => { const p = RR.game.player, L = RR.game.track.lane; return { x: p.x, y: p.y, v: Math.hypot(p.vx, p.vy), d: L.at(p.x, p.y).d, lane: p.pilot.lane }; });
+    const srv2 = [...s.hub.rooms][0].engine.G, ship = srv2.ships[0];
+    assert.ok(mine.v > 200 && mine.lane === 1, 'flying itself, in the outside lane: ' + JSON.stringify(mine));
+    assert.ok(Math.abs(mine.d) < 140, 'between the walls');
+    assert.ok(Math.hypot(mine.x - ship.x, mine.y - ship.y) < 40, 'her screen agrees with the server');
     assert.deepStrictEqual([A.errors, B.errors], [[], []]);
   } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
 });
