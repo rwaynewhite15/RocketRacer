@@ -133,6 +133,15 @@ noscript {
   display: none;
 }
 
+/* A short screen (a phone on its side): the box near the top, so its buttons stay on screen. */
+@media (max-height: 480px) {
+  #namebox, #codebox, #linkbox {
+    top: max(8px, env(safe-area-inset-top, 0px));
+    padding-top: 14px;
+    padding-bottom: 12px;
+  }
+}
+
 #namebox label, #codebox label, #linkbox label {
   display: block;
   margin-bottom: 10px;
@@ -197,8 +206,8 @@ noscript {
 }
 
 /* The invite link: the whole address, wrapped, ready to select or copy. */
-#linkbox [hidden] {
-  display: none !important; /* (the lend row is a flex row) */
+#linkbox [hidden], #namebox [hidden] {
+  display: none !important; /* (the lend and autopilot rows are flex rows) */
 }
 
 #linkbox textarea {
@@ -220,7 +229,8 @@ noscript {
   user-select: all;
 }
 
-#linkbox label.check {
+/* A tick box: LEND on the invite link, AUTOPILOT for a friend joining from one. */
+#linkbox label.check, #namebox label.check {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -231,9 +241,15 @@ noscript {
   cursor: pointer;
 }
 
-#linkbox label.check input {
+#linkbox label.check input, #namebox label.check input {
   width: 20px;
   height: 20px;
   margin: 0;
+  padding: 0;
+  border: 0;
   accent-color: #ffcd75;
+}
+
+#namebox label.check + p {
+  margin-top: 6px;
 }

@@ -17,7 +17,8 @@
  * ship meanwhile).
  *
  * Invite links: a private room's lobby gives a link (INVITE LINK) that opens
- * the game, asks for a pilot name and joins the room. The room's host can
+ * the game, asks for a pilot name (and whether they want the autopilot) and
+ * joins the room. The room's host can
  * make it lend a maxed-out Phoenix (the server checks the room's lend key).
  * ======================================================================== */
 (function () {
@@ -329,7 +330,7 @@
   M.linkChanged = function () {
     const lend = !!(M.key && el('lend').checked);
     el('invitelink').value = M.inviteLink(lend);
-    el('linkhelp').textContent = 'Opens the game, asks for a pilot name and joins this room.' +
+    el('linkhelp').textContent = 'Opens the game, asks for a pilot name and whether they want the autopilot, and joins this room.' +
       (lend ? ' They are lent a Phoenix with every stat and powerup maxed out, in this room only; what they do in it is marked LENT.' : '');
     el('linkcopy').textContent = 'COPY';
   };

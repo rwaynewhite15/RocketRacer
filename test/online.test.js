@@ -408,7 +408,7 @@ test('online: humans only - the switch on the ONLINE screen (RIGHT, or a tap) is
   } finally { await A.ctx.close(); await B.ctx.close(); s.close(); }
 });
 
-test('online: invite links - the host\'s INVITE LINK opens the game for a friend, who picks a pilot name and joins at once; a lending link gives them a maxed-out Phoenix for the room', { skip }, async () => {
+test('online: invite links - the host\'s INVITE LINK opens the game for a friend, who picks a pilot name and the autopilot (or not) and joins at once; a lending link gives them a maxed-out Phoenix for the room', { skip }, async () => {
   const s = await serve();
   const A = await player(s.url, 'ALICE');
   const guests = [];
@@ -426,6 +426,10 @@ test('online: invite links - the host\'s INVITE LINK opens the game for a friend
     return P;
   };
   try {
+    // the plain pilot-name box (no invite) has no autopilot choice: that is the hangar's
+    await A.page.evaluate(() => RR.game.editName());
+    assert.deepStrictEqual(await A.page.evaluate(() => [document.getElementById('autorow').hidden, document.getElementById('autohelp').hidden]), [true, true]);
+    await A.page.evaluate(() => RR.game.closeName(false));
     await A.tap('ONLINE (O)');
     await A.page.waitForFunction(() => RR.mp.status === 'online');
     await A.tap('CREATE ROOM');
@@ -442,6 +446,7 @@ test('online: invite links - the host\'s INVITE LINK opens the game for a friend
     const lending = await A.page.inputValue('#invitelink');
     assert.match(lending, new RegExp('\\?room=' + code + '&loan=[0-9a-f]{12}$'));
     assert.match(await A.page.textContent('#linkhelp'), /MAXED OUT/i);
+    assert.match(await A.page.textContent('#linkhelp'), /whether they want the autopilot/);
     await A.page.click('#linkdone');
     await A.page.waitForSelector('#linkbox', { state: 'hidden' });
 
@@ -451,21 +456,28 @@ test('online: invite links - the host\'s INVITE LINK opens the game for a friend
     assert.match(await B.page.textContent('#namehelp'), /lent a Phoenix with every stat and powerup maxed out/);
     assert.strictEqual(B.page.url(), s.url, 'the link is taken out of the address bar (a reload will not join twice)');
     const hangar = await B.page.evaluate(() => JSON.stringify(RR.game.prog));
+    // the AUTOPILOT tick box, ticked as his hangar has it (on, for a new pilot): he unticks it, to steer himself
+    assert.deepStrictEqual(await B.page.evaluate(() => [document.getElementById('autorow').hidden, document.getElementById('autopick').checked]), [false, true]);
+    assert.match(await B.page.textContent('#autohelp'), /you pick the lane and fight. Off: you steer/);
     await B.page.fill('#pilot', 'zed');
+    await B.page.click('#autopick');
     await B.page.click('#nameok');
     await B.page.waitForFunction(() => RR.game.state === 'online' && RR.mp.room && RR.mp.room.humans.length === 2, null, { timeout: 6000 });
     assert.deepStrictEqual(await B.page.evaluate(() => [RR.game.name, RR.mp.room.code, RR.mp.room.humans[RR.mp.you].loan, RR.mp.key]), ['ZED', code, true, null],
       'named ZED, in the room, flying a lent rocket, and not the host');
+    assert.deepStrictEqual(await B.page.evaluate(() => [RR.game.autopilot, JSON.parse(localStorage.getItem('rocketracer.v1')).autopilot]), [false, false],
+      'the autopilot off, as he chose, and kept (the hangar\'s switch)');
 
     // Carol opens the plain link: her own rocket. Dan opens it and says NOT NOW: he stays on the title screen
     const C = await opens(plain);
     assert.doesNotMatch(await C.page.textContent('#namehelp'), /maxed/i);
-    await C.page.click('#nameok');
+    await C.page.click('#nameok'); // (the autopilot left on)
     await C.page.waitForFunction(() => RR.mp.room && RR.mp.room.humans.length === 3, null, { timeout: 6000 });
     const D = await opens(plain);
+    await D.page.click('#autopick'); // unticked, but NOT NOW: nothing changes
     await D.page.click('#namecancel');
     await D.page.waitForTimeout(500);
-    assert.deepStrictEqual(await D.page.evaluate(() => [RR.game.state, RR.mp.room]), ['title', null]);
+    assert.deepStrictEqual(await D.page.evaluate(() => [RR.game.state, RR.mp.room, RR.game.autopilot]), ['title', null, true]);
 
     // everyone READY: Bob races in the Phoenix with every stat at its ceiling; Carol in her own Sparrow
     await A.page.keyboard.press('Enter');
@@ -477,6 +489,9 @@ test('online: invite links - the host\'s INVITE LINK opens the game for a friend
     assert.deepStrictEqual(Object.values(seats[1].levels), [3, 3, 3, 3, 3, 3, 3, 3], 'every powerup maxed too');
     assert.deepStrictEqual(await B.page.evaluate(() => [RR.game.player.design, RR.game.player.plv.missile]), [3, 3], 'his own screen flies the Phoenix too');
     assert.strictEqual(await B.page.evaluate(() => JSON.stringify(RR.game.prog)), hangar, 'and his own hangar is untouched');
+    // the race: Bob steers himself; Carol's autopilot flies her
+    await C.page.waitForFunction(() => RR.game.state === 'play' && RR.game.online, null, { timeout: 6000 });
+    assert.deepStrictEqual([await B.page.evaluate(() => RR.game.autoOn()), await C.page.evaluate(() => RR.game.autoOn())], [false, true]);
     assert.deepStrictEqual([A.errors, ...guests.map((P) => P.errors)], [[], [], [], []]);
   } finally { await A.ctx.close(); for (const P of guests) await P.ctx.close(); s.close(); }
 });

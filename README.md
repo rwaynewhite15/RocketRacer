@@ -234,7 +234,10 @@ ONLINE on the menu (when the game's server says online play is available):
 - **Invite links**: a private room's lobby has an INVITE LINK button (L). It shows the room's link
   (`…/?room=ABCD`), with COPY and, where the device can, SHARE. Whoever opens it gets the pilot-name
   box first (JOIN ROOM ABCD), and JOIN takes them straight into the room; NOT NOW leaves them on the
-  title screen. The link is taken out of the address bar once read, so a reload does not join twice.
+  title screen. The box also has an AUTOPILOT tick box, ticked as their hangar has it (on for a new
+  pilot): they choose there whether the autopilot flies their races (they pick the lane and fight) or
+  they steer themselves. JOIN keeps the choice, as the hangar's AUTOPILOT switch, where it can be
+  changed again. The link is taken out of the address bar once read, so a reload does not join twice.
 - **Lending the best rocket**: the room's host (whoever opened it; the next pilot in if they leave)
   can tick LEND THEM A MAXED-OUT PHOENIX in that box. The link then carries the room's secret lend
   key (`&loan=…`), and whoever joins with it flies the best rocket there is, a Phoenix with every stat
