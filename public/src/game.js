@@ -915,6 +915,16 @@
       (invite.loan ? ' You are lent a Phoenix with every stat and powerup maxed out.' : '') : 'Shown on the world leaderboard. Letters and numbers, up to 10.');
     say('nameok', invite ? 'JOIN' : 'OK');
     say('namecancel', invite ? 'NOT NOW' : 'CANCEL');
+    // joining from an invite link: the autopilot, on or off, as the hangar has it to start with
+    const autoRow = document.getElementById('autorow'), pick = document.getElementById('autopick'), autoHelp = document.getElementById('autohelp');
+    if (autoRow && pick) {
+      autoRow.hidden = !invite;
+      pick.checked = !!this.autopilot;
+      if (autoHelp) {
+        autoHelp.hidden = !invite;
+        autoHelp.textContent = 'On: it flies the race, you pick the lane and fight. Off: you steer.';
+      }
+    }
     field.value = this.name;
     box.hidden = false;
     RR.input.typing = true;
@@ -926,7 +936,8 @@
     const box = document.getElementById('namebox'), field = document.getElementById('pilot');
     if (!box || box.hidden) return;
     if (keep) {
-      const n = RR.net.cleanName(field.value);
+      const n = RR.net.cleanName(field.value), pick = document.getElementById('autopick');
+      if (RR.mp.invite && pick) { this.autopilot = pick.checked; save(); } // JOIN from an invite link: the autopilot as they chose
       if (n) { this.name = n; save(); RR.audio.sfx('confirm'); }
     }
     field.blur();
